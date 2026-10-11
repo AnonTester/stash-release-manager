@@ -6,6 +6,15 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.204.3
+- Compare / Review "Search via Stash scraper": ThePornDB is offered as Stash's stash-box (the same source as "Scrape with ..." in Stash) instead of the community scraper of that name, which failed on systems that cannot verify the certificate chain of its server.
+
+## 0.204.2
+- Maintenance: the number behind "Review: Identify Scene" (and the other links) follows the list while scenes are worked off.
+
+## 0.204.1
+- Review: Identify Scene: opening a single scene showed the word "null" above the buttons at the bottom. Fixed. A timeout of Stash's scraper now says that Stash itself is reachable and suggests pasting the scene's page address instead of a title search.
+
 ## 0.204.0
 - Setup without copying, contributed by AnonTester: the plugin's only setting is the Sidecar API URL. The Stash API key and the StashDB / ThePornDB keys are read from Stash itself (the keys never pass the browser); the Stash URL is prefilled from the browser's address and confirmed in the setup guide. Other stash-boxes set up in Stash (FansDB, JAVStash ...) are offered as providers and created on request. "Update keys from Stash" overwrites typed keys on purpose.
 - The download client form has a "Test connection" button that checks the details as typed (qBittorrent or SABnzbd) before saving; the old check no longer assumes SABnzbd.

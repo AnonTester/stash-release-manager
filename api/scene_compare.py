@@ -945,7 +945,10 @@ class SceneCompare:
     # ---------- Stash scrapers (AdultEmpire, IAFD, data18 ...) ----------
 
     # AdultDvdMarketPlace is left out: it starts `google-chrome` inside the Stash container, which is not installed there.
-    SCRAPER_PICKS = ("AdultEmpire", "IAFD", "data18", "FreeonesCommunity", "ThePornDB")
+    # ThePornDB is offered as its stash-box (id "stashbox:<endpoint>"), not as the community scraper of the same name: that one reads
+    # api.metadataapi.net, whose certificate chain many systems cannot verify (v0.204.3).
+    SCRAPER_PICKS = ("AdultEmpire", "IAFD", "data18", "FreeonesCommunity")
+    STASHBOX_PREFIX = "stashbox:"
 
     def scrapers(self):
         """The few scene scrapers worth offering, with what each accepts (NAME search and/or URL)."""
@@ -956,7 +959,11 @@ class SceneCompare:
                 sup = (r["scene"] or {}).get("supported_scrapes") or []
                 out.append({"id": r["id"], "name": r["name"], "name_search": "NAME" in sup, "url": "URL" in sup,
                             "url_examples": ((r["scene"] or {}).get("urls") or [])[:2]})
-        return {"scrapers": sorted(out, key=lambda x: self.SCRAPER_PICKS.index(x["id"]))}
+        out = sorted(out, key=lambda x: self.SCRAPER_PICKS.index(x["id"]))
+        endpoint = getattr(self.get_stash(), "theporndb_endpoint", "")
+        if endpoint:
+            out.append({"id": self.STASHBOX_PREFIX + endpoint, "name": "ThePornDB", "name_search": True, "url": False, "url_examples": []})
+        return {"scrapers": out}
 
     def scrape(self, scraper_id, query):
         """One request through Stash's own scraper. `query` = a title/name (scraper must support NAME) or a page URL."""
@@ -976,12 +983,16 @@ class SceneCompare:
             else:
                 results = stash._graphql(
                     "query($s: ScraperSourceInput!, $i: ScrapeSingleSceneInput!) { scrapeSingleScene(source: $s, input: $i) { %s } }" % fields,
-                    {"s": {"scraper_id": scraper_id}, "i": {"query": query}})["scrapeSingleScene"] or []
+                    {"s": ({"stash_box_endpoint": scraper_id[len(self.STASHBOX_PREFIX):]} if (scraper_id or "").startswith(self.STASHBOX_PREFIX)
+                           else {"scraper_id": scraper_id}), "i": {"query": query}})["scrapeSingleScene"] or []
         except Exception as e:
             msg = str(e)
             if "google-chrome" in msg:
                 msg = "this scraper needs a browser (Chrome) inside the Stash container, which is not installed there -- pick another scraper"
-            return {"error": msg[:300]}
+            elif "timed out" in msg.lower():
+                msg = ("Stash's scraper did not answer in time (Stash itself is reachable). A title search makes Stash load the cover image of every hit, "
+                       "which can take minutes on a slow site -- paste the scene's page address (URL) instead, or try again later")
+            return {"error": msg[:400]}
         return {"results": [{"title": x.get("title"), "date": x.get("date"), "details": (x.get("details") or "")[:500],
                              "urls": x.get("urls") or [], "studio": (x.get("studio") or {}).get("name"),
                              "performers": [p["name"] for p in x.get("performers") or []],

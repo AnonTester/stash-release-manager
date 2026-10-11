@@ -162,6 +162,8 @@
         ['review', 'compare', 'upgrades'].forEach((k) => side.setBadge(k, fresh[k]));
       } catch (e) { /* keep the old numbers */ }
     }
+    // Review (and others) tell the page when they changed what is open: the numbers behind the links follow at once.
+    window.addEventListener('srw:counts-changed', refreshBadges);
     const start = areaFromRoute();
     // An address of an area that is not offered (e.g. a scene area while only movies are on) is corrected to the area shown.
     const asked = (window.location.pathname.match(/\/maintenance\/([^/]+)/) || [])[1];
@@ -2537,6 +2539,7 @@
         reviewList.appendChild(reviewView.node);
       }
       applyReviewFilter();
+      window.dispatchEvent(new Event('srw:counts-changed'));
     }
 
     // File name next to the scene it was given (v0.171.2): for the files that carry a provider id, so a wrong match shows up at a glance.
@@ -2726,13 +2729,14 @@
           window.SRW.notify('Review', `Scene #${s.id} removed from the review list.`, 'success');
           reviewViewer.replaceChildren(); reviewOpenId = null; loadReview();
         }));
-      reviewViewer.replaceChildren(
+      // (replaceChildren turns a null into the text "null": the film panel is left out of the list for single scenes)
+      reviewViewer.replaceChildren(...[
         el('h4', { textContent: s.title || `Scene ${s.id}` }), bar,
         el('div', { className: 'srw-cmp-grid' }, [col]),
         (allReview.find((x) => x.id === s.id) || {}).kind === 'movie' ? buildMoviePanel(s) : null,
         el('div', { className: 'srw-toolbar' }, [doneBtn, (allReview.find((x) => x.id === s.id) || {}).status === 'later' ? reopenBtn : laterBtn, parkBtn,
           el('button', { className: 'srw-btn', textContent: 'Close', onClick: () => { reviewViewer.replaceChildren(); reviewOpenId = null; } })]),
-      );
+      ].filter(Boolean));
     }
 
     const reviewSection = el('details', { className: 'srw-settings-section srw-panel srw-compare' }, [
