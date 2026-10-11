@@ -1711,6 +1711,10 @@
 }
 .srw-activity-badge[hidden], .srw-nav-dot[hidden] { display: none; }
 /* Plugin icon among Stash's utility icons (MainNavBar.UtilityItems): no drop-down caret, the activity dot sits on the icon. */
+.srw-safety-error { color: #f85149; }
+.srw-safety-warning { color: #d29922; }
+.srw-safety-ok { color: #3fb950; }
+.srw-safety-info { opacity: 0.8; }
 .srw-nav-menu { position: relative; }
 .srw-nav-menu .btn { position: relative; }
 .srw-nav-menu .srw-nav-dot { position: absolute; top: 0.35em; right: 0.2em; margin: 0; }

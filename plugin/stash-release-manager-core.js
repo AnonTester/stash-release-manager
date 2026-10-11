@@ -50,6 +50,17 @@
     }
   }
 
+  // Safety check (v0.197.0): moving functions refuse while ANOTHER renaming plugin (renamerOnUpdate ...) is enabled in Stash; the checkbox of the
+  // warning ("continue anyway") is remembered for this browser session and sent with the apply operations.
+  const RENAMER_APPLY_MODES = new Set(['import_apply', 'organize_apply']);
+  const IGNORE_RENAMERS_KEY = 'srw:ignore-renamers';
+  function ignoreRenamers() {
+    try { return window.sessionStorage.getItem(IGNORE_RENAMERS_KEY) === '1'; } catch (e) { return false; }
+  }
+  function setIgnoreRenamers(on) {
+    try { window.sessionStorage.setItem(IGNORE_RENAMERS_KEY, on ? '1' : '0'); } catch (e) { /* private mode: the warning just stays */ }
+  }
+
   async function runOp(mode, args = {}) {
     const settings = await getSettings();
     const query = `
@@ -68,6 +79,7 @@
             mode, sidecar_url: settings.sidecarUrl,
             stash_url: settings.stashUrl, stash_api_key: settings.stashApiKey,
             ...args,
+            ...(RENAMER_APPLY_MODES.has(mode) && ignoreRenamers() ? { ignore_renamers: true } : {}),
           },
         },
       }),
@@ -1130,6 +1142,34 @@
     }, 2000);
   }
 
+  // The safety check of the moving/renaming functions (api/renamer_check.py): other renaming plugins in Stash, library folders, formats, ...
+  // `compact`: only warnings/errors (for Import folder and Organize library); the full list is Settings > Import & Naming > Safety check.
+  function buildSafetyPanel({ compact = false } = {}) {
+    const box = el('div', { className: 'srw-safety' });
+    const status = el('span', { className: 'srw-key-status' });
+    const MARK = { error: '✖', warning: '⚠', info: 'ℹ', ok: '✔' };
+    async function load() {
+      status.textContent = ' checking…';
+      const r = await runOp('sanity_check');
+      status.textContent = '';
+      if (r.error) { box.replaceChildren(el('p', { className: 'srw-hint', textContent: `The safety check could not run: ${r.error}` })); return; }
+      const shown = (r.issues || []).filter((i) => !compact || i.level === 'error' || i.level === 'warning');
+      if (compact && !shown.length) { box.replaceChildren(); return; }
+      const parts = [el('ul', { className: 'srw-release-list' }, shown.map((i) => el('li', { className: `srw-safety-${i.level}` }, `${MARK[i.level] || ''} ${i.text}`)))];
+      if ((r.renamers || []).some((x) => x.enabled)) {
+        const cb = el('input', { type: 'checkbox' });
+        cb.checked = ignoreRenamers();
+        cb.addEventListener('change', () => setIgnoreRenamers(cb.checked));
+        parts.push(el('label', { className: 'srw-provider-filter-item', title: 'Only for this browser session' }, [cb, ' I know: continue anyway (this browser session)']));
+      }
+      if (!compact) parts.push(el('div', { className: 'srw-toolbar' }, [el('button', { className: 'srw-btn', textContent: 'Check again', onClick: load }), status]));
+      box.replaceChildren(...parts);
+    }
+    if (!compact) box.appendChild(status);
+    load();
+    return box;
+  }
+
   function buildSearchActions(r, onGrabbed) {
     const wrap = el('span', { className: 'srw-search-actions' });
     getSearchCapabilities().then((caps) => {
@@ -2064,7 +2104,7 @@
     searchStatusLabel, confirmInline, buildManagedList, buildSearchActions, whenNoOpenPanel, buildManualSearch, getSearchCapabilities,
     rememberOpen, icon, mismatchWarning, buildPagedList, buildPager, releaseTitleNode, notify, dismissedNotice, releaseDismissedNotice, notifyHandoff,
     sceneUrl, loadMetadataProviderUrls, loadProviders, resetProviders, providerInfo, providerLabel, providerKeys, providerOn, providersAllOn, providersSelected, isLateAdditionNew, buildLateAdditionBadge,
-    buildFilteredPagedList, pairingOptionsFor, castOptionsFor, buildPairingBadge, localPageFetcher, releaseQueryArgs, filterLocally, isFilterActive,
+    buildFilteredPagedList, buildSafetyPanel, ignoreRenamers, pairingOptionsFor, castOptionsFor, buildPairingBadge, localPageFetcher, releaseQueryArgs, filterLocally, isFilterActive,
     describeProgress, applyProgress, attachLive, buildLiveHint,
     buildEntityIcons, buildLocalEntityLink, buildReleaseThumb, buildStudioContext, groupByScene,
     SENT_STATUS_LABEL, SENT_STATUS_LABEL_LONG,

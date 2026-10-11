@@ -14,6 +14,7 @@ Stash-Tagger-style progress bar while it runs. `run_now()` below
 explicitly spawns its own `threading.Thread` and returns immediately;
 `/library-check/status` reads the run row's live progress from the DB,
 pollable independently the whole time."""
+import renamer_check
 import logging
 import threading
 
@@ -103,6 +104,14 @@ def upgrades_search(cand_id: int, dry_run: bool = True):
 
 # --- Organize the library: rename / move (2026-09-28, library_organize.py) ---
 
+@router.get("/sanity")
+def sanity():
+    """The safety check for the moving/renaming functions (renamer_check.py): other renaming plugins in Stash, target folders inside a Stash
+    library, formats that give every scene one name, Whisparr scope, files moved again. Read-only."""
+    importer = _importer()
+    return renamer_check.sanity(importer.stash, importer.setting, importer.db)
+
+
 @router.get("/organize/studios")
 def organize_studios(refresh: bool = False):
     return {"studios": _organizer().overview(refresh=refresh)}
@@ -116,7 +125,8 @@ def organize_plan(studio_id: str):
 @router.post("/organize/apply")
 def organize_apply(body: dict):
     kinds = [k for k in (body.get("kinds") or ["rename", "move"]) if k in ("rename", "move")]
-    return _organizer().apply(body.get("studio_id"), body.get("file_ids") or [], kinds=kinds, force=bool(body.get("force")))
+    return _organizer().apply(body.get("studio_id"), body.get("file_ids") or [], kinds=kinds, force=bool(body.get("force")),
+                              ignore_renamers=bool(body.get("ignore_renamers")))
 
 
 # --- Folder import: /data/Scenes, /data/import, /data/_VR ... (2026-09-29, library_import.py) ---
@@ -140,7 +150,8 @@ def import_apply(body: dict):
     root = (body.get("root") or "").rstrip("/")
     if root not in importer.roots():
         raise HTTPException(status_code=400, detail="not an import source")
-    return importer.apply(root, body.get("scene_ids") or [], picks=body.get("picks") or {}, force=bool(body.get("force")))
+    return importer.apply(root, body.get("scene_ids") or [], picks=body.get("picks") or {}, force=bool(body.get("force")),
+                          ignore_renamers=bool(body.get("ignore_renamers")))
 
 
 @router.post("/import/organized-hook")

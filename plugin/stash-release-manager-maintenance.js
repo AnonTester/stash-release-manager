@@ -40,8 +40,8 @@
     { key: 'unknown-quality', group: 'check', icon: 'faQuestion', label: 'Unknown quality', build: (c) => { c.appendChild(window.SRW.el('p', { className: 'srw-hint', textContent: unknownQualityReason })); c.appendChild(buildUnknownQualitySection()); } },
     { key: 'review', group: 'resolve', icon: 'faFingerprint', label: 'Review: Identify Scene', build: (c) => buildReviewArea(c) },
     { key: 'compare', group: 'resolve', icon: 'faCodeCompare', label: 'Compare scenes', build: (c) => { c.appendChild(buildSenseNotice()); c.appendChild(flatten(buildCompareSection('compare'))); } },
-    { key: 'import', group: 'files', icon: 'faFileImport', label: 'Import folder', build: (c) => c.appendChild(buildImportSection()) },
-    { key: 'organize', group: 'files', icon: 'faFolderTree', label: 'Organize library', build: (c) => c.appendChild(buildOrganizeSection()) },
+    { key: 'import', group: 'files', icon: 'faFileImport', label: 'Import folder', build: (c) => { c.appendChild(window.SRW.buildSafetyPanel({ compact: true })); c.appendChild(buildImportSection()); } },
+    { key: 'organize', group: 'files', icon: 'faFolderTree', label: 'Organize library', build: (c) => { c.appendChild(window.SRW.buildSafetyPanel({ compact: true })); c.appendChild(buildOrganizeSection()); } },
     { key: 'upgrades', group: 'files', icon: 'faCircleUp', label: 'Upgrade wanted', build: (c) => c.appendChild(flatten(buildUpgradeSection())) },
     { key: 'movies', group: 'movies', icon: 'faFilm', label: 'Movies & groups', build: (c) => c.appendChild(buildMoviesSection()) },
   ];

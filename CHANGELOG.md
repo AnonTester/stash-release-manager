@@ -2,6 +2,16 @@
 
 Short summary of what each version added; versions follow SemVer.
 
+Version rules (from 0.199.0 on; before, almost every change raised the MINOR number): PATCH = a fix or a refinement of something that exists;
+MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
+install guide has been proven on other machines. Documentation only gets no version.
+
+## 0.198.0
+- The Organized hook has its own section with a switch (off by default) and a mode (preview only / move for real).
+
+## 0.197.0
+- Safety check for moving and renaming (Settings > Import & Naming > Safety check): finds another plugin that renames files on scene updates (renamerOnUpdate and relatives) and then refuses to move files unless you confirm; also checks that target folders are inside a Stash library, that the formats cannot give every file one name, the Whisparr scope, and whether moved files were moved again by something else.
+
 ## 0.196.0
 - Settings > Import & Naming > Naming: the movie part is headed "Movies/Groups".
 

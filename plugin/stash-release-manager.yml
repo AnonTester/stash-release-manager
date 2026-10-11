@@ -1,6 +1,6 @@
 name: StashReleaseManager
 description: Tracking, acquisition, sorting and housekeeping for your Stash library -- watches StashDB/ThePornDB for new releases of what you follow, searches your indexers, imports, organizes and identifies, with a Maintenance page for duplicates and reviews (formerly "Stash Release Watcher").
-version: 0.196.0
+version: 0.198.0
 url: https://github.com/northwindlab/stash-release-manager
 
 ui:
@@ -69,7 +69,7 @@ hooks:
   # EVERY scene Stash creates; the sidecar ignores anything that isn't
   # one of its own pending imports (cheap no-op). See
   # file_importer.verify_created_scene().
-  # "Organized" hook (v0.196.0): marking a scene Organized in Stash moves/renames it (movie scenes; ready source-folder scenes) when the
+  # "Organized" hook (v0.198.0): marking a scene Organized in Stash moves/renames it (movie scenes; ready source-folder scenes) when the
   # setting Settings > Import & Naming > "When you mark a scene Organized" is on or on preview. The script forwards ONLY updates that
   # carry the organized field set to true; everything else ends in the script at once.
   - name: Scene marked Organized

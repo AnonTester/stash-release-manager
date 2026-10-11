@@ -180,6 +180,15 @@
       panels.import_naming.appendChild(importParts.Fingerprints);
       scopeState.add(importParts.Fingerprints, ['full_whisparr'], 'Not used: with “Full Whisparr management” Whisparr imports scenes itself, so there is no “Import failed” check here.');
     }
+    panels.import_naming.appendChild(el('div', { className: 'srw-settings-section' }, [
+      el('h4', { textContent: 'Safety check' }),
+      el('p', { className: 'srw-hint', textContent: 'Looks for what could go wrong when files are moved or renamed: another plugin that renames files when a scene is updated '
+        + '(renamerOnUpdate and relatives would move every file again after each move), target folders that are not in a Stash library, formats that give every file the same name, '
+        + 'the Whisparr scope, and files that were moved again by something else. Nothing is changed. Import folder, Organize library and the Organized hook refuse to move files '
+        + 'while another renamer is enabled (you can continue anyway for a browser session).' }),
+      window.SRW.buildSafetyPanel(),
+    ]));
+    panels.import_naming.appendChild(buildOrganizedHookSection(settings));
     panels.import_naming.appendChild(buildFileNamingSection(settings));
 
     panels.jobs = el('div');
@@ -2905,6 +2914,41 @@
   // and grouping it with Permissions (both are "how a file ends up on
   // disk" concerns, unlike the rest of File Import's scheduling/source/
   // recycle-bin settings) reads more coherently on its own page.
+  // "Organized" hook (v0.191.0, own switch since v0.198.0): the mark in Stash as the trigger. A deliberate decision: off until switched on here.
+  function buildOrganizedHookSection(settings) {
+    const { el } = window.SRW;
+    const initial = settings.organized_hook || 'off';
+    const sw = el('input', { type: 'checkbox' });
+    sw.checked = initial !== 'off';
+    const mode = el('select', {}, [el('option', { value: 'preview', textContent: 'Preview only (writes the planned move to History, moves nothing)' }),
+      el('option', { value: 'on', textContent: 'Move for real' })]);
+    mode.value = initial === 'on' ? 'on' : 'preview';
+    const state = el('span', { className: 'srw-key-status' });
+    const modeRow = el('div', { className: 'srw-toolbar' }, [el('span', { textContent: 'Mode: ' }), mode]);
+    const show = () => {
+      modeRow.hidden = !sw.checked;
+      state.textContent = !sw.checked ? ' off' : (mode.value === 'on' ? ' ON: scenes you mark Organized are moved' : ' ON, preview only: nothing is moved');
+    };
+    const save = async () => {
+      const value = !sw.checked ? 'off' : mode.value;
+      const r = await window.SRW.runOp('settings_set', { key: 'organized_hook', value });
+      if (r.error) { window.SRW.notify('Organized hook', r.error, 'error'); return; }
+      settings.organized_hook = value;
+      show();
+    };
+    sw.addEventListener('change', save);
+    mode.addEventListener('change', save);
+    show();
+    return el('div', { className: 'srw-settings-section' }, [
+      el('h4', { textContent: 'Organized hook' }),
+      el('p', { className: 'srw-hint', textContent: 'Off by default -- you decide whether to use it. When it is on, marking a scene Organized in Stash moves/renames it: a movie scene (in ONE group of Stash) '
+        + 'goes to the movie template (Naming > Movies/Groups), a scene in an import source folder with a matching provider id goes to the naming scheme -- the same plan as Maintenance > Import folder, '
+        + 'for that one scene. Other scenes are left alone and History says why. Start with Preview. While another plugin that renames files (renamerOnUpdate ...) is enabled in Stash '
+        + 'the hook is held back, see the Safety check above. The plugin has to be reloaded once for Stash to know the hook.' }),
+      el('label', {}, [sw, ' Move / rename a scene when I mark it Organized in Stash']), state, modeRow,
+    ]);
+  }
+
   function buildFileNamingSection(settings) {
     const { el } = window.SRW;
     const section = el('div', { className: 'srw-settings-section' }, [
@@ -3051,16 +3095,6 @@
       await window.SRW.runOp('settings_set', { key: 'use_hardlinks', value: hardlinksInput.checked ? 'true' : 'false' });
     });
     section.appendChild(hardlinksLabel);
-
-    // "Organized" hook (v0.191.0): the mark in Stash as the trigger -- the user's confirmation that the scene is right.
-    section.appendChild(el('p', { className: 'srw-subsection-heading', textContent: 'When you mark a scene Organized in Stash' }));
-    appendSettingRow(section, {
-      label: 'Move / rename it', key: 'organized_hook', value: settings.organized_hook || 'off',
-      options: [['off', 'Off'], ['preview', 'Preview only (writes the planned move to History, moves nothing)'], ['on', 'On (moves it)']],
-      hint: 'A movie scene (in ONE group of Stash) goes to Movies/<Title> (<Year>)/…; a scene in an import source folder with a matching provider id goes to the naming scheme '
-        + '-- the same plan as Maintenance > Import folder, for that one scene. Other scenes are left alone and History says why. Needs the plugin reloaded once '
-        + '(it registers the hook). Start with Preview.',
-    });
 
     // Whisparr's own Media Management > Permissions section (Set
     // Permissions / chmod Folder / chown Group), added 2026-09-19 --

@@ -513,7 +513,10 @@ def main():
                       timeout=900)
     elif mode == "organize_apply":
         result = _post(sidecar_url, "/maintenance/organize/apply",
-                       {k: args.get(k) for k in ("studio_id", "file_ids", "kinds")}, timeout=3600)
+                       {k: args.get(k) for k in ("studio_id", "file_ids", "kinds", "ignore_renamers")}, timeout=3600)
+    elif mode == "sanity_check":
+        # The safety check of the moving/renaming functions, see api/renamer_check.py.
+        result = _get(sidecar_url, "/maintenance/sanity", timeout=60)
     elif mode == "import_sources":
         # Maintenance > Import folder (2026-09-29), see api/library_import.py.
         result = _get(sidecar_url, "/maintenance/import/sources", timeout=120)
@@ -521,7 +524,7 @@ def main():
         result = _get(sidecar_url, f"/maintenance/import/analyse?root={quote(str(args.get('root')))}", timeout=1800)
     elif mode == "import_apply":
         result = _post(sidecar_url, "/maintenance/import/apply",
-                       {k: args.get(k) for k in ("root", "scene_ids", "picks")}, timeout=3600)
+                       {k: args.get(k) for k in ("root", "scene_ids", "picks", "ignore_renamers")}, timeout=3600)
     elif mode == "import_finish_check":
         result = _get(sidecar_url, f"/maintenance/import/finish-check?root={quote(str(args.get('root')))}", timeout=300)
     elif mode == "import_finish":

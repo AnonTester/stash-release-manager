@@ -80,6 +80,8 @@ The **setup guide** opens by itself the first time you open *Release Manager* wh
 4. **General:** *Content* (scenes, movies, or both) and the *Watchlist source* (your Stash favorites, or a tag).
 5. Then the **Watchlist** page: which performers / studios are followed.
 
+Optional, **off by default**: *Settings > Import & Naming > Organized hook* lets you move/rename a scene by marking it *Organized* in Stash (switch it on there; start with *Preview only*). Before using any moving function, look at *Import & Naming > Safety check*: another plugin that renames files (renamerOnUpdate ...) must not be enabled at the same time.
+
 Run *Release Manager > Releases > Run scan now* once. The scheduled jobs (scan every few hours, searches, import check) run by themselves from now on; their intervals are in Settings.
 
 Keys and URLs are stored in the sidecar's database in the `data` folder. They are never part of an export (see below).

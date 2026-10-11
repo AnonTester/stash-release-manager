@@ -33,12 +33,14 @@ import logging
 import os
 import re
 import shutil
+import threading
 import time
 from collections import defaultdict
 
 import file_naming
 import history
 import quality_detect
+import renamer_check
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +91,44 @@ class Organizer:
         self.theporndb = theporndb_client
         self.to_local = to_local
         self.setting = settings_getter  # (key) -> value
+
+    # ---------- sanity: other renamers, files moved again ----------
+
+    def renamer_guard(self, ignore=False):
+        """None when it is fine to move files; else {"error", "renamers"}: another ENABLED renaming plugin would move them again after the scan
+        (see renamer_check.py). `ignore` = the user confirmed it knows (the warning banner's checkbox)."""
+        if ignore:
+            return None
+        active = renamer_check.active_renamers(self.stash)
+        if not active:
+            return None
+        return {"error": renamer_check.conflict_text(active), "renamers": [r["id"] for r in active]}
+
+    DRIFT_WATCH_SECONDS = 90
+
+    def _watch_drift(self, items):
+        """A few minutes after a move: is each file still where we put it? Something else (a renamer plugin, Whisparr) moving it again is
+        written to History -- and found by the sanity check."""
+        pairs = [(str(i["scene_id"]), i["new_path"], i.get("title") or "") for i in items if i.get("scene_id") and i.get("new_path")]
+        if pairs and self.DRIFT_WATCH_SECONDS:
+            timer = threading.Timer(self.DRIFT_WATCH_SECONDS, self._check_drift, args=(pairs,))
+            timer.daemon = True
+            timer.start()
+
+    def _scene_paths(self, scene_id):
+        scene = self.stash._graphql("query($id: ID!) { findScene(id: $id) { files { path } } }", {"id": str(scene_id)})["findScene"]
+        return [f["path"] for f in (scene or {}).get("files") or []]
+
+    def _check_drift(self, pairs):
+        for scene_id, expected, title in pairs:
+            try:
+                paths = self._scene_paths(scene_id)
+            except Exception:
+                logger.exception("drift check: couldn't read scene %s", scene_id)
+                continue
+            if paths and expected not in paths:
+                history.add("warning", "history", "organize", "Moved again by something else: the file this plugin placed was found elsewhere",
+                            scene_title=title, details={"stash_scene": scene_id, "placed": expected, "now": paths})
 
     # ---------- expected path ----------
 
@@ -463,12 +503,15 @@ class Organizer:
             logger.exception("organize: Whisparr update failed for %s", item["new_path"])
             return f"Whisparr update failed: {e}"
 
-    def apply(self, studio_id, file_ids, kinds=("rename", "move"), force=False):
+    def apply(self, studio_id, file_ids, kinds=("rename", "move"), force=False, ignore_renamers=False):
         """Recomputes the plan (never trusts the browser's paths) and
         applies the requested verified items. Returns {done, failed}."""
         busy = self.queue_guard(force)
         if busy:
             return busy
+        conflict = self.renamer_guard(ignore_renamers)
+        if conflict:
+            return conflict
         wanted = {str(i) for i in file_ids or []}
         plan = self.plan(studio_id)
         items = [i for k in kinds for i in plan.get(k, []) if str(i["file_id"]) in wanted]
@@ -508,4 +551,5 @@ class Organizer:
             history.event("warning" if failed else "info", "organize",
                           f"Organize {plan['studio']}: {len(confirmed)} done, {len(failed)} failed")
         _overview_cache["data"] = None
+        self._watch_drift(confirmed)
         return {"done": confirmed, "failed": failed}

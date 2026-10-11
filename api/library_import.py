@@ -588,7 +588,7 @@ class Importer(Organizer):
                 self.stash._graphql("mutation($i: SceneUpdateInput!) { sceneUpdate(input: $i) { id } }",
                                     {"i": {"id": str(scene_id), "tag_ids": ids + [str(tag_id)]}})
 
-    def apply(self, root, scene_ids, picks=None, force=False):
+    def apply(self, root, scene_ids, picks=None, force=False, ignore_renamers=False):
         """Re-analyses (never trusts the browser), then adopts + moves the requested
         ready/identify scenes. `picks` = {scene_id: {"provider", "provider_id"}}: matches YOU
         confirmed from the name suggestions for files no fingerprint identified. Returns
@@ -596,6 +596,9 @@ class Importer(Organizer):
         busy = self.queue_guard(force)
         if busy:
             return busy
+        conflict = self.renamer_guard(ignore_renamers)
+        if conflict:
+            return conflict
         wanted = {str(i) for i in scene_ids or []}
         plan = self.analyse(root)
         if picks:
@@ -649,6 +652,7 @@ class Importer(Organizer):
             else:
                 failed.append({**item, "reason": "moved on disk, but Stash doesn't show the scene there yet"})
         leftovers = self._cleanup_dirs(old_dirs)
+        self._watch_drift([i for i in confirmed if i["new_path"] != i["path"]])
         history.event("warning" if failed else "info", "import",
                       f"Import {root_label}: {len(confirmed)} done, {len(failed)} failed")
         return {"done": confirmed, "failed": failed, "leftovers": leftovers}
@@ -682,6 +686,12 @@ class Importer(Organizer):
             history.add("info", "history", "import", f"Organized preview (nothing moved): {path[len(self._root()):]} -> {item['new_path'][len(self._root()):]}",
                         scene_title=title, details={"stash_scene": scene_id, "old": path, "new": item["new_path"], "kind": item["kind"]})
             return {"preview": item}
+        conflict = self.renamer_guard(False)
+        if conflict:  # another renamer is enabled: the automatic move is held back, the plan stays visible in History
+            history.add("warning", "history", "import", f"Organized preview (NOT moved, another renamer is enabled): {path[len(self._root()):]} -> "
+                        f"{item['new_path'][len(self._root()):]}", scene_title=title,
+                        details={"stash_scene": scene_id, "old": path, "new": item["new_path"], "renamers": conflict["renamers"]})
+            return {"blocked": conflict["error"], "preview": item}
         busy = self.queue_guard(False)
         if busy:
             self._hook_note(scene, "was not moved: " + busy["error"], mode)
