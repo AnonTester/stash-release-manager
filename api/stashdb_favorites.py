@@ -16,7 +16,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def import_stashdb_favorites(stashdb_client, stash_client):
+def import_stashdb_favorites(stashdb_client, stash_client, endpoint=None):
     """Returns a summary dict -- "matched" is how many StashDB favorites
     correspond to a locally-known entity at all; "batches_ok"/
     "batches_failed" reflect set_studios_favorite()/set_performers_favorite()'s
@@ -47,8 +47,8 @@ def import_stashdb_favorites(stashdb_client, stash_client):
     favorite_studio_ids = set(stashdb_client.favorited_studio_ids())
     favorite_performer_ids = set(stashdb_client.favorited_performer_ids())
 
-    local_studios = stash_client.local_studio_ids_by_stashdb_id()
-    local_performers = stash_client.local_performer_ids_by_stashdb_id()
+    local_studios = stash_client.local_studio_ids_by_stashdb_id(endpoint)
+    local_performers = stash_client.local_performer_ids_by_stashdb_id(endpoint)
 
     matched_studio_local_ids = [local_studios[sid] for sid in favorite_studio_ids if sid in local_studios]
     matched_performer_local_ids = [local_performers[sid] for sid in favorite_performer_ids if sid in local_performers]

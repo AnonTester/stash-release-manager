@@ -137,11 +137,11 @@
         emptyText: 'Nothing downloading or importing right now.',
         showProgress: true, progressElements, movieRows: movieRows(filmsDownloading, progressElements, container),
       })],
-      ['stuck', 'Stuck', await buildSection('Stuck (searched, nothing usable found)', stuck, {
+      ['stuck', 'Stuck', await withStuckToolbar(await buildSection('Stuck (searched, nothing usable found)', stuck, {
         emptyText: 'Nothing stuck right now.',
         showSearchStatus: true, showSearchActions: true, showImportError: true, sortBy: 'last_search_at', onChanged: () => render(container),
         movieRows: movieRows(filmsStuck, progressElements, container),
-      })],
+      }))],
       ['missing', 'Source file missing', await buildSection('Source file missing (still retrying automatically)', sourceMissing, {
         emptyText: 'Nothing missing right now.',
         showImportError: true, showSearchActions: true, sortBy: 'discovered_at', onChanged: () => render(container),
@@ -180,6 +180,32 @@
       pollMs: progressElements.size > 0 ? 5000 : 10000,
       hint,
     });
+  }
+
+  // "Search all stuck now" (v0.201.0): ONE targeted indexer query for every stuck scene release, once, on request (the normal RSS mode only
+  // queries a release daily in its first week, then weekly). The sidecar lists what it would query first (dry run) and the click confirms it.
+  async function withStuckToolbar(group, container) {
+    const { el, confirmInline } = window.SRW;
+    let preview = null;
+    try { preview = await window.SRW.runOp('indexer_search_stuck_preview'); } catch (e) { preview = null; }
+    if (!preview || preview.error || !preview.count) return group;
+    const status = el('span', { className: 'srw-key-status' });
+    const btn = el('button', {
+      type: 'button', className: 'srw-btn', textContent: `Search all stuck now (${preview.count})`,
+      title: 'One targeted indexer query per stuck release, right now. Releases already found to be duplicates are left out. Scenes only; the movie search runs on its own.',
+    });
+    btn.addEventListener('click', () => confirmInline(btn, `Send ${preview.count} indexer queries now, one per stuck release?`, async () => {
+      status.textContent = ' starting...';
+      try {
+        const r = await window.SRW.runOp('indexer_search_run_stuck');
+        status.textContent = r.error ? ` error: ${r.error}`
+          : (r.started ? ` running in the background (${r.count} release(s)) -- the result appears in History; reload this page afterwards` : ' nothing to search');
+      } catch (err) { status.textContent = ` error: ${err.message}`; }
+    }));
+    const bar = el('div', { className: 'srw-toolbar' }, [btn, status]);
+    const summary = group.querySelector(':scope > summary');
+    if (summary) summary.after(bar); else group.prepend(bar);
+    return group;
   }
 
   async function buildSection(label, releases, {

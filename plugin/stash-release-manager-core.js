@@ -13,21 +13,14 @@
   const PLUGIN_ID = 'stash-release-manager';
   const PLUGIN_NAME = 'StashReleaseManager';
 
-  const DEFAULTS = { sidecarUrl: 'http://localhost:6961', stashUrl: '', stashApiKey: '' };
+  const DEFAULTS = { sidecarUrl: 'http://localhost:6961' };
 
   let cachedSettings = null;
 
-  // stashUrl/stashApiKey (2026-09-20, Connections-tab redesign) -- Stash's
-  // own instance connection moved OUT of this plugin's custom Settings
-  // page and into these native per-plugin settings (see
-  // stash-release-manager.yml's `settings:` block, same mechanism
-  // sidecarUrl already used) so it can't be accidentally cleared/edited
-  // via the new ARR-style Connections list, and so the sidecar always
-  // has a fresh value pushed to it automatically (see
-  // stash_release_manager_backend.py's _sync_stash_connection()) instead
-  // of needing a manual Save click on a page that might not get
-  // revisited. Empty here just means "not filled in yet" -- the sidecar
-  // still falls back to its own api/.env value, same as before.
+  // The only plugin setting is the sidecar's address (the browser needs it before it can ask the sidecar anything). Stash's own
+  // URL and API key, and the StashDB / ThePornDB / other stash-box keys, are NOT entered here any more (v0.186.0): the exec script
+  // reads the keys from Stash itself and the sidecar keeps them (see stash_release_manager_backend.py's _sync_from_stash()). The
+  // address the browser uses for Stash is sent along as a suggestion for the sidecar's Stash URL (taken over only while it has none).
   async function getSettings() {
     if (cachedSettings) return cachedSettings;
     try {
@@ -40,8 +33,6 @@
       const pluginConfig = result?.data?.configuration?.plugins?.[PLUGIN_ID];
       cachedSettings = {
         sidecarUrl: (pluginConfig?.sidecarUrl || DEFAULTS.sidecarUrl).replace(/\/$/, ''),
-        stashUrl: pluginConfig?.stashUrl || DEFAULTS.stashUrl,
-        stashApiKey: pluginConfig?.stashApiKey || DEFAULTS.stashApiKey,
       };
       return cachedSettings;
     } catch (e) {
@@ -52,7 +43,10 @@
 
   // Safety check (v0.197.0): moving functions refuse while ANOTHER renaming plugin (renamerOnUpdate ...) is enabled in Stash; the checkbox of the
   // warning ("continue anyway") is remembered for this browser session and sent with the apply operations.
-  const RENAMER_APPLY_MODES = new Set(['import_apply', 'organize_apply']);
+  const RENAMER_APPLY_MODES = new Set(['import_apply', 'organize_apply', 'organize_movies_apply']);
+  // The other-renamer warning is only shown while the Organized hook is on -- or after a manual move was held back by it (flag below, this session).
+  const RENAMER_BLOCKED_KEY = 'srw:renamer-blocked';
+  const renamerBlocked = () => { try { return window.sessionStorage.getItem(RENAMER_BLOCKED_KEY) === '1'; } catch (e) { return false; } };
   const IGNORE_RENAMERS_KEY = 'srw:ignore-renamers';
   function ignoreRenamers() {
     try { return window.sessionStorage.getItem(IGNORE_RENAMERS_KEY) === '1'; } catch (e) { return false; }
@@ -77,7 +71,7 @@
           plugin_id: PLUGIN_ID,
           args: {
             mode, sidecar_url: settings.sidecarUrl,
-            stash_url: settings.stashUrl, stash_api_key: settings.stashApiKey,
+            stash_url_suggested: window.location.origin,
             ...args,
             ...(RENAMER_APPLY_MODES.has(mode) && ignoreRenamers() ? { ignore_renamers: true } : {}),
           },
@@ -92,15 +86,24 @@
       throw new Error(result.errors[0]?.message || 'GraphQL error');
     }
     const output = result?.data?.runPluginOperation;
+    let value;
     if (typeof output === 'string') {
       try {
         const parsed = JSON.parse(output);
-        return parsed.output ?? parsed;
+        value = parsed.output ?? parsed;
       } catch {
-        return { error: output };
+        value = { error: output };
       }
+    } else {
+      value = output?.output ?? output ?? {};
     }
-    return output?.output ?? output ?? {};
+    if (RENAMER_APPLY_MODES.has(mode) && value && value.error && Array.isArray(value.renamers)) {
+      // held back by another enabled renamer: from now on the safety panels show the warning (with its "continue anyway" box)
+      try { window.sessionStorage.setItem(RENAMER_BLOCKED_KEY, '1'); } catch (e) { /* ignore */ }
+      window.dispatchEvent(new CustomEvent('srw:renamer-blocked'));
+      value = { ...value, error: `${value.error} (The safety check above now shows the details and the "continue anyway" box.)` };
+    }
+    return value;
   }
 
   // Centralized here (2026-09-21, Metadata Provider generalization)
@@ -1150,7 +1153,7 @@
     const MARK = { error: '✖', warning: '⚠', info: 'ℹ', ok: '✔' };
     async function load() {
       status.textContent = ' checking…';
-      const r = await runOp('sanity_check');
+      const r = await runOp('sanity_check', renamerBlocked() ? { renamers: true } : {});
       status.textContent = '';
       if (r.error) { box.replaceChildren(el('p', { className: 'srw-hint', textContent: `The safety check could not run: ${r.error}` })); return; }
       const shown = (r.issues || []).filter((i) => !compact || i.level === 'error' || i.level === 'warning');
@@ -1166,6 +1169,7 @@
       box.replaceChildren(...parts);
     }
     if (!compact) box.appendChild(status);
+    window.addEventListener('srw:renamer-blocked', load);
     load();
     return box;
   }

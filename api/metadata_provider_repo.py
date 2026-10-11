@@ -63,7 +63,7 @@ def validate_color(color):
         raise InvalidKeyError("color must be #rrggbb or empty")
 
 
-def update(db, key, name=None, url=None, api_key=None, enabled=None, color=None):
+def update(db, key, name=None, url=None, api_key=None, enabled=None, color=None, query_delay=None, favorites_interval=None):
     fields = {}
     if name is not None:
         fields["name"] = name
@@ -76,6 +76,30 @@ def update(db, key, name=None, url=None, api_key=None, enabled=None, color=None)
     if color is not None:
         validate_color(color)
         fields["color"] = color
+    if query_delay is not None:
+        # '' = back to the global default (NULL); otherwise a non-negative number of seconds
+        if query_delay == "":
+            fields["query_delay"] = None
+        else:
+            try:
+                delay = float(query_delay)
+            except (TypeError, ValueError):
+                raise InvalidKeyError("query delay must be a number of seconds (0 or more)")
+            if delay < 0:
+                raise InvalidKeyError("query delay must be a number of seconds (0 or more)")
+            fields["query_delay"] = delay
+    if favorites_interval is not None:
+        # '' = the StashDB setting (NULL); otherwise at least 1 hour
+        if favorites_interval == "":
+            fields["favorites_interval"] = None
+        else:
+            try:
+                hours = float(favorites_interval)
+            except (TypeError, ValueError):
+                raise InvalidKeyError("favorites interval must be a number of hours (1 or more)")
+            if hours < 1:
+                raise InvalidKeyError("favorites interval must be a number of hours (1 or more)")
+            fields["favorites_interval"] = hours
     if not fields:
         return get_one(db, key)
     cols = ", ".join(f"{k} = ?" for k in fields)

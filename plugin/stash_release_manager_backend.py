@@ -29,9 +29,14 @@ def main():
         return
 
     sidecar_url = args.get("sidecar_url", "http://localhost:6961").rstrip("/")
-    _sync_stash_connection(sidecar_url, args)
+    # Stash's own API key, StashDB/ThePornDB keys and the other stash-boxes are read from Stash here and handed to the sidecar
+    # (see _sync_from_stash()); the page's first calls (setup status, header connection check) carry it, so a new installation
+    # needs nothing typed in.
+    sync_report = _sync_from_stash(sidecar_url, input_data, args) if mode in _SYNC_MODES else None
 
-    if mode == "health":
+    if mode == "stash_sync":
+        result = sync_report
+    elif mode == "health":
         result = _get(sidecar_url, "/health", timeout=10)
     elif mode == "watchlist_list":
         params = {"provider": args.get("provider"), "entity_type": args.get("entity_type")}
@@ -347,6 +352,10 @@ def main():
         if args.get("refresh"):
             path += "?refresh=true"
         result = _get(sidecar_url, path, timeout=60)
+    elif mode == "backlog_load_catalog":
+        # starts a background load of the whole catalog (inside the date window) -- returns at once
+        path = f"/backlog/{args.get('provider')}/{args.get('entity_type')}/{args.get('entity_stashdb_id')}/load-catalog"
+        result = _post(sidecar_url, path, {"name": args.get("name") or ""}, timeout=60)
     elif mode == "backlog_fetch_year":
         # A single year's worth of scenes for one entity -- bounded,
         # but a genuinely prolific year can still mean several pages;
@@ -514,9 +523,14 @@ def main():
     elif mode == "organize_apply":
         result = _post(sidecar_url, "/maintenance/organize/apply",
                        {k: args.get(k) for k in ("studio_id", "file_ids", "kinds", "ignore_renamers")}, timeout=3600)
+    elif mode == "organize_movies_plan":
+        result = _get(sidecar_url, "/maintenance/organize/movies/plan", timeout=900)
+    elif mode == "organize_movies_apply":
+        result = _post(sidecar_url, "/maintenance/organize/movies/apply",
+                       {k: args.get(k) for k in ("file_ids", "kinds", "ignore_renamers")}, timeout=3600)
     elif mode == "sanity_check":
         # The safety check of the moving/renaming functions, see api/renamer_check.py.
-        result = _get(sidecar_url, "/maintenance/sanity", timeout=60)
+        result = _get(sidecar_url, "/maintenance/sanity" + ("?renamers=true" if args.get("renamers") else ""), timeout=60)
     elif mode == "import_sources":
         # Maintenance > Import folder (2026-09-29), see api/library_import.py.
         result = _get(sidecar_url, "/maintenance/import/sources", timeout=120)
@@ -680,11 +694,18 @@ def main():
     elif mode == "metadata_providers_update":
         result = _put(sidecar_url, f"/metadata-providers/{args.get('key')}", {
             "name": args.get("name"), "url": args.get("url"), "api_key": args.get("api_key"), "color": args.get("color"),
+            "query_delay": args.get("query_delay"), "favorites_interval": args.get("favorites_interval"),
         }, timeout=15)
     elif mode == "metadata_providers_delete":
         result = _delete(sidecar_url, f"/metadata-providers/{args.get('key')}", timeout=15)
     elif mode == "download_clients_list":
         result = _get(sidecar_url, "/download-clients", timeout=15)
+    elif mode == "indexer_search_stuck_preview":
+        result = _get(sidecar_url, "/indexer-search/stuck", timeout=30)
+    elif mode == "indexer_search_run_stuck":
+        result = _post(sidecar_url, "/indexer-search/run-stuck", {}, timeout=30)
+    elif mode == "download_clients_from_prowlarr":
+        result = _get(sidecar_url, "/download-clients/from-prowlarr", timeout=30)
     elif mode == "download_clients_create":
         result = _post(sidecar_url, "/download-clients", _download_client_body(args), timeout=15)
     elif mode == "download_clients_update":
@@ -703,6 +724,12 @@ def main():
         result = _post(sidecar_url, f"/indexers/{args.get('id')}/check", {}, timeout=30)
     elif mode == "download_clients_check":
         result = _post(sidecar_url, f"/download-clients/{args.get('id')}/check", {}, timeout=15)
+    elif mode == "download_clients_test":
+        # The details as typed into the add / edit form (nothing saved).
+        result = _post(sidecar_url, "/download-clients/check", {
+            "type": args.get("type", "sabnzbd"), "url": args.get("url", ""), "api_key": args.get("api_key", ""),
+            "username": args.get("username", ""), "password": args.get("password", ""),
+        }, timeout=30)
     elif mode == "indexer_search_run":
         # A real Whisparr /release round trip per pending release, same
         # generous-timeout reasoning as file_import_run.
@@ -788,54 +815,77 @@ def _handle_hook(input_data, args):
     print(json.dumps({"output": {"ok": True}}))
 
 
-def _resolve_sidecar_url(input_data):
-    """Stash's own GraphQL, called back via the session cookie a hook
-    payload's `server_connection` carries -- `Host` there is Stash's own
-    BIND address (e.g. "0.0.0.0"), not a connect target, so this always
-    targets `localhost` instead: the exec script runs as a subprocess
-    of Stash itself, on the same host/container, same convention other
-    Stash plugins use for a hook's own self-calls."""
+def _stash_graphql(input_data, query):
+    """Stash's own GraphQL, called back via the session cookie a plugin call's `server_connection` carries (no API key needed);
+    returns the `data` dict, or None when it cannot be reached or answers with errors. `Host` in `server_connection` is Stash's
+    own BIND address (a wildcard such as "all interfaces"), not a connect target, so this always targets `localhost`: the exec script runs as a
+    subprocess of Stash itself, on the same host/container, same convention other Stash plugins use for their own self-calls."""
     conn = input_data.get("server_connection") or {}
     port = conn.get("Port")
-    cookie = conn.get("SessionCookie") or {}
-    cookie_name, cookie_value = cookie.get("Name"), cookie.get("Value")
-    if not port or not cookie_name or not cookie_value:
+    if not port:
         return None
-    url = f"{conn.get('Scheme', 'http')}://localhost:{port}/graphql"
+    scheme = conn.get("Scheme", "http")
+    cookie = conn.get("SessionCookie") or {}
+    cookies = {cookie["Name"]: cookie["Value"]} if cookie.get("Name") and cookie.get("Value") else {}
     try:
-        resp = requests.post(
-            url, json={"query": "query { configuration { plugins } }"},
-            cookies={cookie_name: cookie_value}, timeout=10,
-        )
+        # verify=False: a loopback call to the Stash process that started this script (its certificate is for its public name).
+        resp = requests.post(f"{scheme}://localhost:{port}/graphql", json={"query": query}, cookies=cookies, timeout=10,
+                             verify=(scheme != "https"))
         resp.raise_for_status()
-        plugins = (((resp.json().get("data") or {}).get("configuration") or {}).get("plugins") or {})
-        sidecar_url = (plugins.get("stash-release-manager") or {}).get("sidecarUrl") or "http://localhost:6961"
-        return sidecar_url.rstrip("/")
+        body = resp.json()
+        if body.get("errors"):
+            return None
+        return body.get("data") or None
     except Exception:
         return None
 
 
-def _sync_stash_connection(sidecar_url, args):
-    """Stash's own connection info now lives in this plugin's native
-    settings (stash-release-manager.yml's `settings.stashUrl`/
-    `stashApiKey`), not the Connections tab -- see core.js's runOp(),
-    which passes both fresh on every single call the same way it
-    already did for sidecar_url. Pushed into the sidecar's own DB here
-    on every invocation (not just when the Settings page happens to be
-    open) since the sidecar's periodic background loops need a
-    persistently-stored value, not just a per-call one. Only writes a
-    non-empty value -- an empty stash_url/stash_api_key here just means
-    "not filled in on Stash's Plugin Settings page yet", and must not
-    stomp an already-working value (e.g. one still set the old way, or
-    the api/.env fallback the sidecar itself falls back to when nothing
-    is stored). `_put()` already swallows its own connection errors into
-    an `{"error": ...}` dict rather than raising, so a sync hiccup
-    (sidecar briefly unreachable) can't fail whatever the actual
-    requested mode was -- that mode's own _get/_post/etc. call will
-    surface the same connectivity problem anyway if it's real."""
-    for key, value in (("stash_url", args.get("stash_url")), ("stash_api_key", args.get("stash_api_key"))):
-        if value:
-            _put(sidecar_url, f"/settings/{key}", {"value": value}, timeout=10)
+def _resolve_sidecar_url(input_data):
+    """The configured sidecarUrl, from this plugin's own settings in Stash (same `configuration { plugins }` query core.js's
+    getSettings() uses) -- for hook calls, which carry none of the usual runOp() args."""
+    data = _stash_graphql(input_data, "query { configuration { plugins } }")
+    if data is None:
+        return None
+    plugins = (data.get("configuration") or {}).get("plugins") or {}
+    sidecar_url = (plugins.get("stash-release-manager") or {}).get("sidecarUrl") or "http://localhost:6961"
+    return sidecar_url.rstrip("/")
+
+
+# Modes that carry a sync from Stash: the page's first calls, so nothing has to be typed in on a new installation.
+_SYNC_MODES = {"setup_status", "connections_check", "stash_sync"}
+
+
+def _discover_from_stash(input_data):
+    """{api_key, boxes: [{name, endpoint, api_key}]} as Stash holds them (Settings > Security, Settings > Metadata Providers >
+    Stash-box endpoints), or None when Stash cannot be asked. An empty api_key means Stash has none generated."""
+    data = _stash_graphql(input_data, "query { configuration { general { apiKey stashBoxes { name endpoint api_key } } } }")
+    if data is None:
+        return None
+    general = (data.get("configuration") or {}).get("general") or {}
+    boxes = [{"name": b.get("name") or "", "endpoint": b.get("endpoint") or "", "api_key": b.get("api_key") or ""}
+             for b in (general.get("stashBoxes") or []) if isinstance(b, dict)]
+    return {"api_key": general.get("apiKey") or "", "boxes": boxes}
+
+
+def _sync_from_stash(sidecar_url, input_data, args):
+    """Hands what Stash knows to the sidecar (POST /stash-boxes/sync) and returns the sidecar's report -- which never contains a
+    key, so it can go back to the browser. `add` (endpoints to add as providers) and `overwrite` come from the setup guide's
+    buttons; `stash_url_suggested` is the address the browser uses for Stash, taken over only while the sidecar has none.
+    Done on every call of a sync mode, not once: the sidecar's background jobs need a persistently stored key, and a key
+    regenerated in Stash is picked up the next time the page is open. `_post()` swallows connection errors into an
+    {"error": ...} dict, so a hiccup here cannot fail the requested mode."""
+    found = _discover_from_stash(input_data)
+    body = {
+        "stash_api_key": found["api_key"] if found else "",
+        "boxes": found["boxes"] if found else [],
+        "stash_url_suggested": args.get("stash_url_suggested") or "",
+        "add": args.get("add") or [],
+        "overwrite": bool(args.get("overwrite")),
+    }
+    report = _post(sidecar_url, "/stash-boxes/sync", body, timeout=15)
+    if isinstance(report, dict) and "error" not in report:
+        report["discovered"] = found is not None
+    return report
 
 
 def _indexer_body(args):

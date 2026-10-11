@@ -1066,8 +1066,123 @@
       ]),
       studioView.node,
       planSlot,
+      buildOrganizeMoviesSection(),
     ]);
     return section;
+  }
+
+  // Existing films against the movie templates (v0.202.0, api/library_organize.py movies_plan): the film files in the movie folders that do not
+  // sit where Settings > Import & Naming > Movies/Groups would put them. Rename / move per row or all at once; every row can be played first.
+  function buildOrganizeMoviesSection() {
+    const { el, confirmInline } = window.SRW;
+    const status = el('span', { className: 'srw-key-status' });
+    const slot = el('div');
+    const short = (p) => p.replace(/^\/data\//, '');
+
+    function itemRow(x, kind) {
+      const rowStatus = el('span', { className: 'srw-key-status' });
+      const parts = [
+        window.SRW.buildStashLink('scene', x.scene_id),
+        el('span', { className: 'srw-release-title', textContent: ` ${x.title}` }),
+        x.diff ? el('span', { className: 'srw-history-category', textContent: x.diff }) : null,
+        el('div', { className: 'srw-review-box' }, [
+          el('span', { className: 'srw-history-message', textContent: x.new_path ? `${short(x.path)}\n→ ${short(x.new_path)}` : short(x.path) }),
+        ]),
+      ];
+      if (kind === 'rename' || kind === 'move') {
+        parts.push(el('button', {
+          className: 'srw-btn', textContent: kind === 'rename' ? 'Rename' : 'Move',
+          onClick: async (e) => {
+            e.target.disabled = true; rowStatus.textContent = ' working…';
+            const r = await window.SRW.runOp('organize_movies_apply', { file_ids: [x.file_id], kinds: [kind] });
+            const failed = (r.failed || [])[0];
+            rowStatus.textContent = r.error ? ` error: ${r.error}` : failed ? ` failed: ${failed.reason}` : ' done';
+            if (!r.error && !failed) check(true); else e.target.disabled = false;
+          },
+        }), rowStatus);
+      } else {
+        parts.push(el('span', { className: 'srw-release-date', textContent: x.reason || x.check || '' }));
+      }
+      return el('li', { className: 'srw-release-item' }, parts);
+    }
+
+    function group(label, items, kind, hint) {
+      const g = el('details', { className: 'srw-date-group' }, [el('summary', { textContent: `${label} — ${items.length}` })]);
+      window.SRW.rememberOpen(g, `organize-movies:${kind}`, kind === 'rename' || kind === 'move');
+      if (hint) g.appendChild(el('p', { className: 'srw-hint', textContent: hint }));
+      if ((kind === 'rename' || kind === 'move') && items.length) {
+        // "All at once" works one KIND of difference at a time (year, capitals, title, ...): the kinds differ a lot in how safe a bulk change is.
+        const counts = {};
+        items.forEach((x) => { counts[x.diff || 'other'] = (counts[x.diff || 'other'] || 0) + 1; });
+        const kindSelect = el('select', {}, [
+          el('option', { value: '', textContent: 'Apply all of one kind…' }),
+          ...Object.keys(counts).sort().map((k) => el('option', { value: k, textContent: `${k} (${counts[k]})` })),
+        ]);
+        const bulkStatus = el('span', { className: 'srw-key-status' });
+        const verb = kind === 'rename' ? 'Rename' : 'Move';
+        const bulkBtn = el('button', { className: 'srw-btn srw-btn-primary', textContent: `${verb} all of the chosen kind` });
+        bulkBtn.disabled = true;
+        kindSelect.addEventListener('change', () => {
+          bulkBtn.disabled = !kindSelect.value;
+          bulkBtn.textContent = kindSelect.value ? `${verb} all ${counts[kindSelect.value]} (${kindSelect.value})` : `${verb} all of the chosen kind`;
+        });
+        bulkBtn.addEventListener('click', () => confirmInline(bulkBtn, `${verb} ${counts[kindSelect.value]} film file(s) (${kindSelect.value})? Stash keeps each scene and group.`, async () => {
+          const chosen = items.filter((x) => (x.diff || 'other') === kindSelect.value);
+          bulkStatus.textContent = ' working -- the folders are rescanned afterwards, this can take a while…';
+          const r = await window.SRW.runOp('organize_movies_apply', { file_ids: chosen.map((x) => x.file_id), kinds: [kind] });
+          bulkStatus.textContent = r.error ? ` error: ${r.error}` : ` done ${(r.done || []).length}, failed ${(r.failed || []).length} (details in History)`;
+          check(true);
+        }));
+        g.appendChild(el('div', { className: 'srw-toolbar' }, [kindSelect, bulkBtn, bulkStatus]));
+      }
+      const view = window.SRW.buildFilteredPagedList({
+        filters: ['search'], perPage: 50, emptyText: 'None.',
+        fetchPage: window.SRW.localPageFetcher(() => items, { text: (x) => `${x.title || ''} ${x.path || ''}` }),
+        renderItems: (page) => el('ul', { className: 'srw-release-list' }, page.map((x) => (kind === 'multi'
+          ? el('li', { className: 'srw-release-item' }, [
+            window.SRW.buildStashLink('scene', x.scene_id),
+            el('span', { className: 'srw-release-title', textContent: ` ${x.title}` }),
+            el('span', { className: 'srw-history-message', textContent: x.paths.map(short).join('\n') }),
+          ])
+          : itemRow(x, kind)))),
+      });
+      g.appendChild(view.node);
+      view.reset();
+      return g;
+    }
+
+    async function check(keep) {
+      if (!keep) slot.replaceChildren(el('p', { className: 'srw-hint', textContent: 'Checking the film files…' }));
+      status.textContent = '';
+      const p = await window.SRW.runOp('organize_movies_plan');
+      if (p.error) { slot.replaceChildren(el('p', { textContent: `Error: ${p.error}` })); return; }
+      const differing = ['rename', 'move', 'conflict', 'needs_check'].reduce((n, k) => n + (p[k] || []).length, 0);
+      slot.replaceChildren(
+        el('p', { className: 'srw-hint', textContent: `${p.in_place || 0} film file(s) already sit where the templates put them; ${differing} differ.` }),
+        group('Rename in the same folder', p.rename || [], 'rename'),
+        group('Move to another folder', p.move || [], 'move'),
+        group('Name conflict (not touched)', p.conflict || [], 'conflict',
+          'The target name is already taken, or two files want the same name. Decide which file to keep.'),
+        group('Needs a check first (not touched)', p.needs_check || [], 'check',
+          'A film of several scenes where a scene has no scene number in its group, or a scene in several groups. Fix it in Stash (Group > scene number), then check again.'),
+        group('Scenes with several files (not touched)', p.multi_file || [], 'multi'),
+      );
+    }
+
+    return el('div', { className: 'srw-settings-section' }, [
+      el('h4', { textContent: 'Movies / groups: existing films vs. the movie templates' }),
+      el('p', {
+        className: 'srw-hint',
+        textContent: 'Checks every film file in the movie folders (Movies/, movies/ and the first folder of the movie template) against Settings > Import & Naming > '
+          + 'Movies/Groups: title and year come from the Stash group, the part number from the scene number. Rename / move per file, or all files of one kind of difference at once (year, capitals, title, file name ...); Stash keeps the '
+          + 'scenes and groups, same-name .nfo/.srt files go along, and a genre folder (e.g. Movies/Anal/) is left when it still holds other files. Nothing changes until you click.',
+      }),
+      el('div', { className: 'srw-toolbar' }, [
+        el('button', { className: 'srw-btn', textContent: 'Check films', onClick: () => check(false) }),
+        status,
+      ]),
+      slot,
+    ]);
   }
 
   // ==================== Import folder (2026-09-29, api/library_import.py) ====================

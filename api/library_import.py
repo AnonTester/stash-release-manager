@@ -679,6 +679,14 @@ class Importer(Organizer):
         plan = self._analyse_scenes(root, [scene], identify=False)
         item = plan["items"][0]
         if item["kind"] not in ("movie", "ready"):
+            # a scene of the Whisparr library folder (scenes/) with a provider id: the Organize library engine plans it (v0.203.0)
+            plain = Organizer(self.db, self.stash, self.stashdb, self.theporndb, self.to_local, self.setting, get_whisparr_client=self.get_whisparr)
+            plain.DRIFT_WATCH_SECONDS = self.DRIFT_WATCH_SECONDS
+            handled = plain.organized_library_scene(scene, mode)
+            if handled.get("handled"):
+                if handled.get("note"):
+                    return self._hook_note(scene, handled["note"], mode)
+                return handled
             return self._hook_note(scene, f"was not moved: {item['how'] or item['kind']}", mode)
         if not item["new_path"] or item["new_path"] == path:
             return self._hook_note(scene, "is already where it belongs", mode)

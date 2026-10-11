@@ -87,8 +87,9 @@
     // 'favorites' | 'tag' -- decides the entity button's label; loaded
     // once per page visit, the backend decides the actual action anyway.
     let watchMode = 'favorites';
+    let catalogOnWatch = 'off'; // Settings: off / ask / auto -- load the catalog of a newly watched StashDB entity
     window.SRW.runOp('settings_get_all')
-      .then((settings) => { if (settings && settings.watchlist_source) watchMode = settings.watchlist_source; })
+      .then((settings) => { if (settings && settings.watchlist_source) watchMode = settings.watchlist_source; if (settings && settings.catalog_on_watch) catalogOnWatch = settings.catalog_on_watch; })
       .catch(() => {});
     let currentResults = [];
     let currentTotal = null;
@@ -215,6 +216,7 @@
             ? (watched ? ' created & added to watchlist' : ' created & favorited')
             : (watched ? ' added to watchlist' : ' favorited');
           btn.textContent = watched ? 'Watching' : 'Favorited';
+          if (provider !== 'theporndb' && catalogOnWatch !== 'off') offerCatalogLoad(card, entity, entityType);
         } catch (err) {
           status.textContent = ` error: ${err.message}`;
           btn.disabled = false;
@@ -223,6 +225,27 @@
       card.appendChild(btn);
       card.appendChild(status);
       return card;
+    }
+
+    // Setting "Load the catalog for new watchlist entries": 'ask' = a button with a confirmation, 'auto' = starts at once.
+    function offerCatalogLoad(card, entity, entityType) {
+      const { el } = window.SRW;
+      const status = el('span', { className: 'srw-key-status' });
+      const start = async () => {
+        status.textContent = ' starting...';
+        try {
+          const r = await window.SRW.runOp('backlog_load_catalog', {
+            provider: provider, entity_type: entityType, entity_stashdb_id: entity.id, name: entity.name,
+          });
+          status.textContent = r.error ? ` error: ${r.error}`
+            : (r.started ? ` loading ${r.years.length} year(s) in the background -- see Missing from Catalog` : ' nothing to load (all years loaded or outside the date window)');
+        } catch (err) { status.textContent = ` error: ${err.message}`; }
+      };
+      if (catalogOnWatch === 'auto') { start(); card.appendChild(status); return; }
+      const loadBtn = el('button', { className: 'srw-btn', textContent: 'Load releases' });
+      loadBtn.addEventListener('click', () => window.SRW.confirmInline(loadBtn, `Load the releases of "${entity.name}" now?`, start));
+      card.appendChild(loadBtn);
+      card.appendChild(status);
     }
 
     function buildSceneCard(scene) {

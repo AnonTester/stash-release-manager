@@ -64,8 +64,10 @@ def _first_folder(fmt):
     return first if first and "{" not in first and "<" not in first else ""
 
 
-def sanity(stash, setting, db=None):
-    """{ok, hook, renamers, issues: [{level: error|warning|info|ok, text}]} -- see the module docstring."""
+def sanity(stash, setting, db=None, show_renamers=False):
+    """{ok, hook, renamers, issues: [{level: error|warning|info|ok, text}]} -- see the module docstring.
+    Other renamers are only REPORTED while the Organized hook is on (two renamers at work at once is the conflict) -- or when `show_renamers`
+    is set, which the plugin does after a manual move was held back by the guard (v0.202.2)."""
     issues = []
     hook = (setting("organized_hook") or "off").strip()
 
@@ -77,14 +79,12 @@ def sanity(stash, setting, db=None):
         issues.append({"level": "warning", "text": f"Stash's plugin list could not be read ({e}): other renaming plugins were not looked for."})
     else:
         active = [r for r in renamers if r["enabled"]]
-        if active:
-            issues.append({"level": "error" if hook == "on" else "warning", "text": conflict_text(active)
-                           + (" The Organized hook is on: it is held back (preview only) as long as this is the case." if hook == "on" else "")})
-        for r in renamers:
-            if not r["enabled"]:
-                issues.append({"level": "info", "text": f"{r['name']} is installed but disabled -- fine. Do not enable it together with this plugin's moving functions."})
-        if not renamers:
-            issues.append({"level": "ok", "text": "No other plugin that renames or moves files was found in Stash."})
+        if hook == "on" or show_renamers:
+            if active:
+                issues.append({"level": "error" if hook == "on" else "warning", "text": conflict_text(active)
+                               + (" The Organized hook is on: it is held back (preview only) as long as this is the case." if hook == "on" else "")})
+            else:
+                issues.append({"level": "ok", "text": "No other enabled plugin that renames or moves files was found in Stash."})
 
     # 2. target folders inside a Stash library path
     root = (setting("whisparr_root_folder_path") or "/data").rstrip("/")

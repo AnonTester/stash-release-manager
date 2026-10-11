@@ -1,8 +1,10 @@
 """Environment-based configuration for the sidecar. Values come from
 the container/process environment (see docker-compose.yml / .env),
 not Stash plugin settings -- the exec bridge only forwards the
-sidecar URL, everything else the sidecar needs to reach Stash/StashDB/
-Whisparr lives here so the sidecar can also run standalone.
+sidecar URL; since v0.186.0 it also hands over what it reads from Stash
+itself (API key, stash-box keys, see stashbox_sync.py). Everything else
+the sidecar needs to reach Stash/StashDB/Whisparr lives here so the
+sidecar can also run standalone.
 """
 import os
 

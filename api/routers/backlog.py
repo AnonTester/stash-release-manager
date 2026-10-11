@@ -31,6 +31,7 @@ from pydantic import BaseModel
 
 import scene_alias
 import backlog_repo
+import metadata_provider_repo
 import release_repo
 import watchlist_repo
 from routers.settings import resolve_whisparr_quality_profiles
@@ -60,9 +61,19 @@ def init_backlog_router(db, get_stashdb_client, get_stash_client, get_whisparr_c
     )
 
 
+def _client(provider):
+    client = _get_stashdb_client(provider)  # main.get_provider_client
+    if client is None:
+        raise HTTPException(400, f"provider {provider!r} is not configured or disabled")
+    return client
+
+
 def _check_stashdb_only(provider, entity_type):
-    if provider != "stashdb":
-        raise HTTPException(400, "Backlog browsing only supports StashDB-sourced entities")
+    """StashDB or an added stash-box (FansDB, JAVStash, ...): all speak the same protocol. ThePornDB has no stash-box year catalog."""
+    if provider == "theporndb":
+        raise HTTPException(400, "Backlog browsing is not available for ThePornDB entities")
+    if provider != "stashdb" and metadata_provider_repo.get_one(_db, provider) is None:
+        raise HTTPException(400, f"unknown metadata provider {provider!r}")
     if entity_type not in ("studio", "performer"):
         raise HTTPException(400, "entity_type must be 'studio' or 'performer'")
 
@@ -86,7 +97,7 @@ def years(provider: str, entity_type: str, entity_stashdb_id: str, refresh: bool
     if not refresh:
         overview = backlog_repo.get_year_overview(_db, provider, entity_type, entity_stashdb_id)
     if overview is None:
-        counts = _get_stashdb_client().count_scenes_by_year(entity_type, entity_stashdb_id)
+        counts = _client(provider).count_scenes_by_year(entity_type, entity_stashdb_id)
         overview = backlog_repo.set_year_overview(_db, provider, entity_type, entity_stashdb_id, counts)
     # 2026-09-26: plus the entity's date window and the explicitly
     # loaded years, for the panel's window editor / "All" / markings.
@@ -171,7 +182,11 @@ def fetch_year(provider: str, entity_type: str, entity_stashdb_id: str, year: in
     for scenes that are already owned when the fetch happens, rather
     than stored-then-cleared a moment later."""
     _check_stashdb_only(provider, entity_type)
-    client = _get_stashdb_client()
+    return _fetch_year_impl(provider, entity_type, entity_stashdb_id, year)
+
+
+def _fetch_year_impl(provider, entity_type, entity_stashdb_id, year):
+    client = _client(provider)
     scenes = list(client.fetch_scenes_for_year(entity_type, entity_stashdb_id, year))
     # Date window (2026-09-26): an edge year only keeps its in-window part.
     window = _window(provider, entity_type, entity_stashdb_id)
@@ -192,6 +207,68 @@ def fetch_year(provider: str, entity_type: str, entity_stashdb_id: str, year: in
             "outside_window": total_seen - len(scenes)}
 
 
+def catalog_years(provider, entity_type, entity_stashdb_id):
+    """The years a 'load the catalog' run would fetch: every year the entity has scenes in, inside the date window (the entry's own From/Until, or the
+    global default From; no window = all), minus the years already loaded."""
+    overview = backlog_repo.get_year_overview(_db, provider, entity_type, entity_stashdb_id)
+    if overview is None:
+        counts = _client(provider).count_scenes_by_year(entity_type, entity_stashdb_id)
+        overview = backlog_repo.set_year_overview(_db, provider, entity_type, entity_stashdb_id, counts)
+    entry = watchlist_repo.get_entry(_db, provider, entity_type, entity_stashdb_id)
+    if entry is not None:
+        w_from, w_until, _ = watchlist_repo.effective_window(_db, entry)
+    else:
+        from routers.settings import get_setting_value
+        w_from, w_until = (get_setting_value(_db, "default_window_from", "") or "").strip() or None, None
+    loaded = set(backlog_repo.loaded_years(_db, provider, entity_type, entity_stashdb_id))
+    years = []
+    for y, count in (overview.get("years") or {}).items():
+        y = int(y)
+        if not count or y in loaded:
+            continue
+        if w_from and y < int(w_from[:4]):
+            continue
+        if w_until and y > int(w_until[:4]):
+            continue
+        years.append(y)
+    return sorted(years, reverse=True)
+
+
+def load_catalog(provider, entity_type, entity_stashdb_id, name=""):
+    """Fetches the catalog year by year (newest first) as 'backlog' -- the same per-year fetch the entity panel uses. Blocking: run it in a thread."""
+    import time
+    import logging
+    log = logging.getLogger("backlog")
+    try:
+        years = catalog_years(provider, entity_type, entity_stashdb_id)
+        log.info("catalog load %s %s %s: %d year(s)", provider, entity_type, name or entity_stashdb_id, len(years))
+        delay = getattr(_client(provider), "delay", 0.3)
+        stored = 0
+        for y in years:
+            stored += _fetch_year_impl(provider, entity_type, entity_stashdb_id, y)["scenes_stored"]
+            time.sleep(delay)
+        log.info("catalog load %s %s: %d scene(s) stored", entity_type, name or entity_stashdb_id, stored)
+        return {"years": years, "stored": stored}
+    except Exception:
+        log.exception("catalog load failed for %s %s", entity_type, name or entity_stashdb_id)
+        return {"error": "catalog load failed, see the sidecar log"}
+
+
+class CatalogBody(BaseModel):
+    name: str = ""
+
+
+@router.post("/{provider}/{entity_type}/{entity_stashdb_id}/load-catalog")
+def start_catalog_load(provider: str, entity_type: str, entity_stashdb_id: str, body: CatalogBody):
+    """Starts the catalog load in the background (can take minutes) and says how many years it will fetch."""
+    import threading
+    _check_stashdb_only(provider, entity_type)
+    years = catalog_years(provider, entity_type, entity_stashdb_id)
+    if years:
+        threading.Thread(target=load_catalog, args=(provider, entity_type, entity_stashdb_id, body.name), daemon=True).start()
+    return {"started": bool(years), "years": years}
+
+
 PAIRING_STATUSES = ("backlog", "sent_to_whisparr", "import_failed")  # what the Missing from Catalog panel lists
 PAIRING_BATCH = 200  # scenes per call (8 StashDB requests); the panel calls again until nothing remains
 
@@ -205,7 +282,7 @@ def pairings(provider: str, entity_type: str, entity_stashdb_id: str):
     missing = release_repo.list_scenes_missing_pairing(_db, provider, entity_type, entity_stashdb_id, PAIRING_STATUSES)
     part = missing[:PAIRING_BATCH]
     if part:
-        found = _get_stashdb_client().get_scenes_cast_batch(part)
+        found = _client(provider).get_scenes_cast_batch(part)
         for sid in part:
             cast = found.get(sid)
             release_repo.set_pairing_for_scene(_db, provider, sid, release_repo.pairing_code(cast) if sid in found else "",
@@ -240,7 +317,7 @@ def completeness(provider: str, entity_type: str, entity_stashdb_id: str, local_
     docstring for the reasoning and the live studio/performer
     verification behind this tradeoff."""
     _check_stashdb_only(provider, entity_type)
-    stashdb_client = _get_stashdb_client()
+    stashdb_client = _client(provider)
 
     overview = backlog_repo.get_year_overview(_db, provider, entity_type, entity_stashdb_id)
     if overview is None:

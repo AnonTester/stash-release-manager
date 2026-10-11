@@ -344,6 +344,10 @@ DEFAULTS = {
     # this date (YYYY-MM-DD, '' = no limit). See watchlist_repo's
     # effective_window().
     "default_window_from": "",
+    # What happens when a Studio/Performer newly lands on the watchlist (v0.198.1): 'off' = nothing (the catalog is loaded by hand per year in the
+    # entity panel), 'ask' = the Search page asks after Watch/Favorite, 'auto' = the sidecar loads the catalog in the background for every new
+    # entry (from the date window's From on). StashDB and added stash-boxes, not ThePornDB.
+    "catalog_on_watch": "off",
     # VR limits (2026-09-26, user: Quest 3 / Steam Frame -- 6K is the
     # sweet spot, 7K/8K at 60 fps stutters; max 15 GB per scene, target
     # ~10 GB). Used by indexer_search.vr_candidate_problem() for fresh
@@ -602,6 +606,8 @@ def set_one(key: str, body: dict):
         raise HTTPException(400, f"whisparr_scope_preset must be one of {WHISPARR_SCOPE_PRESETS}, got {value!r}")
     if key == "content_scope" and value not in ("both", "scenes", "movies"):
         raise HTTPException(400, f"content_scope must be 'both', 'scenes' or 'movies', got {value!r}")
+    if key == "catalog_on_watch" and value not in ("off", "ask", "auto"):
+        raise HTTPException(400, f"catalog_on_watch must be 'off', 'ask' or 'auto', got {value!r}")
     if key == "scan_mode" and value not in ("feed", "per_entry"):
         raise HTTPException(400, f"scan_mode must be 'feed' or 'per_entry', got {value!r}")
     if key in ("provider_color_stashdb", "provider_color_theporndb") and value and not re.match(r"^#[0-9a-fA-F]{6}$", value):

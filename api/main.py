@@ -121,6 +121,7 @@ from routers.quality_profiles import router as quality_profiles_router, init_qua
 from routers.download_clients import router as download_clients_router, init_download_clients_router
 from routers.indexers import router as indexers_router, init_indexers_router
 from routers.metadata_providers import router as metadata_providers_router, init_metadata_providers_router
+from routers.stash_boxes import router as stash_boxes_router, init_stash_boxes_router
 from routers.indexer_search import router as indexer_search_router, init_indexer_search_router
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -316,7 +317,8 @@ def get_metadata_provider_clients():
     (unlike get_stashdb_client() etc., which stay lazy factories so a
     Settings-page edit takes effect on the very next call)."""
     return {
-        p["key"]: StashDBClient(p["api_key"], url=p["url"], delay=_get_setting("stashdb_query_delay"))
+        p["key"]: StashDBClient(p["api_key"], url=p["url"],
+                                delay=p["query_delay"] if p.get("query_delay") is not None else _get_setting("stashdb_query_delay"))
         for p in metadata_provider_repo.list_all(db, enabled_only=True)
     }
 
@@ -496,6 +498,21 @@ def _auto_handoff_release(entity_type, entity_stashdb_id, scene_stashdb_id):
     return result
 
 
+def _auto_catalog_for_added(added):
+    """Setting catalog_on_watch = 'auto': newly watched StashDB / added stash-box entries get their catalog loaded in the background, one entity after the other."""
+    if get_setting_value(db, "catalog_on_watch", "off") != "auto":
+        return
+    todo = [a for a in added if a.get("provider") != "theporndb" and a.get("stashdb_id")]
+    if not todo:
+        return
+
+    def run():
+        from routers.backlog import load_catalog
+        for a in todo:
+            load_catalog(a["provider"], a["entity_type"], a["stashdb_id"], a.get("name", ""))
+    threading.Thread(target=run, daemon=True, name="catalog-on-watch").start()
+
+
 def sync_and_scan():
     """Watchlist membership follows Stash's Favorite flag or the
     watchlist tag (see watchlist_source.py), not manual editing (see
@@ -510,7 +527,8 @@ def sync_and_scan():
     try:
         set_scan_progress("syncing")
         try:
-            sync_watchlist_from_favorites(db, get_stash_client(), get_theporndb_client())
+            synced = sync_watchlist_from_favorites(db, get_stash_client(), get_theporndb_client())
+            _auto_catalog_for_added(synced.get("added") or [])
         except Exception:
             set_scan_progress("idle")  # don't leave the progress stuck on "syncing"
             raise
@@ -1247,6 +1265,12 @@ def run_file_import():
 _indexer_search_lock = threading.Lock()
 
 
+def stuck_releases(pending):
+    """Releases the 'Search all stuck now' button looks at: on the wishlist, searched before (a result is recorded), nothing grabbed. A scene that was
+    found to be a duplicate of one we already have is left out -- there is nothing to find."""
+    return [r for r in pending if r.get("last_search_result") and r["last_search_result"] != "duplicate_download"]
+
+
 def _targeted_due(release):
     """RSS mode back-off: does this release get an indexer query of its own now? The feed covers everything
     that is posted from here on; a targeted search only helps for releases already older than the feed window.
@@ -1264,7 +1288,7 @@ def _targeted_due(release):
     return (datetime.now(timezone.utc) - last_dt).total_seconds() >= wait_hours * 3600
 
 
-def run_indexer_search():
+def run_indexer_search(only_stuck=False):
     """Milestone 3 (2026-09-19): retries indexer search+grab for every
     'sent_to_whisparr' release that hasn't been grabbed yet -- the
     periodic companion to the one-shot attempt send_to_whisparr()
@@ -1293,6 +1317,8 @@ def run_indexer_search():
     if not _indexer_search_lock.acquire(blocking=False):
         logger.info("run_indexer_search: already in progress, skipping this trigger")
         return {"skipped": True, "reason": "an indexer search run is already in progress"}
+    # only_stuck (button "Search all stuck now"): ONE targeted indexer query for every stuck release (searched before, nothing usable found), no
+    # feed pull, no upgrade search; everything else about the grab stays as in the normal run.
     try:
         whisparr_client = get_whisparr_client()
         search_source = get_search_source()
@@ -1306,7 +1332,9 @@ def run_indexer_search():
         # a release only gets its OWN indexer query when its back-off says so (_targeted_due). If the
         # feed can't be pulled the tick is skipped -- never a fallback to hundreds of targeted queries.
         feed, targeted_used = None, 0
-        if (get_setting_value(db, "search_mode", "polling") == "rss" and search_source is not None
+        if only_stuck:
+            pending = stuck_releases(pending)
+        elif (get_setting_value(db, "search_mode", "polling") == "rss" and search_source is not None
                 and getattr(search_source, "available", False)):
             try:
                 feed = FeedSource.fetch(search_source)
@@ -1353,7 +1381,9 @@ def run_indexer_search():
                 movie = (whisparr_client.find_by_stash_id(scene_stashdb_id)
                          if uses_whisparr(db, release["provider"]) else None)
                 source_for_release, targeted = search_source, False
-                if feed is not None:
+                if only_stuck:
+                    targeted = True
+                elif feed is not None:
                     targeted = _targeted_due(release)
                     source_for_release = search_source if targeted else feed
                 if movie is None:
@@ -1404,7 +1434,7 @@ def run_indexer_search():
         # Automatic upgrade searches (2026-09-26, off by default), a few per
         # run so indexer API limits aren't spent on upgrades alone.
         upgrades_grabbed = []
-        if get_setting_value(db, "upgrade_search_enabled", "false") == "true" and _upgrade_search_due():
+        if not only_stuck and get_setting_value(db, "upgrade_search_enabled", "false") == "true" and _upgrade_search_due():
             limit = int(float(get_setting_value(db, "upgrade_search_per_run", "20") or 20))
             for cand_id in upgrades.due_candidates(db, limit):
                 try:
@@ -1422,6 +1452,8 @@ def run_indexer_search():
         summary = _job_summary("indexer_search", result)
         if summary:
             history.event(summary[0], "job", summary[1])
+        if only_stuck:
+            history.event("info", "job", f"Search all stuck: {len(pending)} release(s) searched, {len(grabbed)} grabbed")
         return result
     finally:
         _indexer_search_lock.release()
@@ -1469,7 +1501,7 @@ init_connections_router({
     "prowlarr": get_prowlarr_client,
     "sabnzbd": get_sabnzbd_client,
 }, get_dynamic_factories=get_metadata_provider_factories)
-init_backlog_router(db, get_stashdb_client, get_stash_client, get_whisparr_client)
+init_backlog_router(db, get_provider_client, get_stash_client, get_whisparr_client)
 init_maintenance_router(db, get_stash_client, get_stashdb_client, vr_job, _fix_wrong_download_for,
                         upgrade_search=run_upgrade_search, cutoff_resolution=_cutoff_resolution,
                         get_provider_client=get_provider_client, to_local=_stash_path_to_local,
@@ -1486,10 +1518,20 @@ init_file_import_router(
 init_search_router(db, get_stashdb_client, get_theporndb_client, get_stash_client, get_whisparr_client,
                     get_search_source, settings, get_provider_client=get_provider_client)
 init_quality_profiles_router(db)
-init_download_clients_router(db)
+init_download_clients_router(db, get_prowlarr_client_if_configured)
 init_indexers_router(db)
 init_metadata_providers_router(db)
-init_indexer_search_router(run_indexer_search)
+init_stash_boxes_router(db)
+def _stuck_for_button():
+    if resolve_whisparr_scope_preset(db) == "full_whisparr":
+        return []  # Whisparr searches by itself, nothing for this program to query
+    source = get_search_source()
+    if source is None or not getattr(source, "available", False):
+        return []  # no indexer / Prowlarr to ask
+    return stuck_releases(release_repo.list_sent_to_whisparr_without_grab(db))
+
+
+init_indexer_search_router(run_indexer_search, _stuck_for_button)
 
 
 def _get_setting(key):
@@ -1651,8 +1693,9 @@ def _connections_ready(job, *keys):
         return True
     if job not in _not_ready_logged:
         _not_ready_logged.add(job)
-        where = {"stash_url": "Stash URL: Stash > Settings > Plugins > StashReleaseManager, then open the plugin page once",
-                 "stash_api_key": "Stash API key: Stash > Settings > Plugins > StashReleaseManager"}
+        where = {"stash_url": "Stash URL: open Release Manager in Stash once (the setup guide shows it), or set STASH_URL",
+                 "stash_api_key": "Stash API key: generate one in Stash > Settings > Security (only needed when Stash has a login), then open Release Manager once",
+                 "stashdb_api_key": "StashDB API key: add the StashDB endpoint in Stash > Settings > Metadata Providers, or enter it in the setup guide"}
         logger.info("%s waits: not entered yet: %s", job,
                     "; ".join(where.get(k, f"{k}: Settings > Connections in the plugin") for k in missing))
     return False
@@ -1721,6 +1764,35 @@ async def _stashdb_favorites_loop():
             except Exception:
                 logger.exception("StashDB favorites import failed")
         await asyncio.sleep(min(max(interval_hours, 0.1), 1) * 3600)  # re-check hourly: a changed/un-paused interval takes effect without a restart
+
+
+def run_box_favorites_import(provider):
+    """Same import as run_stashdb_favorites_import(), for one ADDED stash-box (FansDB, JAVStash, ...): its account favorites -> the local Favorite flag
+    of the entities that carry that box's endpoint. One direction, never removes a favorite."""
+    row = metadata_provider_repo.get_one(db, provider)
+    if row is None or not row["enabled"]:
+        return {"skipped": True, "reason": "provider not found or disabled"}
+    client = get_provider_client(provider)
+    result = _logged("stashdb_favorites", lambda: import_stashdb_favorites(client, get_stash_client(), endpoint=row["url"]))
+    _mark_ran(f"favorites:{provider}")
+    return result
+
+
+async def _box_favorites_loop():
+    """Added stash-boxes: favorites import every `favorites_interval` hours (empty = the StashDB interval setting). A failing box is logged and skipped."""
+    while True:
+        stashdb_hours = _get_setting("stashdb_favorites_sync_interval_hours")
+        if _connections_ready("Stash-box favorites import", "stash_url"):
+            for row in metadata_provider_repo.list_all(db, enabled_only=True):
+                hours = row.get("favorites_interval") if row.get("favorites_interval") is not None else stashdb_hours
+                if hours >= PAUSED_INTERVAL_THRESHOLD_HOURS or _hours_until_due(f"favorites:{row['key']}", hours) > 0:
+                    continue
+                try:
+                    await asyncio.to_thread(run_box_favorites_import, row["key"])
+                except Exception:
+                    logger.exception("favorites import failed for stash-box %s", row["key"])
+                    _mark_ran(f"favorites:{row['key']}")  # do not retry every hour while the box keeps failing
+        await asyncio.sleep(3600)
 
 
 async def _whisparr_blocklist_sync_loop():
@@ -1972,7 +2044,7 @@ async def lifespan(app: FastAPI):
         threading.Thread(target=run_details_backfill, daemon=True).start()
         threading.Thread(target=run_tags_backfill, daemon=True).start()
         tasks += [asyncio.create_task(loop()) for loop in (
-            _scan_loop, _safety_sweep_loop, _stashdb_favorites_loop, _whisparr_blocklist_sync_loop, _theporndb_identify_loop,
+            _scan_loop, _safety_sweep_loop, _stashdb_favorites_loop, _box_favorites_loop, _whisparr_blocklist_sync_loop, _theporndb_identify_loop,
             _inactive_check_loop, _duplicate_check_loop, _film_search_loop, _film_feed_loop, _import_check_loop, _file_import_loop,
             _indexer_search_loop, _recycle_bin_cleanup_loop)]
     app.state.job_tasks = tasks
@@ -2000,6 +2072,7 @@ app.include_router(quality_profiles_router)
 app.include_router(download_clients_router)
 app.include_router(indexers_router)
 app.include_router(metadata_providers_router)
+app.include_router(stash_boxes_router)
 app.include_router(indexer_search_router)
 app.include_router(history_router)
 app.include_router(compare_router)

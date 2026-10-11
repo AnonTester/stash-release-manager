@@ -238,18 +238,10 @@
   // no container rebuild needed) -- takes precedence over the matching
   // api/.env value when set, falls back to it when left empty. See
   // routers/settings.py's get_setting_value().
-  // Stash's own connection (URL/API key) intentionally does NOT have a
-  // field builder here anymore (2026-09-20, Connections-tab redesign) --
-  // moved to this plugin's native Stash Plugin Settings
-  // (stash-release-manager.yml's `settings.stashUrl`/`stashApiKey`,
-  // Stash's own Settings > Plugins page), per the user's explicit
-  // request: Stash itself is always required and shouldn't be
-  // editable/removable alongside the optional backends below (Whisparr/
-  // Prowlarr/etc.) in the new ARR-style "add/remove a connection" list.
-  // core.js's runOp() pushes it fresh on every call; the sidecar's own
-  // stash_url/stash_api_key settings keys still exist (see
-  // stash_release_manager_backend.py's _sync_stash_connection()) --
-  // this page just no longer manages them.
+  // Stash's own connection is not a field of the Connections list (2026-09-20): Stash itself is always required and shouldn't be
+  // removable alongside the optional backends (Whisparr/Prowlarr/...). Since v0.186.0 it is not a plugin setting either: the
+  // sidecar takes the API key (and the StashDB / ThePornDB / other stash-box keys) from Stash itself, see
+  // stash_release_manager_backend.py's _sync_from_stash(); only the Stash URL is confirmed in the setup guide's Stash step.
   //
   // `onSaved(key, value)` (added 2026-09-20) fires after a successful
   // save -- only the URL/API-key fields of each connection type pass it
@@ -691,7 +683,7 @@
   // actually configured shows its box, everything else is reachable via
   // an "Add connection" picker. Stash itself is deliberately NOT one of
   // these types -- see buildConnectionField's own comment above for why
-  // it moved to this plugin's native Stash Plugin Settings instead.
+  // it is handled in the setup guide's Stash step instead.
   //
   // `settingsKeys` is what "Remove" clears -- only the two fields that
   // decide `isConfigured`, never a type's other settings (sync
@@ -802,6 +794,96 @@
     return section;
   }
 
+  // The stash-boxes configured in Stash (Settings > Metadata Providers > Stash-box endpoints), v0.186.0. StashDB's and ThePornDB's keys are
+  // taken over automatically while the sidecar has none; every other stash-box is offered here and added as a provider on request (each
+  // provider is queried on every scan). `getReport()` is the last `stash_sync` report (no keys in it), `sync(args)` runs it again
+  // ({add: [endpoint, ...]} adds, {overwrite: true} also replaces keys already set), `onChange()` lets the caller refresh its own view.
+  function buildStashBoxImport({ getReport, sync, onChange }) {
+    const { el, confirmInline } = window.SRW;
+    const wrap = el('div', { className: 'srw-settings-section' });
+    const status = el('span', { className: 'srw-key-status' });
+    const selected = new Set();
+    const BUILTIN_LABEL = { stashdb: 'StashDB', theporndb: 'ThePornDB' };
+    const STATUS_TEXT = {
+      filled: 'key taken over from Stash', updated: 'key updated from Stash', added: 'added', present: 'set up',
+      available: 'not added yet', skipped: 'no API key in Stash',
+    };
+
+    async function run(args, busyText) {
+      status.textContent = ` ${busyText}...`;
+      try {
+        const r = await sync(args);
+        status.textContent = r && r.error ? ` error: ${r.error}` : '';
+      } catch (err) {
+        status.textContent = ` error: ${err.message}`;
+      }
+      selected.clear();
+      paint();
+      if (onChange) await onChange();
+    }
+
+    function paint() {
+      const report = getReport();
+      const head = el('h4', { textContent: 'Stash-boxes in your Stash' });
+      if (!report || report.error) {
+        wrap.replaceChildren(head, el('p', { className: 'srw-hint', textContent: `Could not ask the sidecar: ${(report && report.error) || 'no answer'}` }));
+        return;
+      }
+      if (report.discovered === false) {
+        wrap.replaceChildren(head, el('p', {
+          className: 'srw-hint',
+          textContent: 'Stash’s configuration could not be read from here. The keys can still be entered by hand.',
+        }));
+        return;
+      }
+      const boxes = report.boxes || [];
+      if (!boxes.length) {
+        wrap.replaceChildren(head, el('p', {
+          className: 'srw-hint', textContent: 'No stash-box endpoints are configured in Stash (Stash > Settings > Metadata Providers).',
+        }));
+        return;
+      }
+      const addable = boxes.filter((b) => b.status === 'available');
+      const rows = boxes.map((b) => {
+        const builtin = BUILTIN_LABEL[b.kind];
+        const label = !builtin ? b.name
+          : (b.name.toLowerCase() === builtin.toLowerCase() ? `${b.name} (built in)` : `${b.name} (${builtin}, built in)`);
+        const text = el('span', {}, [`${label} — `, el('span', { className: 'srw-hint', textContent: b.endpoint }), ` — ${STATUS_TEXT[b.status] || b.status}`]);
+        if (b.status !== 'available') return el('li', { className: 'srw-release-item' }, [text]);
+        const box = el('input', { type: 'checkbox' });
+        box.addEventListener('change', () => {
+          if (box.checked) selected.add(b.endpoint); else selected.delete(b.endpoint);
+          addBtn.disabled = selected.size === 0;
+        });
+        return el('li', { className: 'srw-release-item' }, [el('label', {}, [box, ' ', text])]);
+      });
+      const addBtn = el('button', {
+        className: 'srw-btn srw-btn-primary', textContent: 'Add selected as providers', disabled: true,
+        title: 'Each added provider is queried on every scan.',
+        onClick: () => run({ add: [...selected] }, 'adding'),
+      });
+      const updateBtn = el('button', {
+        className: 'srw-btn', textContent: 'Update keys from Stash',
+        title: 'Replaces the API keys set here with the ones Stash holds (for the endpoints listed above).',
+        onClick: (e) => confirmInline(e.currentTarget, 'Replace the keys set here with the ones from Stash?', () => run({ overwrite: true }, 'updating')),
+      });
+      const readBtn = el('button', { className: 'srw-btn', textContent: 'Read Stash again', onClick: () => run({}, 'reading') });
+      wrap.replaceChildren(
+        head,
+        el('p', {
+          className: 'srw-hint',
+          textContent: 'Read from your Stash, keys included, so nothing needs to be copied. StashDB and ThePornDB are filled in by themselves; '
+            + (addable.length ? 'tick the other ones you want this program to watch.' : 'there are no further ones to add.'),
+        }),
+        el('ul', { className: 'srw-release-list' }, rows),
+        el('div', { className: 'srw-toolbar' }, [addable.length ? addBtn : null, updateBtn, readBtn, status]),
+      );
+    }
+
+    paint();
+    return wrap;
+  }
+
   // Metadata Providers tab (2026-09-21, Stage B of the Metadata
   // Provider generalization -- see api/metadata_provider_repo.py for
   // the backend half). StashDB/ThePornDB are "builtin" types (own
@@ -872,6 +954,21 @@
     section.appendChild(el('label', {}, ['Name: ', nameInput])); section.appendChild(el('br'));
     section.appendChild(el('label', {}, ['URL: ', urlInput])); section.appendChild(el('br'));
     section.appendChild(el('label', {}, ['API key: ', apiKeyInput])); section.appendChild(el('br'));
+    const delayInput = el('input', {
+      type: 'number', min: '0', step: '0.1', value: provider.query_delay == null ? '' : String(provider.query_delay),
+      placeholder: 'default (as StashDB)',
+    });
+    section.appendChild(el('label', {}, ['Query delay (seconds between requests): ', delayInput]));
+    const favInput = el('input', {
+      type: 'number', min: '1', step: '1', value: provider.favorites_interval == null ? '' : String(provider.favorites_interval),
+      placeholder: 'default (as StashDB)',
+    });
+    section.appendChild(el('label', {}, ['Favorites sync interval (hours): ', favInput]));
+    section.appendChild(el('p', {
+      className: 'srw-hint',
+      textContent: 'We do not know this box\'s limits yet, so empty fields use the StashDB values (delay and favorites sync interval). Raise the delay if the box '
+        + 'rate-limits you. The favorites sync marks the account favorites of this box as Favorite in Stash (one direction, never removes one).',
+    }));
     section.appendChild(el('button', {
       className: 'srw-btn', textContent: 'Save',
       onClick: async () => {
@@ -884,6 +981,7 @@
           // returned, so `result.error` has to be checked explicitly.
           const result = await window.SRW.runOp('metadata_providers_update', {
             key: provider.key, name: nameInput.value, url: urlInput.value, api_key: apiKeyInput.value,
+            query_delay: delayInput.value, favorites_interval: favInput.value,
           });
           if (result && result.error) {
             saveStatus.textContent = ` error: ${result.error}`;
@@ -1046,6 +1144,20 @@
       buildAdder: () => buildAdder(),
     });
     await refresh();
+    // Stash-boxes configured in Stash: offered below the list (v0.186.0).
+    let stashReport = null;
+    const syncFromStash = async (args) => { stashReport = await window.SRW.runOp('stash_sync', args || {}); return stashReport; };
+    await syncFromStash();
+    section.appendChild(buildStashBoxImport({
+      getReport: () => stashReport,
+      sync: syncFromStash,
+      onChange: async () => {
+        Object.assign(effective, await window.SRW.runOp('settings_get_effective_connections'));
+        Object.assign(settings, await window.SRW.runOp('settings_get_all'));
+        await window.SRW.resetProviders();
+        refresh();
+      },
+    }));
     return section;
   }
 
@@ -1069,7 +1181,7 @@
   // sabnzbd_url/sabnzbd_api_key settings are migrated into one seeded
   // row here automatically (see db.py) -- nothing to re-enter on
   // upgrade.
-  async function buildDownloadClientsSection() {
+  async function buildDownloadClientsSection(onChanged) {
     const { el, buildManagedList } = window.SRW;
     const section = el('div', { className: 'srw-settings-section' }, [
       el('h4', { textContent: 'Download Clients' }),
@@ -1115,6 +1227,7 @@
           onClick: async () => {
             await window.SRW.runOp('download_clients_update', { id: client.id, ...client, enabled: !client.enabled });
             await refresh();
+            if (onChanged) onChanged();
           },
         }),
         el('button', {
@@ -1130,6 +1243,7 @@
             window.SRW.confirmInline(e.currentTarget, `Delete download client "${client.name}"?`, async () => {
               await window.SRW.runOp('download_clients_delete', { id: client.id });
               await refresh();
+              if (onChanged) onChanged();
             }, { danger: true });
           },
         }),
@@ -1196,7 +1310,47 @@
       typeSelect.addEventListener('change', syncType);
       syncType();
 
+      // The form's values in one place, used by Add / Save and by the Test button.
+      const collectBody = () => {
+        const torrent = typeSelect.value === 'qbittorrent';
+        return {
+          name: nameInput.value, type: typeSelect.value, protocol: torrent ? 'torrent' : 'usenet',
+          priority: parseInt(priorityInput.value, 10) || 25, url: urlInput.value.trim(),
+          api_key: torrent ? '' : apiKeyInput.value, username: torrent ? userInput.value : '', password: torrent ? passInput.value : '',
+          category: categoryInput.value || (torrent ? 'srm' : ''),
+          options: torrent ? { initial_state: stateSel.value, recent_priority: recentSel.value, older_priority: olderSel.value,
+            content_layout: layoutSel.value, sequential: seqBox.checked, first_last: flBox.checked, post_import_category: postCat.value,
+            remote_path: remotePath.value.trim(), local_path: localPath.value.trim() } : {},
+          enabled: existing ? existing.enabled : true,
+        };
+      };
+
+      // Prefill from Prowlarr's own download clients (Prowlarr hides the API key/password, so those are typed in).
+      const prowlarrRow = el('div', { hidden: true });
+      if (!existing) {
+        window.SRW.runOp('download_clients_from_prowlarr').then((list) => {
+          if (!Array.isArray(list) || !list.length) return;
+          const pick = el('select', {}, list.map((c, i) => el('option', { value: String(i), textContent: `${c.name} (${c.type}, ${c.url})` })));
+          const note = el('span', { className: 'srw-key-status' });
+          prowlarrRow.appendChild(el('label', {}, ['Take over from Prowlarr: ', pick]));
+          prowlarrRow.appendChild(el('button', {
+            type: 'button', className: 'srw-btn', textContent: 'Prefill',
+            onClick: () => {
+              const c = list[Number(pick.value)];
+              nameInput.value = c.name; typeSelect.value = c.type; syncType();
+              urlInput.value = c.url; userInput.value = c.username || '';
+              note.textContent = ' prefilled -- now enter the API key (or password): Prowlarr does not reveal it. Check that the address is reachable from this program (a container name from Prowlarr\'s network may not be).';
+              (c.type === 'sabnzbd' ? apiKeyInput : passInput).focus();
+            },
+          }));
+          prowlarrRow.appendChild(note);
+          prowlarrRow.appendChild(el('br'));
+          prowlarrRow.hidden = false;
+        }).catch(() => {});
+      }
+
       const form = el('div', { className: 'srw-dc-form' }, [
+        prowlarrRow,
         el('label', {}, ['Name: ', nameInput]), el('br'),
         el('label', {}, ['Type: ', typeSelect]), el('br'),
         el('label', {}, ['Priority: ', priorityInput]), el('br'),
@@ -1206,17 +1360,7 @@
         el('button', {
           className: 'srw-btn srw-btn-primary', textContent: existing ? 'Save' : 'Add client',
           onClick: async () => {
-            const torrent = typeSelect.value === 'qbittorrent';
-            const body = {
-              name: nameInput.value, type: typeSelect.value, protocol: torrent ? 'torrent' : 'usenet',
-              priority: parseInt(priorityInput.value, 10) || 25, url: urlInput.value,
-              api_key: torrent ? '' : apiKeyInput.value, username: torrent ? userInput.value : '', password: torrent ? passInput.value : '',
-              category: categoryInput.value || (torrent ? 'srm' : ''),
-              options: torrent ? { initial_state: stateSel.value, recent_priority: recentSel.value, older_priority: olderSel.value,
-                content_layout: layoutSel.value, sequential: seqBox.checked, first_last: flBox.checked, post_import_category: postCat.value,
-                remote_path: remotePath.value.trim(), local_path: localPath.value.trim() } : {},
-              enabled: existing ? existing.enabled : true,
-            };
+            const body = collectBody();
             if (!body.name || !body.url) {
               formStatus.textContent = ' name and URL are required';
               return;
@@ -1226,8 +1370,29 @@
                 : await window.SRW.runOp('download_clients_create', body);
               if (res && res.error) { formStatus.textContent = ` error: ${res.error}`; return; }
               await refresh();
+              if (onChanged) onChanged();
             } catch (err) {
               formStatus.textContent = ` error: ${err.message}`;
+            }
+          },
+        }),
+        // Checks what is typed into this form, saved or not (the per-client "Check" above only knows the saved clients).
+        el('button', {
+          className: 'srw-btn', textContent: 'Test connection', title: 'Checks the details entered above (nothing is saved)',
+          onClick: async (e) => {
+            const body = collectBody();
+            if (!body.url) { formStatus.textContent = ' enter the URL first'; return; }
+            e.target.disabled = true;
+            formStatus.textContent = ' checking...';
+            try {
+              const r = await window.SRW.runOp('download_clients_test', {
+                type: body.type, url: body.url, api_key: body.api_key, username: body.username, password: body.password,
+              });
+              formStatus.textContent = r && r.error ? ` error: ${r.error}` : (r && r.version ? ` ok (qBittorrent ${r.version})` : ' ok');
+            } catch (err) {
+              formStatus.textContent = ` error: ${err.message}`;
+            } finally {
+              e.target.disabled = false;
             }
           },
         }),
@@ -1237,7 +1402,6 @@
     }
 
     await refresh();
-    buildCheckConnection(section, 'SABnzbd', 'sabnzbd');
 
     // Torrents (v0.135.0): the *arr "Remove Completed" option, off by default.
     const settingsNow = await window.SRW.runOp('settings_get_all').catch(() => ({}));
@@ -1308,7 +1472,7 @@
   // docstring for why: confirmed against Whisparr's own source that
   // cutoff only governs upgrade decisions for an already-downloaded
   // file, never a fresh grab).
-  async function buildQualityProfilesSection(settings) {
+  async function buildQualityProfilesSection(settings, onChanged) {
     const { el, buildManagedList } = window.SRW;
     const section = el('div', { className: 'srw-settings-section' }, [
       el('h4', { textContent: 'Quality Profiles' }),
@@ -1452,6 +1616,7 @@
             window.SRW.confirmInline(e.currentTarget, `Delete quality profile "${profile.name}"?`, async () => {
               await window.SRW.runOp('quality_profiles_delete', { id: profile.id });
               await refreshAll();
+              if (onChanged) onChanged();
             }, { danger: true });
           },
         }),
@@ -1492,6 +1657,7 @@
               if (existing) await window.SRW.runOp('quality_profiles_update', { id: existing.id, ...body });
               else await window.SRW.runOp('quality_profiles_create', body);
               await refreshAll();
+              if (onChanged) onChanged();
             } catch (err) {
               formStatus.textContent = ` error: ${err.message}`;
             }
@@ -1583,7 +1749,7 @@
   // search backend above is "Direct indexers". Same managed-list shape
   // as Download Clients. API keys are write-only: the list only says
   // whether one is set, and leaving the field empty on Edit keeps it.
-  async function buildIndexersSection() {
+  async function buildIndexersSection(onChanged) {
     const { el, buildManagedList } = window.SRW;
     const section = el('div', { className: 'srw-settings-section' }, [
       el('h4', { textContent: 'Indexers (Newznab / Torznab)' }),
@@ -1629,6 +1795,7 @@
           onClick: async () => {
             await window.SRW.runOp('indexers_update', { ...ix, api_key: '', enabled: !ix.enabled });
             await refresh();
+            if (onChanged) onChanged();
           },
         }),
         el('button', {
@@ -1641,6 +1808,7 @@
             window.SRW.confirmInline(e.currentTarget, `Delete indexer "${ix.name}"?`, async () => {
               await window.SRW.runOp('indexers_delete', { id: ix.id });
               await refresh();
+              if (onChanged) onChanged();
             }, { danger: true });
           },
         }),
@@ -1705,6 +1873,7 @@
               return;
             }
             await refresh();
+            if (onChanged) onChanged();
           },
         }),
         formStatus,
@@ -1775,6 +1944,28 @@
       },
     }));
     section.appendChild(defaultFromStatus);
+    section.appendChild(el('br'));
+
+    // Catalog of new watchlist entries (v0.198.1)
+    const catalogSelect = el('select', {}, [
+      el('option', { value: 'off', textContent: 'Off (load by hand per year)' }),
+      el('option', { value: 'ask', textContent: 'Ask after Watch/Favorite on the Search page' }),
+      el('option', { value: 'auto', textContent: 'Automatically in the background' }),
+    ]);
+    catalogSelect.value = settings.catalog_on_watch || 'off';
+    const catalogStatus = el('span', { className: 'srw-key-status' });
+    section.appendChild(el('label', {
+      title: 'What happens when a Studio/Performer newly lands on the watchlist. Automatic loads every year inside the date window (From above) '
+        + 'as "Missing from Catalog" entries. StashDB and added stash-boxes (FansDB, JAVStash ...); not ThePornDB.',
+    }, ['Load the catalog of new entries: ', catalogSelect]));
+    section.appendChild(el('button', {
+      className: 'srw-btn', textContent: 'Save',
+      onClick: async () => {
+        const result = await window.SRW.runOp('settings_set', { key: 'catalog_on_watch', value: catalogSelect.value });
+        catalogStatus.textContent = result.error ? ` error: ${result.error}` : ' saved';
+      },
+    }));
+    section.appendChild(catalogStatus);
     section.appendChild(el('br'));
 
     const status = el('p', { className: 'srw-key-status' });
@@ -2943,7 +3134,7 @@
       el('h4', { textContent: 'Organized hook' }),
       el('p', { className: 'srw-hint', textContent: 'Off by default -- you decide whether to use it. When it is on, marking a scene Organized in Stash moves/renames it: a movie scene (in ONE group of Stash) '
         + 'goes to the movie template (Naming > Movies/Groups), a scene in an import source folder with a matching provider id goes to the naming scheme -- the same plan as Maintenance > Import folder, '
-        + 'for that one scene. Other scenes are left alone and History says why. Start with Preview. While another plugin that renames files (renamerOnUpdate ...) is enabled in Stash '
+        + 'for that one scene, and a scene with a provider id in the library folder scenes/ is brought to the naming scheme the way Organize library does it (fingerprint-checked, title and date from the provider, the studio in its provider spelling). Other scenes are left alone and History says why. Start with Preview. While another plugin that renames files (renamerOnUpdate ...) is enabled in Stash '
         + 'the hook is held back, see the Safety check above. The plugin has to be reloaded once for Stash to know the hook.' }),
       el('label', {}, [sw, ' Move / rename a scene when I mark it Organized in Stash']), state, modeRow,
     ]);
@@ -3593,6 +3784,9 @@
     const { el, notify } = window.SRW;
     container.innerHTML = '';
     container.appendChild(window.SRW.buildPageHeader('settings'));
+    // Reads Stash's own API key and stash-boxes into the sidecar first (v0.186.0), so everything below already sees them.
+    let stashReport = null;
+    try { stashReport = await window.SRW.runOp('stash_sync'); } catch (e) { /* the guide still works; the notes then say Stash could not be read */ }
     const [settings, effective, initial] = await Promise.all([
       window.SRW.runOp('settings_get_all'), window.SRW.runOp('settings_get_effective_connections'), window.SRW.runOp('setup_status'),
     ]);
@@ -3601,8 +3795,13 @@
     let current = 0;
     const stepDone = (key) => Boolean((status.steps.find((x) => x.key === key) || {}).done);
 
+    // Several things can ask for a refresh at about the same time (a field saved, an entry added, the Stash step's own check): only the
+    // newest request's answer is applied, so a slower, older answer cannot paint a stale status over it.
+    let statusSeq = 0;
     async function refreshStatus() {
+      const mine = ++statusSeq;
       const st = await window.SRW.runOp('setup_status');
+      if (mine !== statusSeq) return;
       if (st && !st.error) status = st;
       paintNav();
     }
@@ -3611,44 +3810,109 @@
       if (key.endsWith('_url')) effective[key] = value; else if (key.endsWith('_api_key')) effective[`${key}_set`] = !!value;
       refreshStatus();
     };
+    // Asks Stash again (args: {add: [...]} / {overwrite: true}) and brings this guide's copies of the settings and the status up to date.
+    async function resync(args = {}) {
+      const r = await window.SRW.runOp('stash_sync', args);
+      if (r && !r.error) stashReport = r;
+      Object.assign(effective, await window.SRW.runOp('settings_get_effective_connections'));
+      Object.assign(settings, await window.SRW.runOp('settings_get_all'));
+      await refreshStatus();
+      return r;
+    }
+    // What the last sync did to one built-in provider's key, as a line above that provider's own fields.
+    function builtinNote(kind, label) {
+      const box = ((stashReport && stashReport.boxes) || []).find((b) => b.kind === kind);
+      let text;
+      if (!stashReport || stashReport.error || stashReport.discovered === false) text = `Stash’s configuration could not be read, so the ${label} key has to be entered by hand.`;
+      else if (!box) text = `${label} is not configured in your Stash (Settings > Metadata Providers > Stash-box endpoints). Add it there, or enter the key below.`;
+      else if (box.status === 'skipped') text = `Your Stash has the ${label} endpoint but no API key for it. Enter the key below.`;
+      else if (box.status === 'filled' || box.status === 'updated') text = `The ${label} API key was taken over from your Stash.`;
+      else text = `The ${label} API key is set; your Stash has the endpoint ${box.endpoint}.`;
+      return note(text);
+    }
+    // The fields stay available as an override; they are folded away when the key is already there.
+    function overrideBox(label, open, content) {
+      const details = el('details', {}, [el('summary', { textContent: label }), content]);
+      details.open = open;
+      return details;
+    }
     const note = (text) => el('p', { className: 'srw-hint', textContent: text });
 
     const STEPS = [
-      { key: 'stash', title: 'Stash', intro: 'The sidecar reaches your Stash with the address and API key that you entered in the plugin\'s settings in Stash '
-          + '(Stash > Settings > Plugins > StashReleaseManager: “Stash URL” and “Stash API key”). Open this page once after saving them.',
+      { key: 'stash', title: 'Stash', intro: 'The sidecar needs the address under which it reaches your Stash. The API key (and the StashDB / ThePornDB / other '
+          + 'stash-box keys) are read from Stash itself, there is nothing to copy.',
         build: async () => {
+          const box = el('div');
           const out = el('p', { className: 'srw-hint', textContent: 'checking…' });
+          const keyNote = el('p', { className: 'srw-hint' });
+          const paintKey = () => {
+            const k = stashReport && !stashReport.error ? stashReport.stash_api_key : null;
+            if (stashReport && stashReport.discovered === false) keyNote.textContent = 'Stash’s configuration could not be read from here; enter the API key by hand below if your Stash has a login.';
+            else if (k === 'updated' || k === 'unchanged') keyNote.textContent = 'Stash API key: taken from your Stash.';
+            else if (effective.stash_api_key_set) keyNote.textContent = 'Stash API key: your Stash gave none; the stored one is used.';
+            else keyNote.textContent = 'Stash API key: none. Fine while your Stash has no login; with a login, generate an API key in Stash > Settings > Security and press “Check again”.';
+          };
+          const urlBox = el('div', { className: 'srw-settings-section' });
           const run = async () => {
             out.textContent = 'checking…';
+            await resync();
+            paintKey();
             const r = await window.SRW.runOp('connections_check', { only: 'stash' });
             const s = (r && r.stash) || {};
             out.textContent = r && r.error ? `Error: ${r.error}` : (s.ok ? 'Stash answers.' : `Stash does not answer: ${s.error || 'no address entered yet'}`);
             await refreshStatus();
           };
+          buildConnectionField(urlBox, {
+            label: 'Stash URL', key: 'stash_url', value: effective.stash_url || '', placeholder: window.location.origin,
+            onSaved: (key, value) => { settings[key] = value; effective[key] = value; run(); },
+          });
+          const hand = el('div', { className: 'srw-settings-section' });
+          buildConnectionField(hand, {
+            label: 'Stash API key', key: 'stash_api_key', value: '', isSecret: true,
+            placeholder: effective.stash_api_key_set ? '(set)' : '(not set)', onSaved: () => run(),
+          });
+          box.append(urlBox, keyNote, out,
+            el('button', { className: 'srw-btn', textContent: 'Check again', onClick: run }),
+            overrideBox('Enter the Stash API key by hand', !!(stashReport && stashReport.discovered === false), hand));
+          paintKey();
           run();
-          return el('div', {}, [out, el('button', { className: 'srw-btn', textContent: 'Check again', onClick: run })]);
+          return box;
         } },
-      { key: 'stashdb', title: 'StashDB', intro: 'Where new releases of the performers and studios you follow come from. Your StashDB account page shows the API key.',
-        build: () => buildStashDBConnectionSection(settings, effective, secretPlaceholder, onFieldSaved) },
+      { key: 'stashdb', title: 'StashDB', intro: 'Where new releases of the performers and studios you follow come from. The API key is taken from your Stash when '
+          + 'StashDB is set up there; your StashDB account page shows it otherwise.',
+        build: async () => {
+          const box = el('div');
+          box.append(builtinNote('stashdb', 'StashDB'),
+            overrideBox('StashDB address and API key', !stepDone('stashdb'), await buildStashDBConnectionSection(settings, effective, secretPlaceholder, onFieldSaved)));
+          return box;
+        } },
       { key: 'theporndb', title: 'ThePornDB', optional: true, intro: 'Optional: ThePornDB adds more studios and the movie wishlist. Skip it if you do not use it.',
-        build: async () => buildThePornDBConnectionSection(settings, effective, secretPlaceholder, onFieldSaved) },
+        build: async () => {
+          const box = el('div');
+          box.append(builtinNote('theporndb', 'ThePornDB'),
+            overrideBox('ThePornDB address and API key', !stepDone('theporndb'), await buildThePornDBConnectionSection(settings, effective, secretPlaceholder, onFieldSaved)));
+          return box;
+        } },
+      { key: 'stashboxes', title: 'Other stash-boxes', optional: true,
+        intro: 'Optional: further stash-boxes you set up in Stash (JAVStash, FansDB, ...) can be watched for new releases as well.',
+        build: async () => buildStashBoxImport({ getReport: () => stashReport, sync: resync, onChange: () => refreshStatus() }) },
       { key: 'search', title: 'Search', intro: 'Where releases are looked for: Prowlarr (one connection, all indexers) or your own Newznab indexers. One of the two is enough.',
         build: async () => {
           const box = el('div');
-          box.append(await buildSearchBackendSection(), buildProwlarrConnectionSection(settings, effective, secretPlaceholder, onFieldSaved), await buildIndexersSection());
+          box.append(await buildSearchBackendSection(), buildProwlarrConnectionSection(settings, effective, secretPlaceholder, onFieldSaved), await buildIndexersSection(() => refreshStatus()));
           return box;
         } },
       { key: 'download', title: 'Downloads', intro: 'Your download client, and where its finished downloads are for this sidecar: “SABnzbd’s own downloads path” is the '
           + 'folder as SABnzbd calls it, the local mount is the folder you mounted into this container (/downloads in the example).',
         build: async () => {
           const box = el('div');
-          box.appendChild(await buildDownloadClientsSection());
+          box.appendChild(await buildDownloadClientsSection(() => refreshStatus()));
           const paths = wrapSubsection(buildFileImportSection(settings), 'This sidecar’s own downloads mount');
           if (paths) box.appendChild(el('div', { className: 'srw-settings-section' }, [paths]));
           return box;
         } },
       { key: 'quality', title: 'Quality', intro: 'Which resolutions you accept. A release below the lowest one is never downloaded.',
-        build: () => buildQualityProfilesSection(settings) },
+        build: () => buildQualityProfilesSection(settings, () => refreshStatus()) },
       { key: 'content', title: 'Content & watchlist', optional: true, intro: 'What the plugin looks after (scenes, movies, or both) and whom it follows (your Stash favorites, or a tag).',
         build: async () => {
           const box = el('div');
@@ -3700,10 +3964,10 @@
       const st = STEPS[current];
       paintNav();
       const heading = el('h3', { textContent: `${current + 1}. ${st.title}${st.optional ? ' (optional)' : ''}` });
-      paneHost.replaceChildren(heading, st.intro ? note(st.intro) : null, note('Loading…'));
+      paneHost.replaceChildren(...[heading, st.intro ? note(st.intro) : null, note('Loading…')].filter(Boolean)); // (replaceChildren turns a null into the text "null")
       const body = await st.build();
       if (STEPS[current] !== st) return; // the user moved on while it was loading
-      paneHost.replaceChildren(heading, st.intro ? note(st.intro) : null, body);
+      paneHost.replaceChildren(...[heading, st.intro ? note(st.intro) : null, body].filter(Boolean));
       footer.replaceChildren(
         current > 0 ? el('button', { className: 'srw-btn', textContent: 'Back', onClick: () => show(current - 1) }) : null,
         current < STEPS.length - 1 ? el('button', { className: 'srw-btn srw-btn-primary', textContent: st.optional && !stepDone(st.key) ? 'Skip' : 'Next', onClick: () => show(current + 1) }) : null,

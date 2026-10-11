@@ -6,6 +6,29 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.204.0
+- Setup without copying, contributed by AnonTester: the plugin's only setting is the Sidecar API URL. The Stash API key and the StashDB / ThePornDB keys are read from Stash itself (the keys never pass the browser); the Stash URL is prefilled from the browser's address and confirmed in the setup guide. Other stash-boxes set up in Stash (FansDB, JAVStash ...) are offered as providers and created on request. "Update keys from Stash" overwrites typed keys on purpose.
+- The download client form has a "Test connection" button that checks the details as typed (qBittorrent or SABnzbd) before saving; the old check no longer assumes SABnzbd.
+
+## 0.203.1
+- Fix: the setup guide's "Finish" step showed the word "null". New FIRST_STEPS.md with screenshots (documentation).
+
+## 0.203.0
+- Organized hook: scenes with a provider id in the Whisparr library folder (scenes/) are handled too, planned and moved like Maintenance > Organize library does for one scene.
+
+## 0.202.0
+- Maintenance > Organize library checks existing films against the movie templates (folder, file name, year, capitals, edition notes such as "(DVD + Blu-ray Combo)") and offers to fix the differences. The warning about other renamers only appears while the Organized hook is on and another renamer is enabled.
+
+## 0.201.0
+- Activity: "Search all stuck now" sends one targeted indexer query for every stuck scene, after asking.
+
+## 0.200.0
+- Adding a performer or studio to the watchlist can load its catalog (setting: off / ask / automatic); the catalog works for every stash-box (FansDB, JAVStash ...), not only StashDB. Each stash-box has its own query delay and favorites interval (default: StashDB's); favorites of other boxes are synced too.
+- Download clients: "Take over from Prowlarr" prefills name, type and address from Prowlarr's own client.
+
+## 0.199.0
+- New metadata providers get different colours. Search page: wrapped scene cards no longer spill text into the neighbouring pill.
+
 ## 0.198.0
 - The Organized hook has its own section with a switch (off by default) and a mode (preview only / move for real).
 

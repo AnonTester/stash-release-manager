@@ -35,6 +35,8 @@ with db.connect() as c: seeded_profiles = c.execute("SELECT COUNT(*) FROM qualit
 check("fresh install: not complete, the five required steps are missing (quality only if no default profile is seeded)",
       not r["complete"] and {"Stash", "StashDB", "Search", "Downloads"} <= set(r["missing"]))
 check("fresh install: optional steps are not in 'missing'", "ThePornDB" not in r["missing"] and "Whisparr" not in r["missing"])
+check("fresh install: the Stash step points at the setup guide, not at plugin settings",
+      "setup guide" in steps["stash"]["detail"] and "plugin's settings" not in steps["stash"]["detail"])
 put("stash_url", "http://stash:9999"); put("stashdb_api_key", "k")
 steps, r = st()
 check("Stash URL + StashDB key: those two are done", steps["stash"]["done"] and steps["stashdb"]["done"])
@@ -51,5 +53,13 @@ check("complete when all required steps are done", r["complete"] and r["missing"
 check("optional ThePornDB / Whisparr stay open without breaking 'complete'", not steps["theporndb"]["done"] and not steps["whisparr"]["done"] and r["complete"])
 put("theporndb_api_key", "t")
 check("ThePornDB key marks that optional step done", st()[0]["theporndb"]["done"])
+import metadata_provider_repo  # noqa: E402
+steps, r = st()
+check("other stash-boxes: optional, open while no provider exists, never blocks 'complete'",
+      "stashboxes" in steps and not steps["stashboxes"]["done"] and not steps["stashboxes"]["required"] and r["complete"]
+      and "Other stash-boxes" not in r["missing"])
+metadata_provider_repo.create(db, "javstash", "JAVStash", "https://javstash.org/graphql", "k", True)
+steps, r = st()
+check("other stash-boxes: done once a provider is added, named in the detail", steps["stashboxes"]["done"] and "JAVStash" in steps["stashboxes"]["detail"])
 print("\nALL OK" if not FAILS else f"\n{len(FAILS)} FAILED")
 sys.exit(1 if FAILS else 0)

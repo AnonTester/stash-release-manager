@@ -105,11 +105,11 @@ def upgrades_search(cand_id: int, dry_run: bool = True):
 # --- Organize the library: rename / move (2026-09-28, library_organize.py) ---
 
 @router.get("/sanity")
-def sanity():
+def sanity(renamers: bool = False):
     """The safety check for the moving/renaming functions (renamer_check.py): other renaming plugins in Stash, target folders inside a Stash
     library, formats that give every scene one name, Whisparr scope, files moved again. Read-only."""
     importer = _importer()
-    return renamer_check.sanity(importer.stash, importer.setting, importer.db)
+    return renamer_check.sanity(importer.stash, importer.setting, importer.db, show_renamers=renamers)
 
 
 @router.get("/organize/studios")
@@ -127,6 +127,19 @@ def organize_apply(body: dict):
     kinds = [k for k in (body.get("kinds") or ["rename", "move"]) if k in ("rename", "move")]
     return _organizer().apply(body.get("studio_id"), body.get("file_ids") or [], kinds=kinds, force=bool(body.get("force")),
                               ignore_renamers=bool(body.get("ignore_renamers")))
+
+
+@router.get("/organize/movies/plan")
+def organize_movies_plan():
+    """Existing films (Stash groups in the movie folders) against the movie folder/file templates. Read-only."""
+    return _organizer().movies_plan()
+
+
+@router.post("/organize/movies/apply")
+def organize_movies_apply(body: dict):
+    kinds = [k for k in (body.get("kinds") or ["rename", "move"]) if k in ("rename", "move")]
+    return _organizer().movies_apply(body.get("file_ids") or [], kinds=kinds, force=bool(body.get("force")),
+                                     ignore_renamers=bool(body.get("ignore_renamers")))
 
 
 # --- Folder import: /data/Scenes, /data/import, /data/_VR ... (2026-09-29, library_import.py) ---

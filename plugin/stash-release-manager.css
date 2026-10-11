@@ -640,6 +640,12 @@
   margin: 0.75rem 0;
 }
 
+/* Buttons side by side in a toolbar (setup guide: Back / Next / Later, the stash-box list, ...) need a gap; inline layout kept so the
+   toolbars that mix buttons, selects and text do not reflow (v0.186.2). */
+.srw-toolbar > .srw-btn {
+  margin-right: 0.5rem;
+}
+
 .srw-year-group > summary {
   cursor: pointer;
   margin: 1.25rem 0 0.25rem;
@@ -2034,3 +2040,10 @@ a.srw-cal-pill-open { text-decoration: none; color: inherit; cursor: pointer; }
 .srw-dropzone { margin: 0.5rem 0; padding: 0.9rem 1rem; border: 2px dashed var(--bs-secondary, #6c757d); border-radius: 6px; }
 .srw-dropzone-over { border-color: var(--primary, #137cbd); background: rgba(19, 124, 189, 0.12); }
 .srw-dropzone-busy { opacity: 0.7; pointer-events: none; }
+
+/* Search page cards are narrow (220px grid cells): the inline confirm must wrap inside the card instead of running into the neighbours (v0.199.0). */
+.srw-search-card .srw-inline-confirm { flex-wrap: wrap; align-self: stretch; }
+.srw-search-card .srw-inline-confirm-text, .srw-search-card .srw-inline-confirm-text.srw-inline-confirm-long {
+  white-space: normal; min-width: 0; max-width: 100%; flex: 1 1 100%; overflow-wrap: anywhere;
+}
+.srw-search-card { min-width: 0; }

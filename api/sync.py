@@ -99,7 +99,7 @@ def _sync_stashbox_provider(db, provider, entity_type, favorites, added, removed
             local_id=int(f["id"]) if f.get("id") else None,
         )
         if pid not in current_ids:
-            added.append({"provider": provider, "entity_type": entity_type, "name": f["name"]})
+            added.append({"provider": provider, "entity_type": entity_type, "name": f["name"], "stashdb_id": pid})
 
     for e in current:
         if e["stashdb_id"] not in favorite_ids:
@@ -138,7 +138,7 @@ def _sync_theporndb(db, entity_type, favorites, theporndb_client, added, removed
         watchlist_repo.add_to_watchlist(
             db, "theporndb", entity_type, uuid, f["name"], native_id=native_id, local_id=local_id,
         )
-        added.append({"provider": "theporndb", "entity_type": entity_type, "name": f["name"]})
+        added.append({"provider": "theporndb", "entity_type": entity_type, "name": f["name"], "stashdb_id": uuid})
 
     for e in current:
         if e["stashdb_id"] not in favorite_ids:

@@ -13,8 +13,8 @@ Nothing else is needed: no Whisparr (optional), no extra database.
 |---|---|
 | Docker with Compose v2 | on the machine that is to run the sidecar (a NAS next to Stash is the usual choice) |
 | Stash | with the plugin folder writable (Docker or not) |
-| A StashDB account and API key | StashDB > your user page > API key |
-| Optional: ThePornDB API key | for ThePornDB releases and movies |
+| A StashDB account, set up as a stash-box endpoint in Stash | Stash > Settings > Metadata Providers > Stash-box endpoints (the plugin reads the key from there; StashDB > your user page > API key if you have to enter it by hand) |
+| Optional: ThePornDB (and other stash-boxes such as JAVStash, FansDB) | for ThePornDB releases and movies; also set up in Stash, the plugin takes the keys from there |
 | A search backend | Prowlarr, or one or more Newznab indexers (entered in the plugin's Settings) |
 | A download client | SABnzbd (usenet); qBittorrent (torrent) is supported but less tested, see "Torrents (optional)" |
 | Optional: Whisparr | only if you want it to keep a second record of your library |
@@ -82,9 +82,11 @@ The **setup guide** opens by itself the first time you open *Release Manager* wh
 
 Optional, **off by default**: *Settings > Import & Naming > Organized hook* lets you move/rename a scene by marking it *Organized* in Stash (switch it on there; start with *Preview only*). Before using any moving function, look at *Import & Naming > Safety check*: another plugin that renames files (renamerOnUpdate ...) must not be enabled at the same time.
 
+**Next: [FIRST_STEPS.md](FIRST_STEPS.md)** -- a walk through the pages with screenshots, from choosing who to follow to the first download.
+
 Run *Release Manager > Releases > Run scan now* once. The scheduled jobs (scan every few hours, searches, import check) run by themselves from now on; their intervals are in Settings.
 
-Keys and URLs are stored in the sidecar's database in the `data` folder. They are never part of an export (see below).
+Keys and URLs are stored in the sidecar's database in the `data` folder. They are never part of an export (see below). A value you type yourself is kept; a key that is empty is filled from Stash. *Update keys from Stash* (setup guide, *Settings > Metadata Providers*) replaces the keys set here with the ones Stash holds. `STASH_URL` / `STASH_API_KEY` in the container's environment still work as a fallback.
 
 ## Torrents (optional)
 
@@ -113,7 +115,7 @@ On the **new** one (after steps 1 to 5, **before** you scan or search anything -
 3. *Import now*. A backup of the database is made first; any problem rolls everything back.
 4. `docker compose restart` once.
 
-URLs, API keys and local paths are not in the export: you entered them in step 5 on the new installation.
+URLs, API keys and local paths are not in the export: on the new installation the Stash key and the StashDB / ThePornDB / stash-box keys come from Stash again, the rest you enter in step 5.
 
 Then point the plugin's **Sidecar API URL** (Stash > Settings > Plugins) at the new sidecar and reload the browser page.
 
@@ -138,7 +140,8 @@ The switch is deliberately an environment variable and not a setting: settings t
 | Symptom | What to check |
 |---|---|
 | The plugin pages stay empty or show "sidecar not reachable" | *Sidecar API URL* must be reachable **from your browser**; open it with `/health` appended. |
-| The sidecar log says it waits for the Stash URL | Step 4.3: fill *Stash URL* in the plugin settings, then open the Release Manager page once. |
+| The sidecar log says it waits for the Stash URL or API key | Open the Release Manager page once (the address you use for Stash is taken over), then check the *Stash* step of the setup guide. With a login in Stash: generate an API key under *Stash > Settings > Security*. |
+| The Stash header light stays red although the URL is right | The sidecar reaches Stash under another address than your browser (reverse proxy, Docker network name): enter that one in the *Stash* step of the setup guide. |
 | "Source file missing" when importing, or an empty `/media` | The library mount was not ready when the container started: mount it, then `docker compose restart`. |
 | "Stale file handle" on an NFS library after the file server restarted | Stop the container, unmount and remount the share, start the container. |
 | StashDB / ThePornDB are not reachable although the network works | `docker compose restart` (the container keeps an old DNS answer). |

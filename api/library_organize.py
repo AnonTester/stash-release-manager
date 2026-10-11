@@ -38,6 +38,7 @@ import time
 from collections import defaultdict
 
 import file_naming
+import film_names
 import history
 import quality_detect
 import renamer_check
@@ -63,6 +64,18 @@ query($f: FindFilterType, $s: SceneFilterType) {
       tags { name }
       stash_ids { endpoint stash_id }
       files { id path width height duration mod_time fingerprints { type value } }
+    }
+  }
+}
+"""
+
+_MOVIE_SCENES_QUERY = """
+query($f: FindFilterType, $s: SceneFilterType) {
+  findScenes(filter: $f, scene_filter: $s) {
+    scenes {
+      id title
+      files { id path width height duration }
+      groups { scene_index group { id name date scene_count studio { name } } }
     }
   }
 }
@@ -276,17 +289,22 @@ class Organizer:
         hint = f"; matches {other[0]!r} instead" if other else ""
         return (False, f"fingerprints don't match (phash distance {best}{hint})")
 
-    def plan(self, studio_id):
-        """Per-studio plan: {studio, rename, move, needs_check, multi_file, conflict}."""
-        scenes = self.stash._graphql(_SCENES_QUERY, {
-            "f": {"per_page": -1},
-            "s": {"studios": {"value": [str(studio_id)], "modifier": "INCLUDES"}},
-        })["findScenes"]["scenes"]
-        scenes = [s for s in scenes if s["studio"] and str(s["studio"]["id"]) == str(studio_id)]
+    def plan(self, studio_id, scene_id=None):
+        """Per-studio plan: {studio, rename, move, needs_check, multi_file, conflict}. With `scene_id` only that one scene is planned (the
+        Organized hook, v0.203.0): same checks, but no scan of the whole library for byte-identical copies."""
+        if scene_id is not None:
+            scenes = self.stash._graphql(_SCENES_QUERY, {"f": {"per_page": 1}, "s": {"id": {"value": int(scene_id), "modifier": "EQUALS"}}})["findScenes"]["scenes"]
+            scenes = [s for s in scenes if s["studio"]]
+        else:
+            scenes = self.stash._graphql(_SCENES_QUERY, {
+                "f": {"per_page": -1},
+                "s": {"studios": {"value": [str(studio_id)], "modifier": "INCLUDES"}},
+            })["findScenes"]["scenes"]
+            scenes = [s for s in scenes if s["studio"] and str(s["studio"]["id"]) == str(studio_id)]
         if not scenes:
             return {"studio": None, "rename": [], "move": [], "needs_check": [], "multi_file": [], "conflict": []}
         folder_studio = self._studio_folder_name(scenes[0]["studio"])
-        dup = self._oshash_counts()
+        dup = {} if scene_id is not None else self._oshash_counts()
         plan = {"studio": folder_studio, "rename": [], "move": [], "needs_check": [], "multi_file": [], "conflict": []}
         candidates = []
         for scene in scenes:
@@ -355,6 +373,187 @@ class Organizer:
         for key in ("rename", "move", "needs_check", "conflict"):
             plan[key].sort(key=lambda x: x["path"].lower())
         return plan
+
+    # ---------- existing films against the movie templates (v0.202.0) ----------
+
+    def movie_roots(self):
+        return [r.rstrip("/") for r in film_names.movie_roots(self._root(), self.setting("movie_folder_format"))]
+
+    def _in_movie_roots(self, path):
+        return any(path.startswith(r + "/") for r in self.movie_roots())
+
+    def expected_movie_path(self, group, file, part_number):
+        """Where the movie templates (Settings > Import & Naming > Movies/Groups) put this file: title/year from the Stash group, the quality from the
+        file, the part number for a film of several scenes -- the same path the film import and the Import folder's movie kind build."""
+        name = file["path"].rsplit("/", 1)[1]
+        quality = f"{quality_detect.guess_source(name)}-{quality_detect.resolution_label(file.get('height') or 0)}"
+        title, year = film_names.split_title_year(group["name"], group.get("date"))
+        tokens = film_names.movie_tokens(title, year, part_number, quality, (group.get("studio") or {}).get("name") or "",
+                                         file_naming.naming_options(lambda key: self.setting(key) or "[]"))
+        rel = film_names.render_movie_path(self.setting("movie_folder_format"), self.setting("movie_naming_format"), tokens,
+                                           os.path.splitext(name)[1])
+        return f"{self._root()}/{rel.lstrip('/')}"
+
+    @staticmethod
+    def _movie_diff(old_path, new_path):
+        """Why a film file differs from the template, so the list can be worked class by class: 'file name' (same folder, only the file name),
+        'edition note in the name', 'not in a film folder' (a genre folder / loose file), 'year', 'capitals/punctuation' (the title differs only in those), 'title'."""
+        old_dir, new_dir = old_path.rsplit("/", 1)[0], new_path.rsplit("/", 1)[0]
+        if old_dir == new_dir:
+            return "file name"
+        old_leaf, new_leaf = old_dir.rsplit("/", 1)[1], new_dir.rsplit("/", 1)[1]
+        year = re.compile(r"\s*\((\d{4})\)\s*$")
+        if film_names.strip_edition_tags(old_leaf) != old_leaf:
+            return "edition note in the name"  # e.g. "(DVD + Blu-ray Combo)" in the folder name on disk
+        if not year.search(old_leaf):
+            return "not in a film folder"
+        old_title, new_title = year.sub("", old_leaf), year.sub("", new_leaf)
+        norm = lambda t: re.sub(r"[^0-9a-z]", "", t.lower())  # noqa: E731
+        if norm(old_title) == norm(new_title):
+            ym_old, ym_new = year.search(old_leaf), year.search(new_leaf)
+            same_year = (ym_old.group(1) if ym_old else None) == (ym_new.group(1) if ym_new else None)
+            if old_title == new_title and not same_year:
+                return "year"
+            return "capitals/punctuation" if same_year else "year"
+        return "title"
+
+    def movies_plan(self):
+        """Every film file in the movie folders that does not sit where the templates put it: {rename, move, conflict, needs_check, multi_file,
+        in_place}. Read-only. The group is the film's identity (made by hand or by a scraper), so there is no fingerprint check here -- a group
+        that is wrong shows up in the list and is simply not applied."""
+        scenes = self.stash._graphql(_MOVIE_SCENES_QUERY, {"f": {"per_page": -1}, "s": {"groups": {"value": [], "modifier": "NOT_NULL"}}})["findScenes"]["scenes"]
+        plan = {"rename": [], "move": [], "conflict": [], "needs_check": [], "multi_file": [], "in_place": 0}
+        for scene in scenes:
+            files = [f for f in scene["files"] if self._in_movie_roots(f["path"])]
+            if not files:
+                continue
+            title = (scene["groups"][0]["group"]["name"] if scene["groups"] else None) or scene["title"] or f"Scene {scene['id']}"
+            base = {"scene_id": scene["id"], "title": title}
+            if len(scene["files"]) > 1:
+                plan["multi_file"].append({**base, "paths": [f["path"] for f in scene["files"]]})
+                continue
+            if len(scene["groups"]) != 1:
+                plan["needs_check"].append({**base, "file_id": files[0]["id"], "path": files[0]["path"], "check": f"the scene is in {len(scene['groups'])} groups"})
+                continue
+            entry, file = scene["groups"][0], files[0]
+            group = entry["group"]
+            part = None
+            if (group.get("scene_count") or 1) > 1:
+                if entry.get("scene_index") is None:
+                    plan["needs_check"].append({**base, "file_id": file["id"], "path": file["path"],
+                                                "check": f"the group has {group['scene_count']} scenes but this scene has no scene number"})
+                    continue
+                part = entry["scene_index"]
+            expected = self.expected_movie_path(group, file, part)
+            if expected == file["path"]:
+                plan["in_place"] += 1
+                continue
+            item = {**base, "file_id": file["id"], "path": file["path"], "new_path": expected, "check": f"group \"{group['name']}\"",
+                    "duplicate": False, "stashdb_id": None, "diff": self._movie_diff(file["path"], expected)}
+            if os.path.exists(self.to_local(expected)):
+                plan["conflict"].append({**item, "reason": "target name already exists"})
+            elif expected.rsplit("/", 1)[0] == file["path"].rsplit("/", 1)[0]:
+                plan["rename"].append(item)
+            else:
+                plan["move"].append(item)
+        by_target = defaultdict(list)
+        for key in ("rename", "move"):
+            for x in plan[key]:
+                by_target[x["new_path"].lower()].append((key, x))
+        for same in by_target.values():
+            if len(same) > 1:
+                for key, x in same:
+                    plan[key].remove(x)
+                    plan["conflict"].append({**x, "reason": "another file of this plan has the same target name"})
+        for key in ("rename", "move", "needs_check", "conflict"):
+            plan[key].sort(key=lambda x: x["path"].lower())
+        return plan
+
+    def _cleanup_movie_dirs(self, dirs):
+        roots = [self.to_local(r) for r in self.movie_roots()]
+        for d in sorted(set(dirs), key=len, reverse=True):
+            cur = d
+            while cur and any(cur.startswith(r + "/") for r in roots) and os.path.isdir(cur):
+                try:
+                    os.rmdir(cur)  # only succeeds when empty
+                except OSError:
+                    break
+                cur = os.path.dirname(cur)
+
+    def movies_apply(self, file_ids, kinds=("rename", "move"), force=False, ignore_renamers=False):
+        """Recomputes the movie plan (never trusts the browser's paths) and applies the requested items, like apply() does for scenes."""
+        busy = self.queue_guard(force)
+        if busy:
+            return busy
+        conflict = self.renamer_guard(ignore_renamers)
+        if conflict:
+            return conflict
+        wanted = {str(i) for i in file_ids or []}
+        plan = self.movies_plan()
+        items = [i for k in kinds for i in plan.get(k, []) if str(i["file_id"]) in wanted]
+        done, failed, old_dirs, folders = [], [], [], []
+        for item in items:
+            try:
+                old_dirs.append(self._move_one(item))
+            except Exception as e:
+                failed.append({**item, "reason": str(e)})
+                continue
+            folders.append(item["new_path"].rsplit("/", 1)[0])
+            done.append(item)
+        self._scan_and_wait(folders)
+        confirmed = []
+        for item in done:
+            scene = self.stash.find_scene_by_path(item["new_path"])
+            if scene is not None and str(scene["id"]) == str(item["scene_id"]):
+                self._record_move(item["path"], item["new_path"])
+                confirmed.append(item)
+                history.add("info", "history", "organize",
+                            f"{'Moved' if item['path'].rsplit('/', 1)[0] != item['new_path'].rsplit('/', 1)[0] else 'Renamed'} film file: "
+                            f"{item['path'].rsplit('/', 1)[1]} -> {item['new_path'][len(self._root()):]}",
+                            scene_title=item["title"],
+                            details={"stash_scene": item["scene_id"], "old": item["path"], "new": item["new_path"], "extras": item.get("extras_moved")})
+            else:
+                failed.append({**item, "reason": "moved on disk, but Stash doesn't show the scene there yet"})
+                history.add("warning", "history", "organize", "Moved on disk, Stash not updated yet (rescan)",
+                            scene_title=item["title"], details={"old": item["path"], "new": item["new_path"]})
+        self._cleanup_movie_dirs(old_dirs)
+        if confirmed or failed:
+            history.event("warning" if failed else "info", "organize", f"Organize movies: {len(confirmed)} done, {len(failed)} failed")
+        self._watch_drift(confirmed)
+        return {"done": confirmed, "failed": failed}
+
+    # ---------- the Organized hook for a scene of the Whisparr library folder (v0.203.0) ----------
+
+    def organized_library_scene(self, scene, mode):
+        """A scene marked Organized that lies in the lowercase library folder (scenes/) and carries a provider id: the same plan the studio-by-studio
+        Organize library makes for it -- fingerprint-verified, title/date from the provider, the studio's own spelling. 'preview' only writes the
+        plan to History, 'on' moves it. Returns {"handled": False, ...} when this is not a scene for this path (the caller says why), else the result."""
+        path = scene["files"][0]["path"]
+        if not path.startswith(self._root() + "/scenes/") or not scene.get("stash_ids"):
+            return {"handled": False}
+        title = scene.get("title") or f"scene {scene['id']}"
+        if not scene.get("studio"):
+            return {"handled": True, "note": "has no studio in Stash -- not moved"}
+        plan = self.plan(None, scene_id=scene["id"])
+        item = next((i for k in ("rename", "move") for i in plan[k]), None)
+        if item is None:
+            why = next((i.get("reason") or i.get("check") for k in ("conflict", "needs_check") for i in plan[k]), None)
+            return {"handled": True, "note": f"was not moved: {why}" if why else "is already where it belongs"}
+        rel = lambda p: p[len(self._root()):]  # noqa: E731
+        if mode == "preview":
+            history.add("info", "history", "organize", f"Organized preview (nothing moved): {rel(path)} -> {rel(item['new_path'])}",
+                        scene_title=title, details={"stash_scene": scene["id"], "old": path, "new": item["new_path"], "kind": "library"})
+            return {"handled": True, "preview": item}
+        conflict = self.renamer_guard(False)
+        if conflict:
+            history.add("warning", "history", "organize", f"Organized preview (NOT moved, another renamer is enabled): {rel(path)} -> {rel(item['new_path'])}",
+                        scene_title=title, details={"stash_scene": scene["id"], "old": path, "new": item["new_path"], "renamers": conflict["renamers"]})
+            return {"handled": True, "blocked": conflict["error"], "preview": item}
+        busy = self.queue_guard(False)
+        if busy:
+            return {"handled": True, "note": "was not moved: " + busy["error"]}
+        result = self._organize_items([item], f"{plan['studio']} (Organized)")
+        return {"handled": True, **result}
 
     # ---------- apply ----------
 
@@ -515,6 +714,10 @@ class Organizer:
         wanted = {str(i) for i in file_ids or []}
         plan = self.plan(studio_id)
         items = [i for k in kinds for i in plan.get(k, []) if str(i["file_id"]) in wanted]
+        return self._organize_items(items, plan["studio"])
+
+    def _organize_items(self, items, label):
+        """Moves/renames the planned items, rescans, checks each scene at its new place, tells Whisparr, logs. Returns {done, failed}."""
         done, failed, old_dirs, batch_folders = [], [], [], []
         for item in sorted(items, key=lambda x: x["duplicate"]):
             try:
@@ -549,7 +752,7 @@ class Organizer:
         self._cleanup_dirs(old_dirs)
         if confirmed or failed:
             history.event("warning" if failed else "info", "organize",
-                          f"Organize {plan['studio']}: {len(confirmed)} done, {len(failed)} failed")
+                          f"Organize {label}: {len(confirmed)} done, {len(failed)} failed")
         _overview_cache["data"] = None
         self._watch_drift(confirmed)
         return {"done": confirmed, "failed": failed}

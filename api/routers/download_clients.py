@@ -12,9 +12,48 @@ router = APIRouter(prefix="/download-clients", tags=["download-clients"])
 _db = None
 
 
-def init_download_clients_router(db):
-    global _db
+_get_prowlarr_client = None
+
+
+def init_download_clients_router(db, get_prowlarr_client=None):
+    global _db, _get_prowlarr_client
     _db = db
+    _get_prowlarr_client = get_prowlarr_client
+
+
+# Prowlarr implementation name -> this program's client type (the only two clients it can talk to)
+_PROWLARR_TYPES = {"sabnzbd": "sabnzbd", "qbittorrent": "qbittorrent"}
+
+
+def prowlarr_clients_from_fields(clients):
+    """Prowlarr's download clients as prefill suggestions: type, name, URL (host/port/ssl/base), username, enabled. Never a key or password
+    (Prowlarr masks them). Clients of a kind this program cannot use are left out."""
+    out = []
+    for c in clients:
+        kind = _PROWLARR_TYPES.get(str(c.get("implementation") or "").lower())
+        if not kind:
+            continue
+        f = {x.get("name"): x.get("value") for x in c.get("fields", [])}
+        host = str(f.get("host") or "").strip()
+        if not host:
+            continue
+        base = str(f.get("urlBase") or "").strip().strip("/")
+        url = f"{'https' if f.get('useSsl') else 'http'}://{host}" + (f":{f['port']}" if f.get("port") else "") + (f"/{base}" if base else "")
+        out.append({"name": c.get("name") or kind, "type": kind, "url": url, "username": str(f.get("username") or ""),
+                    "enabled": bool(c.get("enable")), "implementation": c.get("implementation")})
+    return out
+
+
+@router.get("/from-prowlarr")
+def from_prowlarr():
+    """The download clients configured in Prowlarr, as prefill for the add form (the API key has to be typed in: Prowlarr hides it)."""
+    client = _get_prowlarr_client() if _get_prowlarr_client else None
+    if client is None:
+        raise HTTPException(400, "Prowlarr is not configured")
+    try:
+        return prowlarr_clients_from_fields(client.get_download_clients())
+    except Exception as e:
+        raise HTTPException(502, f"Prowlarr: {e}")
 
 
 class DownloadClientBody(BaseModel):
@@ -73,23 +112,46 @@ def delete_client(client_id: int):
     return {"ok": True}
 
 
+def _ping(client_type, url, api_key, username, password):
+    """Cheapest authenticated call available for a client's type. Raises on any failure."""
+    if client_type == "qbittorrent":
+        return {"ok": True, "version": QbittorrentClient(url, username, password).ping()}
+    if client_type != "sabnzbd":
+        raise ValueError(f"connection check not implemented for type {client_type!r} yet")
+    SabnzbdClient(url, api_key).ping()
+    return {"ok": True}
+
+
+class DownloadClientCheckBody(BaseModel):
+    type: str = "sabnzbd"
+    url: str = ""
+    api_key: str = ""
+    username: str = ""
+    password: str = ""
+
+
+@router.post("/check")
+def check_entered(body: DownloadClientCheckBody):
+    """Checks the details as they are typed into the add / edit form -- nothing is saved or read from the saved clients (v0.186.1).
+    A failure comes back as {"ok": false, "error": ...} (HTTP 200) so the form can show the plain message."""
+    if not body.url.strip():
+        return {"ok": False, "error": "enter the URL first"}
+    try:
+        return _ping(body.type, body.url.strip(), body.api_key, body.username, body.password)
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 @router.post("/{client_id}/check")
 def check_client(client_id: int):
-    """Cheapest authenticated call available for this client's type,
-    same role as the other connections' "Check connections" button --
-    only 'sabnzbd' is implemented today (see the extensibility note in
-    indexer_search.py)."""
+    """Cheapest authenticated call available for this saved client's type, same role as the other connections' "Check connections"
+    button."""
     client_row = download_client_repo.get_one(_db, client_id)
     if client_row is None:
         raise HTTPException(404, "download client not found")
     try:
-        if client_row["type"] == "qbittorrent":
-            return {"ok": True, "version": QbittorrentClient(client_row["url"], client_row["username"], client_row["password"]).ping()}
-        if client_row["type"] != "sabnzbd":
-            raise HTTPException(400, f"connection check not implemented for type {client_row['type']!r} yet")
-        SabnzbdClient(client_row["url"], client_row["api_key"]).ping()
-        return {"ok": True}
-    except HTTPException:
-        raise
+        return _ping(client_row["type"], client_row["url"], client_row["api_key"], client_row["username"], client_row["password"])
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     except Exception as e:
         raise HTTPException(502, str(e))

@@ -1,6 +1,6 @@
 name: StashReleaseManager
 description: Tracking, acquisition, sorting and housekeeping for your Stash library -- watches StashDB/ThePornDB for new releases of what you follow, searches your indexers, imports, organizes and identifies, with a Maintenance page for duplicates and reviews (formerly "Stash Release Watcher").
-version: 0.198.0
+version: 0.204.0
 url: https://github.com/northwindlab/stash-release-manager
 
 ui:
@@ -24,18 +24,8 @@ settings:
     displayName: Sidecar API URL
     description: URL of the stash-release-manager sidecar container (e.g. http://localhost:6961)
     type: STRING
-  stashUrl:
-    displayName: Stash URL
-    description: >-
-      URL of this Stash instance, as reachable from the sidecar container
-      (e.g. http://localhost:9999). Kept here (not on the plugin's own
-      Connections page) since it's always required and shouldn't be
-      editable/removable alongside optional backends like Whisparr/Prowlarr.
-    type: STRING
-  stashApiKey:
-    displayName: Stash API key
-    description: This Stash instance's own API key (Settings > Security), for the sidecar to call back into it.
-    type: STRING
+  # Stash's own URL / API key and the StashDB / ThePornDB / other stash-box keys are not settings any more (0.186.0): the backend
+  # script reads them from Stash itself and the sidecar keeps them; the URL is confirmed in the setup guide.
 
 exec:
   - python

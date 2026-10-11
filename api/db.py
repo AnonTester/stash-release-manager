@@ -522,6 +522,8 @@ class Database:
         self._migrate_torrent_support(conn)
         self._migrate_film_want_whisparr(conn)
         self._migrate_metadata_provider_color(conn)
+        self._migrate_metadata_provider_query_delay(conn)
+        self._migrate_metadata_provider_favorites_interval(conn)
         self._migrate_film_want_whisparr_file(conn)
         self._migrate_film_want_dups(conn)
 
@@ -673,6 +675,18 @@ class Database:
         cols = {r["name"] for r in conn.execute("PRAGMA table_info(metadata_provider)").fetchall()}
         if cols and "color" not in cols:
             conn.execute("ALTER TABLE metadata_provider ADD COLUMN color TEXT NOT NULL DEFAULT ''")
+
+    def _migrate_metadata_provider_query_delay(self, conn):
+        """metadata_provider.query_delay -- seconds between requests to this stash-box during a scan; NULL = use the global stashdb_query_delay (v0.198.1)."""
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(metadata_provider)").fetchall()}
+        if cols and "query_delay" not in cols:
+            conn.execute("ALTER TABLE metadata_provider ADD COLUMN query_delay REAL")
+
+    def _migrate_metadata_provider_favorites_interval(self, conn):
+        """metadata_provider.favorites_interval -- hours between two imports of the account favorites of this stash-box; NULL = the StashDB setting (v0.199.0)."""
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(metadata_provider)").fetchall()}
+        if cols and "favorites_interval" not in cols:
+            conn.execute("ALTER TABLE metadata_provider ADD COLUMN favorites_interval REAL")
 
     def _migrate_film_want_whisparr_file(self, conn):
         """film_want.whisparr_file_state (queued / synced / conflict / not_taken / error) and whisparr_file_checked_at -- whether Whisparr was told the

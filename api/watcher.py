@@ -76,6 +76,8 @@ def run_scan(db, clients, delay=0.3, progress_callback=None, auto_handoff_callba
         if provider == "theporndb" and not query_id:
             continue
         client = clients[provider]
+        # an added stash-box may have its own request delay (Settings > Metadata providers); StashDB/ThePornDB use the global one
+        entry_delay = delay if provider in ("stashdb", "theporndb") else getattr(client, "delay", delay)
 
         since = watchlist_repo.get_watermark(db, provider, entity_type, stashdb_id)
 
@@ -96,13 +98,13 @@ def run_scan(db, clients, delay=0.3, progress_callback=None, auto_handoff_callba
                                 provider, entity_type, entry["name"], stashdb_id, e)
                 summary["failed"].append({"provider": provider, "entity_type": entity_type,
                                            "name": entry["name"], "error": str(e)})
-                time.sleep(delay)
+                time.sleep(entry_delay)
                 continue
             summary["scanned"] += 1
             if newest:
                 watchlist_repo.set_watermark(db, provider, entity_type, stashdb_id, newest)
                 summary["new_baselines"] += 1
-            time.sleep(delay)
+            time.sleep(entry_delay)
             continue
 
         try:
@@ -112,13 +114,13 @@ def run_scan(db, clients, delay=0.3, progress_callback=None, auto_handoff_callba
                             provider, entity_type, entry["name"], stashdb_id, e)
             summary["failed"].append({"provider": provider, "entity_type": entity_type,
                                        "name": entry["name"], "error": str(e)})
-            time.sleep(delay)
+            time.sleep(entry_delay)
             continue
 
         summary["scanned"] += 1
         _store_new_scenes(db, entry, scenes, auto_handoff_callback, summary)
 
-        time.sleep(delay)
+        time.sleep(entry_delay)
 
     return summary
 

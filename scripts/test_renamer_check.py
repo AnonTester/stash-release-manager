@@ -49,12 +49,16 @@ def levels(report): return [i["level"] for i in report["issues"]]  # noqa: E704
 def texts(report): return " | ".join(i["text"] for i in report["issues"])  # noqa: E704
 
 r = rc.sanity(FakeStash(PLUGINS), lambda k: SETTINGS.get(k, ""))
-check("hook off + an enabled renamer: a warning (not an error), the check is not ok-blocking", "warning" in levels(r) and "error" not in levels(r) and r["ok"])
-check("the disabled mover is a note", "info" in levels(r) and "Scene Mover" in texts(r))
+check("hook off + an enabled renamer: NO warning about renamers at all (v0.202.2), the check is ok", "warning" not in levels(r) and "error" not in levels(r) and "info" not in levels(r)
+      and "renam" not in texts(r).lower() and r["ok"])
+r_forced = rc.sanity(FakeStash(PLUGINS), lambda k: SETTINGS.get(k, ""), show_renamers=True)
+check("hook off, but a manual move was held back (show_renamers): the warning is shown, not an error", "warning" in levels(r_forced) and "error" not in levels(r_forced) and r_forced["ok"])
+check("a DISABLED renamer is never mentioned", "Scene Mover" not in texts(r_forced) and "info" not in levels(r_forced))
 r = rc.sanity(FakeStash(PLUGINS), lambda k: {**SETTINGS, "organized_hook": "on"}.get(k, ""))
 check("hook ON + an enabled renamer: an error that says the hook is held back", "error" in levels(r) and not r["ok"] and "held back" in texts(r))
 r = rc.sanity(FakeStash([PLUGINS[1]]), lambda k: SETTINGS.get(k, ""))
-check("no renamer at all: 'none was found' and everything ok", r["ok"] and "No other plugin" in texts(r))
+r = rc.sanity(FakeStash([PLUGINS[1]]), lambda k: {**SETTINGS, "organized_hook": "on"}.get(k, ""))
+check("hook ON, no renamer at all: 'none was found' and everything ok", r["ok"] and "No other enabled plugin" in texts(r))
 r = rc.sanity(FakeStash(PLUGINS, down=True), lambda k: SETTINGS.get(k, ""))
 check("Stash down: a warning, not a crash", "warning" in levels(r) and "could not be read" in texts(r))
 

@@ -51,9 +51,36 @@ MOVIE_TOKENS = [
 ]
 
 
+# Edition / format notes in a film's name, e.g. "(DVD + Blu-ray Combo)", "[Unrated]", "(Director's Cut)": no part of the film's title, they are kept
+# out of the folder and file names (v0.202.1). Only a (...) or [...] whose words are ALL such notes is removed; "(2010)" or "(Part 2)" stay.
+_EDITION_WORDS = {
+    "dvd", "blu", "ray", "bluray", "bd", "hd", "uhd", "4k", "combo", "pack", "edition", "version", "unrated", "uncut", "remastered", "directors",
+    "director's", "cut", "special", "collectors", "collector's", "digital", "download", "disc", "discs", "set", "box", "limited", "extended", "deluxe",
+    "anniversary", "hdtv", "web", "webrip", "dl", "rip", "dvdrip", "1080p", "720p", "2160p", "full", "and", "2disc", "3disc", "xxx", "explicit",
+}
+_BRACKET_GROUP = re.compile(r"\s*[\(\[]([^\(\)\[\]]*)[\)\]]")
+
+
+def is_edition_note(text):
+    words = re.findall(r"[A-Za-z0-9']+", text or "")
+    if not words:
+        return False
+    keyword = [w for w in words if w.lower() in _EDITION_WORDS]
+    rest = [w for w in words if w.lower() not in _EDITION_WORDS]
+    return bool(keyword) and all(w.isdigit() and len(w) <= 2 for w in rest)  # "(2 Disc Set)": a small number beside the keywords is fine
+
+
+def strip_edition_tags(name):
+    """The name without its edition/format notes; unchanged when there are none or when nothing would be left."""
+    cleaned = _BRACKET_GROUP.sub(lambda m: "" if is_edition_note(m.group(1)) else m.group(0), name or "")
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned if cleaned else (name or "")
+
+
 def split_title_year(group_name, group_date=None):
-    """(title, year): the name without a trailing " (YYYY)", a sorted article put back in front; the year from that suffix, else from the date."""
-    name = (group_name or "").strip()
+    """(title, year): the name without a trailing " (YYYY)", a sorted article put back in front; the year from that suffix, else from the date.
+    Edition notes like "(DVD + Blu-ray Combo)" are dropped first."""
+    name = strip_edition_tags((group_name or "").strip())
     year = None
     m = _YEAR_SUFFIX.search(name)
     if m:
@@ -68,6 +95,7 @@ def split_title_year(group_name, group_date=None):
 
 def movie_tokens(title, year, part_number, quality_full, studio="", options=None):
     source, _, resolution = (quality_full or "").partition("-")
+    title = strip_edition_tags(title or "")
     tokens = {"Movie Title": title or "", "Movie Year": str(year) if year else "", "Part Number": str(part_number) if part_number else "",
               "Studio Title": studio or "", "Quality Full": quality_full or "", "Source": source if resolution else "", "Resolution": resolution}
     return file_naming.apply_replacements(tokens, (options or {}).get("replacements"))

@@ -54,6 +54,13 @@ class ProwlarrClient:
         results = resp.json()
         return results if blank else [r for r in results if self._is_xxx(r)]
 
+    def get_download_clients(self):
+        """Prowlarr's own download clients. Prowlarr MASKS api keys and passwords in this answer (stars), so a key can never be taken over from here;
+        host/port/ssl/urlBase/category/username can (checked live 2026-10-11)."""
+        resp = self.session.get(f"{self.base}/downloadclient", timeout=self.timeout)
+        resp.raise_for_status()
+        return resp.json()
+
     def get_indexers(self):
         """Every configured indexer's own `priority` -- same convention
         whisparr_client.py's get_indexers() already uses, against

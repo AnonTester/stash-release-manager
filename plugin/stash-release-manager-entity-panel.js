@@ -45,6 +45,14 @@
     const theporndbId = stashIds.find((s) => s.endpoint === THEPORNDB_ENDPOINT)?.stash_id;
     if (stashdbId) ids.push({ provider: 'stashdb', stashId: stashdbId });
     if (theporndbId) ids.push({ provider: 'theporndb', stashId: theporndbId });
+    // Added stash-boxes (FansDB, JAVStash, ...): matched by the endpoint URL registered under Settings > Metadata providers.
+    const norm = (u) => String(u || '').trim().replace(/\/+$/, '').toLowerCase();
+    await window.SRW.loadProviders();
+    for (const p of window.SRW.providerKeys().map((k) => window.SRW.providerInfo(k))) {
+      if (p.builtin || !p.url) continue;
+      const hit = stashIds.find((s) => norm(s.endpoint) === norm(p.url));
+      if (hit) ids.push({ provider: p.key, stashId: hit.stash_id });
+    }
     return ids.length ? { ids, name: entity.name } : null;
   }
 
@@ -248,7 +256,7 @@
   // "nothing known", so an empty map is a safe, valid result to hand
   // back rather than a special case every caller has to check for.
   async function fetchLibraryStatus(releases) {
-    const scenes = releases.filter((r) => r.provider === 'stashdb')
+    const scenes = releases.filter((r) => r.provider !== 'theporndb')
       .map((r) => ({ scene_stashdb_id: r.scene_stashdb_id, is_vr: !!r.is_vr }));
     if (!scenes.length) return {};
     try {
@@ -628,16 +636,16 @@
     return panel;
   }
 
-  function buildBacklogPanel(entityType, ids, entityName, localId) {
+  function buildBacklogPanel(entityType, entry, entityName, localId) {
     const { el } = window.SRW;
-    const stashdbEntry = ids.find((i) => i.provider === 'stashdb');
-    if (!stashdbEntry) return null;
+    if (!entry || entry.provider === 'theporndb') return null; // ThePornDB has no stash-box year catalog
+    const provider = entry.provider;
 
     const icon = window.SRW.entityIcon(entityType);
-    const summaryText = el('span', { textContent: `${BACKLOG_TITLE_DEFAULT}` });
+    const summaryText = el('span', { textContent: `${BACKLOG_TITLE_DEFAULT}${provider === 'stashdb' ? '' : ` (${window.SRW.providerLabel(provider)})`}` });
     const summary = el('summary', {}, [icon, summaryText]);
     const body = el('div', { className: 'srw-panel-body', textContent: 'Loading...' });
-    const panel = el('details', { id: BACKLOG_PANEL_ID, className: 'srw-panel' }, [summary, body]);
+    const panel = el('details', { id: `${BACKLOG_PANEL_ID}-${provider}`, className: 'srw-panel srw-backlog-panel' }, [summary, body]);
     // Remembered per browser (2026-09-25), one shared key like the
     // "New releases" panel. Restoring it open fires `toggle`, so the
     // lazy loader below still runs.
@@ -647,7 +655,7 @@
     panel.addEventListener('toggle', () => {
       if (panel.open && !loaded) {
         loaded = true;
-        initBacklogPanel(panel, summaryText, entityType, stashdbEntry.stashId, entityName, localId);
+        initBacklogPanel(panel, summaryText, provider, entityType, entry.stashId, entityName, localId);
       }
     });
     return panel;
@@ -660,7 +668,7 @@
   // year-by-year preview, ~12 small requests) now only runs when the
   // user explicitly clicks "Check StashDB for years", not automatically
   // on every expand.
-  async function initBacklogPanel(panel, summaryText, entityType, stashId, entityName, localId) {
+  async function initBacklogPanel(panel, summaryText, provider, entityType, stashId, entityName, localId) {
     const { el } = window.SRW;
     const body = panel.querySelector('.srw-panel-body');
     body.textContent = '';
@@ -677,9 +685,9 @@
     // cached (see routers/backlog.py's years()), so opening the panel
     // costs zero StashDB requests once it's been checked at least once.
     // Only clicking "Refresh" below re-runs the live StashDB check.
-    await refreshBacklogResults(resultsArea, entityType, stashId, entityName);
-    await loadYearOverview(pickerArea, entityType, stashId, entityName, resultsArea, false);
-    await loadCompleteness(summaryText, entityType, stashId, localId);
+    await refreshBacklogResults(resultsArea, provider, entityType, stashId, entityName);
+    await loadYearOverview(pickerArea, provider, entityType, stashId, entityName, resultsArea, false);
+    await loadCompleteness(summaryText, provider, entityType, stashId, localId);
   }
 
   // "Missing from Catalog — 152/160" (or "Complete — 160/160" once
@@ -688,18 +696,19 @@
   // is_vr_dominant()/cutoff-resolution reasoning behind this number.
   // Best-effort and separate from the results/picker above: a failure
   // here just leaves the plain default title, nothing else breaks.
-  async function loadCompleteness(summaryText, entityType, stashId, localId) {
+  async function loadCompleteness(summaryText, provider, entityType, stashId, localId) {
+    const providerSuffix = provider === 'stashdb' ? '' : ` (${window.SRW.providerLabel(provider)})`;
     try {
       const result = await window.SRW.runOp('backlog_completeness', {
-        provider: 'stashdb', entity_type: entityType, entity_stashdb_id: stashId, local_id: localId,
+        provider, entity_type: entityType, entity_stashdb_id: stashId, local_id: localId,
       });
       if (result.error || typeof result.total !== 'number') return;
       const ratio = `${result.in_library}/${result.total}`;
       if (result.complete) {
-        summaryText.textContent = `Complete — ${ratio}`;
+        summaryText.textContent = `Complete — ${ratio}${providerSuffix}`;
         summaryText.classList.add('srw-backlog-complete');
       } else {
-        summaryText.textContent = `${BACKLOG_TITLE_DEFAULT} — ${ratio}`;
+        summaryText.textContent = `${BACKLOG_TITLE_DEFAULT} — ${ratio}${providerSuffix}`;
       }
     } catch (e) {
       // Best-effort -- keep the default title.
@@ -737,9 +746,9 @@
   // 'sent_to_whisparr' -- exactly the same class of bug as the
   // 'sent_to_whisparr' omission above, just for a status that didn't
   // exist yet at the time that first fix was written.
-  async function fetchReleasesByStatuses(statuses, entityType, stashId, limit) {
+  async function fetchReleasesByStatuses(statuses, provider, entityType, stashId, limit) {
     const results = await Promise.all(statuses.map((status) =>
-      window.SRW.runOp('releases_list', { status, entity_type: entityType, entity_stashdb_id: stashId, limit })
+      window.SRW.runOp('releases_list', { status, provider, entity_type: entityType, entity_stashdb_id: stashId, limit })
     ));
     for (const r of results) {
       if (r && r.error) return r; // surface the first error, same shape callers already expect
@@ -747,12 +756,12 @@
     return results.flat();
   }
 
-  async function loadYearOverview(pickerArea, entityType, stashId, entityName, resultsArea, refresh) {
+  async function loadYearOverview(pickerArea, provider, entityType, stashId, entityName, resultsArea, refresh) {
     const { el } = window.SRW;
-    pickerArea.textContent = refresh ? 'Checking StashDB...' : 'Loading year overview...';
+    pickerArea.textContent = refresh ? `Checking ${window.SRW.providerLabel(provider)}...` : 'Loading year overview...';
     try {
       const result = await window.SRW.runOp('backlog_years', {
-        provider: 'stashdb', entity_type: entityType, entity_stashdb_id: stashId, refresh,
+        provider, entity_type: entityType, entity_stashdb_id: stashId, refresh,
       });
       if (result.error) {
         pickerArea.textContent = `Release Manager: ${result.error}`;
@@ -762,7 +771,7 @@
       const years = Object.keys(counts).map(Number).sort((a, b) => b - a); // newest first
       pickerArea.textContent = '';
       if (!years.length) {
-        pickerArea.appendChild(el('p', { className: 'srw-hint', textContent: 'No scenes found for this entity on StashDB.' }));
+        pickerArea.appendChild(el('p', { className: 'srw-hint', textContent: `No scenes found for this entity on ${window.SRW.providerLabel(provider)}.` }));
         return;
       }
       // Which years already have backlog scenes stored -- a fresh,
@@ -779,7 +788,7 @@
       // visible through their rows), see routers/backlog.py's years().
       const loadedYears = new Map(Object.entries(result.loaded_years || {}).map(([y, at]) => [Number(y), at]));
       pickerArea.appendChild(buildYearPicker(
-        years, counts, loadedYears, entityType, stashId, entityName, resultsArea, pickerArea, result.checked_at,
+        years, counts, loadedYears, provider, entityType, stashId, entityName, resultsArea, pickerArea, result.checked_at,
         result.window || {},
       ));
     } catch (e) {
@@ -791,7 +800,7 @@
   // edited right here, years outside it are greyed out, loaded years are
   // marked (✓, not preselected), and "All" loads every in-window year not
   // loaded yet -- with a warning when no From date limits it.
-  function buildYearPicker(years, counts, loadedYears, entityType, stashId, entityName, resultsArea, pickerArea,
+  function buildYearPicker(years, counts, loadedYears, provider, entityType, stashId, entityName, resultsArea, pickerArea,
     checkedAt, win) {
     const { el, confirmInline } = window.SRW;
     const fromYear = win.from ? Number(win.from.slice(0, 4)) : null;
@@ -817,7 +826,7 @@
     loadBtn.addEventListener('click', () => {
       const selected = checkboxes.map((l) => l.querySelector('input')).filter((cb) => cb.checked)
         .map((cb) => Number(cb.dataset.year));
-      loadSelectedYears(selected, loadBtn, resultsArea, pickerArea, entityType, stashId, entityName);
+      loadSelectedYears(selected, loadBtn, resultsArea, pickerArea, provider, entityType, stashId, entityName);
     });
 
     const allYears = years.filter((y) => inWindow(y) && !loadedYears.has(y));
@@ -834,26 +843,26 @@
           + `${allYears.length} year(s). Set a From date (here or as global default) to limit it. Load anyway?`;
       confirmInline(e.currentTarget, warning, () => {
         allBtn.style.display = '';
-        loadSelectedYears(allYears, allBtn, resultsArea, pickerArea, entityType, stashId, entityName);
+        loadSelectedYears(allYears, allBtn, resultsArea, pickerArea, provider, entityType, stashId, entityName);
       }, { danger: !win.from });
     });
 
     const refreshBtn = el('button', {
       className: 'srw-btn srw-btn-sm', textContent: 'Refresh',
-      title: 'Re-check StashDB for new years/scenes instead of using the cached overview',
-      onClick: () => loadYearOverview(pickerArea, entityType, stashId, entityName, resultsArea, true),
+      title: `Re-check ${window.SRW.providerLabel(provider)} for new years/scenes instead of using the cached overview`,
+      onClick: () => loadYearOverview(pickerArea, provider, entityType, stashId, entityName, resultsArea, true),
     });
     const controls = [loadBtn, allBtn, refreshBtn];
     if (checkedAt) controls.push(el('span', { className: 'srw-hint', textContent: `Checked ${checkedAt} UTC` }));
 
     return el('div', {}, [
-      buildWindowEditor(win, entityType, stashId, entityName, resultsArea, pickerArea),
+      buildWindowEditor(win, provider, entityType, stashId, entityName, resultsArea, pickerArea),
       yearList,
       el('div', { className: 'srw-backlog-year-controls' }, controls),
     ]);
   }
 
-  function buildWindowEditor(win, entityType, stashId, entityName, resultsArea, pickerArea) {
+  function buildWindowEditor(win, provider, entityType, stashId, entityName, resultsArea, pickerArea) {
     const { el, confirmInline } = window.SRW;
     const fromInput = el('input', { type: 'date', className: 'srw-list-date-filter', value: win.own_from || '' });
     const untilInput = el('input', { type: 'date', className: 'srw-list-date-filter', value: win.until || '' });
@@ -861,12 +870,12 @@
     const saveBtn = el('button', { className: 'srw-btn srw-btn-sm', textContent: 'Save' });
     saveBtn.addEventListener('click', async () => {
       const result = await window.SRW.runOp('backlog_set_window', {
-        provider: 'stashdb', entity_type: entityType, entity_stashdb_id: stashId,
+        provider, entity_type: entityType, entity_stashdb_id: stashId,
         from_date: fromInput.value, until_date: untilInput.value,
       });
       if (result.error) { status.textContent = ` error: ${result.error}`; return; }
       status.textContent = ' saved';
-      const reload = () => loadYearOverview(pickerArea, entityType, stashId, entityName, resultsArea, false);
+      const reload = () => loadYearOverview(pickerArea, provider, entityType, stashId, entityName, resultsArea, false);
       if (result.open_outside > 0) {
         status.textContent = '';
         const offer = el('button', { className: 'srw-btn srw-btn-sm srw-btn-danger',
@@ -876,13 +885,13 @@
           `Dismiss ${result.open_outside} open release(s) of "${entityName}" released outside the new window?`,
           async () => {
             const done = await window.SRW.runOp('backlog_dismiss_outside_window', {
-              provider: 'stashdb', entity_type: entityType, entity_stashdb_id: stashId,
+              provider, entity_type: entityType, entity_stashdb_id: stashId,
             });
             if (done.error) window.SRW.notify('Date window', done.error, 'error');
             else window.SRW.dismissedNotice('Date window', `${done.dismissed} release(s) dismissed.`,
               () => window.SRW.runOp('releases_restore', { rows: done.previous || [] }),
-              async () => { await refreshBacklogResults(resultsArea, entityType, stashId, entityName); reload(); });
-            await refreshBacklogResults(resultsArea, entityType, stashId, entityName);
+              async () => { await refreshBacklogResults(resultsArea, provider, entityType, stashId, entityName); reload(); });
+            await refreshBacklogResults(resultsArea, provider, entityType, stashId, entityName);
             reload();
           }, { danger: true }));
         return;
@@ -900,7 +909,7 @@
     ]);
   }
 
-  async function loadSelectedYears(years, loadBtn, resultsArea, pickerArea, entityType, stashId, entityName) {
+  async function loadSelectedYears(years, loadBtn, resultsArea, pickerArea, provider, entityType, stashId, entityName) {
     const selectedYears = years.slice().sort((a, b) => a - b);
     const idleLabel = loadBtn.textContent;
     if (!selectedYears.length) {
@@ -920,7 +929,7 @@
       loadBtn.textContent = `Fetching ${year}...`;
       try {
         const result = await window.SRW.runOp('backlog_fetch_year', {
-          provider: 'stashdb', entity_type: entityType, entity_stashdb_id: stashId, year,
+          provider, entity_type: entityType, entity_stashdb_id: stashId, year,
         });
         if (result.error) {
           window.SRW.notify('Backlog', `Backlog fetch failed for ${year}: ${result.error}`, 'error');
@@ -937,10 +946,10 @@
     }
     loadBtn.textContent = idleLabel;
     loadBtn.disabled = false;
-    await refreshBacklogResults(resultsArea, entityType, stashId, entityName);
+    await refreshBacklogResults(resultsArea, provider, entityType, stashId, entityName);
     // Re-render the picker (cache-first, so this costs nothing extra
     // server-side) purely to refresh which years now show "— loaded".
-    await loadYearOverview(pickerArea, entityType, stashId, entityName, resultsArea, false);
+    await loadYearOverview(pickerArea, provider, entityType, stashId, entityName, resultsArea, false);
   }
 
   // Composite key for a <details> group's open/closed identity, built
@@ -962,7 +971,7 @@
     return parts.join('|');
   }
 
-  async function refreshBacklogResults(resultsArea, entityType, stashId, entityName) {
+  async function refreshBacklogResults(resultsArea, provider, entityType, stashId, entityName) {
     const { el } = window.SRW;
     // Preserve which year/quarter groups were open across this rebuild
     // (2026-09-19, user report: Dismissing/fixing one entry collapsed
@@ -974,7 +983,7 @@
     resultsArea.textContent = 'Loading...';
     try {
       const releases = await fetchReleasesByStatuses(
-        ['backlog', 'sent_to_whisparr', 'import_failed'], entityType, stashId, 1000,
+        ['backlog', 'sent_to_whisparr', 'import_failed'], provider, entityType, stashId, 1000,
       );
       if (releases.error) {
         resultsArea.textContent = `Release Manager: ${releases.error}`;
@@ -999,15 +1008,15 @@
       const statusById = await fetchLibraryStatus(sorted);
       const missing = sorted.filter((r) => !(statusById[r.scene_stashdb_id] || {}).satisfied);
       // Scene pairing (v0.182.0): scenes loaded before the cast was recorded get it read now (<= 200 per call, StashDB batches).
-      if (missing.some((r) => r.provider === 'stashdb' && (r.cast_pairing == null || r.cast_names == null))) {
+      if (missing.some((r) => r.provider === provider && (r.cast_pairing == null || r.cast_names == null))) {
         resultsArea.textContent = `Reading the cast of ${missing.filter((r) => r.cast_pairing == null || r.cast_names == null).length} scene(s)...`;
         let res = null;
         for (let n = 0; n < 50; n += 1) {
-          res = await window.SRW.runOp('backlog_pairings', { provider: 'stashdb', entity_type: entityType, entity_stashdb_id: stashId });
+          res = await window.SRW.runOp('backlog_pairings', { provider, entity_type: entityType, entity_stashdb_id: stashId });
           if (!res || res.error || !res.remaining) break;
         }
         if (res && !res.error) {
-          const again = await fetchReleasesByStatuses(['backlog', 'sent_to_whisparr', 'import_failed'], entityType, stashId, 1000);
+          const again = await fetchReleasesByStatuses(['backlog', 'sent_to_whisparr', 'import_failed'], provider, entityType, stashId, 1000);
           if (!again.error) {
             const castByScene = new Map(again.map((x) => [x.scene_stashdb_id, x]));
             missing.forEach((r) => {
@@ -1043,12 +1052,12 @@
       // for, it's just awaiting a Stash rescan) -- and ThePornDB
       // releases, which this hand-off has never supported.
       const eligibleForBulk = missing.filter((r) => {
-        if (r.provider !== 'stashdb') return false;
+        if (r.provider === 'theporndb') return false;
         const info = statusById[r.scene_stashdb_id];
         return !(info && (info.whisparr_file_mismatch || info.whisparr_has_file));
       });
       const bulkBtn = buildBulkHandoffButton(
-        eligibleForBulk, () => refreshBacklogResults(resultsArea, entityType, stashId, entityName),
+        eligibleForBulk, () => refreshBacklogResults(resultsArea, provider, entityType, stashId, entityName),
       );
       if (bulkBtn) resultsArea.appendChild(bulkBtn);
       // Filter + paging (2026-09-26) over the already-loaded rows; each
@@ -1072,7 +1081,7 @@
         }),
         // Flat, newest first, one page at a time (v0.101.3) -- the year/quarter folding is gone now that the list pages.
         renderItems: (items) => buildFlatReleaseList(
-          items, () => refreshBacklogResults(resultsArea, entityType, stashId, entityName), statusById,
+          items, () => refreshBacklogResults(resultsArea, provider, entityType, stashId, entityName), statusById,
         ),
       });
       resultsArea.appendChild(view.node);
@@ -1207,7 +1216,7 @@
     injectWatchButton(route); // independent of the panel below, which needs a provider link
     const myToken = ++injectionToken;
     document.getElementById(PANEL_ID)?.remove();
-    document.getElementById(BACKLOG_PANEL_ID)?.remove();
+    document.querySelectorAll('.srw-backlog-panel').forEach((n) => n.remove());
     document.getElementById(SUBSTUDIO_PANEL_ID)?.remove();
     document.getElementById(TAB_ID)?.remove();
     document.getElementById(PANE_ID)?.remove();
@@ -1246,20 +1255,20 @@
     document.getElementById(TAB_ID)?.remove();
     document.getElementById(PANE_ID)?.remove();
     document.getElementById(PANEL_ID)?.remove();
-    document.getElementById(BACKLOG_PANEL_ID)?.remove();
+    document.querySelectorAll('.srw-backlog-panel').forEach((n) => n.remove());
     document.getElementById(SUBSTUDIO_PANEL_ID)?.remove();
     // Studio pages only: the sub-studio checklist sits below the Backlog panel.
     const subPanel = route.type === 'studio' ? buildSubStudiosPanel(info.ids, info.name) : null;
-    const backlogPanel = buildBacklogPanel(route.type, info.ids, info.name, route.id);
+    const backlogPanels = info.ids.map((entry) => buildBacklogPanel(route.type, entry, info.name, route.id)).filter(Boolean);
     // "New releases" first, the deliberately-secondary opt-in Backlog panel below it, the sub-studio checklist last.
     const panel = buildPanel(route.type, info.ids, info.name);
     const tabLink = document.querySelector('a[id^="performer-tabs-tab-"], a[id^="studio-tabs-tab-"]');
     const nav = tabLink && tabLink.closest('.nav-tabs');
     if (nav) {
-      mountReleasesTab(nav, mount, [panel, backlogPanel, subPanel]);
+      mountReleasesTab(nav, mount, [panel, ...backlogPanels, subPanel]);
     } else {
       // Stash's tab strip not found (changed markup?) -- fall back to the old placement above the tabs.
-      [subPanel, backlogPanel, panel].forEach((p) => { if (p) mount.prepend(p); });
+      [subPanel, ...backlogPanels.slice().reverse(), panel].forEach((p) => { if (p) mount.prepend(p); });
     }
   }
 

@@ -595,7 +595,7 @@ class StashClient:
             time.sleep(poll_interval)
         raise TimeoutError(f"job {job_id} did not finish within {timeout}s")
 
-    def local_studio_ids_by_stashdb_id(self):
+    def local_studio_ids_by_stashdb_id(self, endpoint=None):
         """{stashdb_id: local Stash id} for every studio Stash currently
         knows about, regardless of scene count -- used to match
         StashDB.org favorites against what actually exists locally (see
@@ -606,7 +606,7 @@ class StashClient:
         data = self._graphql(FIND_STUDIOS_QUERY, {"filter": {"per_page": -1}})
         out = {}
         for s in data["findStudios"]["studios"]:
-            stashdb_id = self._stashdb_id(s["stash_ids"])
+            stashdb_id = self._stash_id_for_endpoint(s["stash_ids"], endpoint or self.stashdb_endpoint)
             if stashdb_id:
                 out[stashdb_id] = int(s["id"])
         return out
@@ -663,11 +663,11 @@ class StashClient:
                 by_name.setdefault(key, int(p["id"]))
         return by_id, by_name
 
-    def local_performer_ids_by_stashdb_id(self):
+    def local_performer_ids_by_stashdb_id(self, endpoint=None):
         data = self._graphql(FIND_PERFORMERS_QUERY, {"filter": {"per_page": -1}})
         out = {}
         for p in data["findPerformers"]["performers"]:
-            stashdb_id = self._stashdb_id(p["stash_ids"])
+            stashdb_id = self._stash_id_for_endpoint(p["stash_ids"], endpoint or self.stashdb_endpoint)
             if stashdb_id:
                 out[stashdb_id] = int(p["id"])
         return out

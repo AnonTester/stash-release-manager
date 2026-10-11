@@ -5,6 +5,7 @@ from fastapi import APIRouter
 
 import download_client_repo
 import indexer_repo
+import metadata_provider_repo
 import quality_profile_repo
 from routers.settings import get_effective_connections, get_setting_value
 
@@ -24,14 +25,17 @@ def status():
     clients = [c for c in download_client_repo.list_all(_db) if c.get("enabled")]
     indexers = indexer_repo.list_enabled(_db)
     profiles = quality_profile_repo.list_all(_db)
+    providers = metadata_provider_repo.list_all(_db)
     prowlarr = bool(eff["prowlarr_url"]) and eff["prowlarr_api_key_set"]
     steps = [
         {"key": "stash", "label": "Stash", "required": True, "done": bool(eff["stash_url"]),
-         "detail": "" if eff["stash_url"] else "Stash URL and API key go into the plugin's settings in Stash"},
+         "detail": "" if eff["stash_url"] else "Stash URL missing: confirm it in the setup guide (the API key is taken from Stash)"},
         {"key": "stashdb", "label": "StashDB", "required": True, "done": bool(eff["stashdb_api_key_set"]),
-         "detail": "" if eff["stashdb_api_key_set"] else "StashDB API key missing"},
+         "detail": "" if eff["stashdb_api_key_set"] else "StashDB API key missing (not found in Stash's stash-box endpoints either)"},
         {"key": "theporndb", "label": "ThePornDB", "required": False, "done": bool(eff["theporndb_api_key_set"]),
          "detail": "optional"},
+        {"key": "stashboxes", "label": "Other stash-boxes", "required": False, "done": bool(providers),
+         "detail": ", ".join(p["name"] for p in providers) if providers else "optional"},
         {"key": "search", "label": "Search", "required": True, "done": prowlarr or bool(indexers),
          "detail": f"{len(indexers)} indexer(s)" + (", Prowlarr" if prowlarr else "") if (prowlarr or indexers) else "no Prowlarr and no indexer"},
         {"key": "download", "label": "Downloads", "required": True, "done": bool(clients),
