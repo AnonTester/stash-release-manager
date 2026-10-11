@@ -1,0 +1,35 @@
+# StashReleaseManager -- example compose file for a normal installation (see INSTALL.md).
+#
+# 1. Copy this file to docker-compose.yml (next to the Dockerfile) and change the three paths below.
+# 2. docker compose up -d --build
+#
+# The container needs to see the SAME files as Stash and as your download client:
+#   /media      your library, the folder that Stash calls /data (when Stash runs in Docker with its library mounted as /data)
+#   /downloads  the folder where your download client puts FINISHED downloads (SABnzbd: "complete")
+#   /data       this program's own database and backups -- keep it, it is your data
+services:
+  stash-release-manager:
+    build: .
+    container_name: stash-release-manager
+    restart: unless-stopped
+    ports:
+      - "6961:5000"            # left side = the port you open in your browser / enter as "Sidecar API URL" in the Stash plugin
+    volumes:
+      - ./data:/data                                  # database, backups, exports (a folder next to this file)
+      - /path/to/your/library:/media                  # CHANGE: your library (same files Stash has as /data)
+      - /path/to/sabnzbd/complete:/downloads          # CHANGE: finished downloads of SABnzbd
+    environment:
+      - DATA_DIR=/data
+      # A copy for trying things out while another sidecar is the productive one: set this and no scan, search, import or sync job runs here.
+      # - SRM_DEV_MODE=1
+      - PYTHONUNBUFFERED=1
+      # Only if Stash sees your library under another path than /data (e.g. /library), name that path here:
+      # - WHISPARR_ROOT_FOLDER_PATH=/library/
+      # Only if you changed the container side of the library mount above:
+      # - LOCAL_MEDIA_MOUNT=/media
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s

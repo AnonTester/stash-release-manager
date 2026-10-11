@@ -1,0 +1,2032 @@
+.srw-page-header {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.25rem;
+}
+
+.srw-page-title-row { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
+.srw-page-title-row h2 { margin: 0; }
+.srw-health-pill {
+  display: inline-flex; align-items: center; gap: 0.9rem; padding: 0.3rem 0.8rem; cursor: pointer;
+  background: var(--bs-tertiary-bg, #2a2a2a); border-radius: 20px; font-size: 0.9rem; white-space: nowrap;
+}
+.srw-health-item { display: inline-flex; align-items: center; gap: 0.4rem; }
+.srw-status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--bs-secondary, #6c757d); flex-shrink: 0; }
+.srw-status-dot.ok { background: #198754; }
+.srw-status-dot.down { background: #dc3545; }
+
+.srw-panel {
+  margin: 1rem 0;
+  padding: 0.75rem 1rem;
+  border: 1px solid rgba(128, 128, 128, 0.3);
+  border-radius: 6px;
+}
+
+.srw-panel > summary {
+  cursor: pointer;
+  font-weight: 600;
+  margin: 0 0 0.5rem;
+}
+
+.srw-panel[open] > summary {
+  margin-bottom: 0.5rem;
+}
+
+.srw-release-list,
+.srw-watchlist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.srw-release-item,
+.srw-watchlist li {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 0.35rem 0;
+  border-bottom: 1px solid rgba(128, 128, 128, 0.15);
+}
+
+.srw-watchlist-nav {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.4rem;
+  margin: 0.75rem 0 1rem;
+}
+
+/* Nested inside .srw-filter-bar (2026-09-13, moved there so the A-Z
+   nav reads as part of "the filters" rather than a separate section
+   below it) -- forced onto its own full-width line within that bar
+   (28 letter buttons rarely fit next to the search+type controls on
+   the same line anyway) and centered there, no extra margin since the
+   bar's own padding/gap already spaces it from the row above. */
+.srw-filter-bar .srw-watchlist-nav {
+  flex: 1 0 100%;
+  margin: 0;
+}
+
+.srw-watchlist-nav-link {
+  appearance: none;
+  display: inline-block;
+  padding: 0.15rem 0.55rem;
+  border: 1px solid rgba(128, 128, 128, 0.3);
+  border-radius: 4px;
+  background: transparent;
+  text-decoration: none;
+  color: inherit;
+  font-weight: 600;
+  font-size: 0.93em;
+  cursor: pointer;
+}
+
+.srw-watchlist-nav-link:hover {
+  background: rgba(128, 128, 128, 0.15);
+}
+
+.srw-watchlist-nav-link-active {
+  background: #2b6cb0;
+  border-color: #2b6cb0;
+  color: #fff;
+}
+
+.srw-watchlist-letter-heading {
+  margin: 1.25rem 0 0.25rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid rgba(128, 128, 128, 0.2);
+  font-size: 1em;
+  opacity: 0.85;
+}
+
+/* Watchlist pager (2026-09-13) -- pages through the current letter's
+   matches (40/page) instead of rendering the whole thing in one
+   multi-column block, which got too tall to browse comfortably once
+   columns were widened (fewer, taller columns per letter). Colors
+   copied from Stash's own pagination buttons on e.g. /studios
+   (`.pagination .btn-secondary`, read live via getComputedStyle,
+   2026-09-13: background rgb(42,42,42), white text, 5.25px/15px
+   padding, 14px font) rather than this plugin's usual `.srw-btn`
+   look, since the ask was specifically to match Stash's own paging
+   UI. */
+.srw-pager {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0.75rem 0;
+}
+
+/* Joined buttons like Stash's own pagination (v0.151.0): « ‹ [1 of 23 v] › » with the range underneath. */
+.srw-pager-group { display: inline-flex; align-items: stretch; gap: 3px; }
+
+.srw-pager-btn {
+  appearance: none;
+  background: rgb(42, 42, 42);
+  color: #fff;
+  border: none;
+  border-radius: 3.5px;
+  padding: 5.25px 15px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.srw-pager-btn:hover:not(:disabled) {
+  background: rgb(60, 60, 60);
+}
+
+.srw-pager-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.srw-pager-range { opacity: 0.8; font-size: 0.93em; }
+.srw-pager-static { padding: 5.25px 15px; background: rgb(42, 42, 42); border-radius: 3.5px; font-size: 14px; }
+
+.srw-pager-status {
+  opacity: 0.8;
+  font-size: 0.93em;
+}
+
+/* Jump-to-page dropdown in the pager (2026-10-04): own element, dark like the Prev/Next buttons, 15 pages either side. */
+.srw-pager-jump-wrap { position: relative; display: inline-block; }
+.srw-pager-jump {
+  appearance: none;
+  background: rgb(42, 42, 42);
+  color: #fff;
+  border: none;
+  border-radius: 3.5px;
+  padding: 5.25px 15px;
+  font-size: 14px;
+  cursor: pointer;
+}
+.srw-pager-jump:hover { background: rgb(60, 60, 60); }
+.srw-pager-menu {
+  position: absolute;
+  z-index: 1000;
+  left: 50%;
+  transform: translateX(-50%);
+  top: calc(100% + 2px);
+  min-width: 4.5rem;
+  max-height: 16rem;
+  overflow-y: auto;
+  background: rgb(33, 33, 33);
+  border: 1px solid rgba(128, 128, 128, 0.4);
+  border-radius: 4px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+}
+.srw-pager-menu[hidden] { display: none; }
+.srw-pager-menu-item {
+  display: block;
+  width: 100%;
+  appearance: none;
+  background: transparent;
+  color: #fff;
+  border: none;
+  padding: 3px 12px;
+  text-align: center;
+  font-size: 14px;
+  cursor: pointer;
+}
+.srw-pager-menu-item:hover { background: rgb(60, 60, 60); }
+.srw-pager-menu-item.active { background: var(--primary, #137cbd); }
+
+/* Widened from 16rem (2026-09-13, user reported 6 columns made the
+   text/controls feel cramped) -- the real constraint is the auto
+   hand-off "from ... until ..." row (two date inputs + labels), whose
+   natural unwrapped width measured ~259px live; 300px gives it enough
+   room on one line with a little margin. Also drops the resulting
+   column count from 6 to 4-5 on a typical wide window, which was the
+   actual ask, achieved as a side effect of fitting that row rather
+   than a hand-picked column count. */
+.srw-watchlist-columns {
+  column-width: 300px;
+  column-gap: 1.5rem;
+}
+
+.srw-watchlist-columns li {
+  break-inside: avoid-column;
+}
+
+.srw-watchlist-entity-link {
+  color: inherit;
+  text-decoration: none;
+  font-weight: 600;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.srw-watchlist-entity-link:hover {
+  text-decoration: underline;
+}
+
+.srw-watchlist-entity-unlinked {
+  font-weight: 600;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.85;
+}
+
+.srw-provider-badge {
+  flex: 0 0 auto;
+  padding: 0.05rem 0.4rem;
+  border-radius: 3px;
+  font-size: 0.86em;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+/* Auto hand-off controls (2026-09-13) -- flex-basis:100% drops them to
+   their own line within the already-wrapping .srw-watchlist li row,
+   instead of squeezing next to the name/badges. */
+.srw-auto-handoff {
+  display: flex;
+  align-items: center;
+  flex: 1 0 100%;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.15rem;
+  font-size: 0.93em;
+  opacity: 0.85;
+}
+
+.srw-auto-handoff-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.srw-auto-handoff-checkbox {
+  cursor: pointer;
+}
+
+.srw-auto-handoff-dates {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex-wrap: wrap;
+}
+
+.srw-auto-handoff-date-label {
+  opacity: 0.7;
+}
+
+.srw-auto-handoff-date {
+  background: rgb(33, 33, 33);
+  color: #e0e0e0;
+  border: 1px solid rgba(128, 128, 128, 0.3);
+  border-radius: 3px;
+  padding: 0.05rem 0.3rem;
+  font-size: 0.95em;
+}
+
+/* Releases List page's own date-range filter (2026-09-20) -- same
+   look as .srw-auto-handoff-dates/-date-label/-date above (the
+   Watchlist tab's per-entity from/until fields), just its own class
+   names since this one lives in a filter bar, not a per-row control. */
+.srw-list-date-range {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex-wrap: wrap;
+}
+
+.srw-list-date-range-label {
+  opacity: 0.7;
+}
+
+.srw-list-date-filter {
+  background: rgb(33, 33, 33);
+  color: #e0e0e0;
+  border: 1px solid rgba(128, 128, 128, 0.3);
+  border-radius: 3px;
+  padding: 0.05rem 0.3rem;
+  font-size: 0.95em;
+}
+
+.srw-auto-handoff-checkbox:disabled,
+.srw-auto-handoff-date:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Scene preview thumbnail, same idea as Stash's own Tagger view --
+   landscape-ish since that's the shape scene screenshots/covers
+   actually come in from StashDB/ThePornDB, unlike the square-ish
+   studio/performer avatars elsewhere in this plugin. Fixed px, not
+   rem, to match the Tagger view's own thumbnails exactly (user-
+   measured 180x100px, 2026-09-12) regardless of root font-size --
+   this plugin's own 9rem/4.6rem attempt still rendered at ~125x65px,
+   short of that target, so pinning the literal pixel size instead of
+   trusting a rem conversion this time. */
+.srw-release-thumb {
+  width: 180px;
+  height: 100px;
+  object-fit: cover;
+  border-radius: 3px;
+  flex: 0 0 auto;
+  background: rgba(128, 128, 128, 0.15);
+}
+
+.srw-release-title {
+  flex: 1 1 auto;
+  font-weight: 600;
+  color: inherit;
+  text-decoration: none;
+}
+
+.srw-release-title:hover {
+  text-decoration: underline;
+}
+
+.srw-release-date,
+.srw-release-source {
+  opacity: 0.7;
+  font-size: 0.93em;
+}
+
+/* "Search visibility" per-release status (2026-09-19) -- what the last
+   indexer_search.search_and_grab() attempt found/didn't find, or
+   "grabbed" once download_job_id is set. Same subdued treatment as
+   .srw-release-date above; not an error/warning color since most of
+   these values (no results yet, still pending) are normal states, not
+   problems. */
+.srw-search-status {
+  opacity: 0.7;
+  font-size: 0.93em;
+  font-style: italic;
+}
+
+/* Live download progress (2026-09-20, "Activity display" request) --
+   compact inline variant of .srw-progress-track/.srw-progress-fill
+   (the page-level scan-progress bar), sized to sit inline within a
+   release row's own flex-wrap line instead of spanning full width. */
+.srw-download-progress {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.93em;
+  opacity: 0.85;
+}
+
+.srw-download-progress-track {
+  width: 5rem;
+  height: 0.5rem;
+  border-radius: 3px;
+  background: rgba(128, 128, 128, 0.25);
+  overflow: hidden;
+}
+
+.srw-download-progress-fill {
+  height: 100%;
+  width: 0%;
+  background: #2b6cb0;
+  transition: width 0.3s ease;
+}
+
+/* Inline confirm prompt (2026-09-20) -- replaces every window.confirm()
+   in this plugin, see core.js's confirmInline(). Sits inline right
+   after the trigger button it replaced, same flex-wrap row as the rest
+   of a release/list item's own controls. */
+.srw-inline-confirm {
+  display: inline-flex;
+  max-width: 100%;
+  box-sizing: border-box;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.15rem 0.5rem;
+  border: 1px solid rgba(224, 176, 80, 0.4);
+  border-radius: 4px;
+  background: rgba(224, 176, 80, 0.08);
+}
+
+.srw-inline-confirm-text {
+  font-size: 0.93em;
+  /* one line, names are shortened in the middle by confirmInline() (v0.102.4) */
+  white-space: nowrap;
+}
+
+/* RESULT_NEEDS_REVIEW (2026-09-19) -- a candidate matched every one of
+   Whisparr's own credited performers for the movie but didn't clear the
+   bar for an automatic grab (date/title too far off), so it's shown for
+   a human decision instead. flex-basis: 100% forces it onto its own row
+   below the rest of the (flex-wrap) release row, same trick as a normal
+   flex-wrap overflow, rather than fighting for space on the title line.
+   Amber, same "needs a look" tone as the ThePornDB source accent
+   elsewhere in this plugin, not the red .srw-btn-danger "something's
+   actively wrong" tone -- this is a plausible find, not an error. */
+.srw-review-candidate {
+  flex: 0 0 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.25rem;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid rgba(224, 176, 80, 0.4);
+  border-left: 3px solid #e0b050;
+  border-radius: 4px;
+  background: rgba(224, 176, 80, 0.08);
+  font-size: 0.93em;
+}
+
+.srw-review-candidate-title {
+  font-weight: 600;
+}
+
+.srw-review-candidate-meta {
+  opacity: 0.7;
+}
+
+/* Manual Prowlarr search (2026-09-22) -- a user-typed query's own
+   result rows, on the Releases List page. Reuses .srw-review-candidate's
+   layout (title/meta/button, wraps at small widths) but blue instead of
+   amber -- these aren't a system-flagged "needs a look" warning, they're
+   the user's own deliberate search, a neutral/informational tone. */
+.srw-manual-search-panel {
+  flex: 0 0 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin-top: 0.25rem;
+}
+
+.srw-manual-search-result {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid rgba(111, 168, 224, 0.4);
+  border-left: 3px solid #6fa8e0;
+  border-radius: 4px;
+  background: rgba(111, 168, 224, 0.08);
+  font-size: 0.93em;
+}
+
+/* "Already have this" badge (2026-09-13) -- in Stash's library and/or
+   already downloaded by Whisparr, shown with whatever quality is known
+   so the user can judge whether it's worth re-searching for a better
+   version instead of blindly re-sending a duplicate hand-off. Green,
+   distinct from the amber ThePornDB-source accent and the blue/violet
+   action buttons elsewhere in this plugin. */
+.srw-release-in-library {
+  flex: 0 0 auto;
+  padding: 0.05rem 0.4rem;
+  border-radius: 3px;
+  font-size: 0.93em;
+  font-weight: 700;
+  background: rgba(72, 187, 120, 0.2);
+  color: #48bb78;
+}
+
+/* Same green as .srw-release-in-library, applied to the Backlog
+   panel's own summary text once every catalog scene is owned at the
+   desired quality (2026-09-13, "Missing from Catalog" -> "Complete"). */
+.srw-backlog-complete {
+  color: #48bb78;
+  font-weight: 700;
+}
+
+/* Whisparr already has a file for this scene, but this project's own
+   "in library" check (Stash's own file metadata, see
+   .srw-release-in-library above) hasn't picked it up yet -- meaning
+   Stash just hasn't rescanned the folder, not that anything's actually
+   missing. 2026-09-13, replaces the action button entirely in this
+   case (there's nothing left to send or search for). Same blue as
+   .srw-cal-pill-new -- "pending Stash catching up", not yet the
+   green "confirmed in library" state above. */
+.srw-release-whisparr-file {
+  flex: 0 0 auto;
+  padding: 0.05rem 0.4rem;
+  border-radius: 3px;
+  font-size: 0.86em;
+  font-weight: 700;
+  background: rgba(43, 108, 176, 0.2);
+  color: #6fa8e0;
+}
+
+/* Movie rows: Whisparr bookkeeping badge (v0.166.0); orange when something needs a look. */
+.srw-film-whisparr {
+  display: inline-block;
+  margin: 0.15rem 0;
+}
+.srw-film-whisparr-warn {
+  background: rgba(214, 140, 30, 0.2);
+  color: #e0a040;
+}
+
+/* Whisparr's file for this scene turned out to be wrong content once
+   cross-checked against Stash's own scan (2026-09-14, see
+   routers/releases.py's library_status() docstring -- Whisparr never
+   fingerprint-verifies against StashDB itself, so it can keep
+   believing a mislabeled release satisfied a movie it never actually
+   matched). Red/orange, distinct from every other status color here
+   (blue=pending, green=done, teal=re-search, amber=ThePornDB) since
+   this is the one state that's actually wrong, not just early or
+   in-progress. */
+.srw-release-mismatch-warning {
+  flex: 0 0 100%;
+  padding: 0.15rem 0.4rem;
+  border-radius: 3px;
+  font-size: 0.93em;
+  background: rgba(197, 48, 48, 0.15);
+  color: #e57373;
+}
+
+.srw-btn-danger {
+  background: #c53030;
+  color: #fff;
+  border-color: #c53030;
+}
+
+/* Backlog panel's year picker (2026-09-13) -- one checkbox per year
+   with its scene count, so several (possibly non-contiguous) years can
+   be selected before the actual fetch, instead of a from/until date
+   range which can't express e.g. "2019 and 2022 but not 2020-2021". */
+.srw-backlog-years {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0.5rem 0;
+}
+
+.srw-backlog-year-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.15rem 0.5rem;
+  border: 1px solid rgba(128, 128, 128, 0.3);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.93em;
+}
+
+.srw-backlog-year-checkbox {
+  cursor: pointer;
+}
+
+.srw-backlog-results {
+  margin-top: 0.75rem;
+}
+
+.srw-backlog-year-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0.5rem 0;
+}
+
+.srw-btn {
+  padding: 0.25rem 0.6rem;
+  border-radius: 4px;
+  border: 1px solid rgba(128, 128, 128, 0.4);
+  background: transparent;
+  /* Stash's dark theme + the browser's native dark color-scheme give
+     plain <button> elements a dark system control background that
+     swallows a transparent declaration -- appearance:none plus an
+     explicit color are both needed, or the label renders invisible
+     (confirmed live 2026-09-11: "Save" buttons were solid black
+     rectangles with no visible text on the plugin's own Settings page). */
+  appearance: none;
+  color: inherit;
+  cursor: pointer;
+}
+
+.srw-btn-primary {
+  background: #2b6cb0;
+  color: #fff;
+  border-color: #2b6cb0;
+}
+
+/* Used to be Whisparr's own purple (sampled live) -- moved off it
+   2026-09-13 after the user found this action button and the
+   "Sent to Whisparr" status pill's purple (see
+   .srw-cal-pill-sent_to_whisparr) too visually similar to tell apart
+   at a glance, especially once the button was renamed "Search in
+   Whisparr" (close in length/wording to "Sent to Whisparr" too).
+   Teal isn't used for any other status/action in this plugin, so it
+   can't collide the same way -- not .srw-btn-primary's blue either,
+   which already means an unrelated "primary action" (Sync now/Run
+   scan now/Check now). */
+.srw-btn-whisparr {
+  background: #0d9488;
+  color: #fff;
+  border-color: #0d9488;
+}
+
+.srw-btn-sm {
+  padding: 0.25rem 0.6rem; /* "small" buttons are as big as normal ones everywhere (v0.162.0; was 0.1rem 0.4rem) */
+  font-size: 1em;
+}
+
+.srw-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.srw-toolbar {
+  margin: 0.75rem 0;
+}
+
+.srw-year-group > summary {
+  cursor: pointer;
+  margin: 1.25rem 0 0.25rem;
+  font-weight: 700;
+  font-size: 1.1em;
+}
+
+.srw-month-group {
+  margin-left: 1rem;
+}
+
+.srw-month-group > summary {
+  cursor: pointer;
+  margin: 0.75rem 0 0.25rem;
+  opacity: 0.9;
+  font-weight: 600;
+}
+
+.srw-date-group {
+  margin-left: 1rem;
+}
+
+.srw-date-group > summary {
+  cursor: pointer;
+  margin: 1rem 0 0.25rem;
+  opacity: 0.8;
+  font-weight: 600;
+}
+
+.srw-settings-section {
+  margin: 1rem 0;
+  padding: 0.75rem 1rem;
+  border: 1px solid rgba(128, 128, 128, 0.3);
+  border-radius: 6px;
+}
+
+.srw-settings-section label {
+  display: inline-block;
+  margin: 0.25rem 0;
+}
+
+.srw-settings-section input,
+.srw-settings-section select {
+  margin: 0 0.5rem;
+}
+
+/* Stash's dark theme leaves a <select>'s (and its <option>s') text
+   color at the browser default (effectively black) while some
+   ancestor rule still darkens its background -- same "swallowed by a
+   dark-theme + native-control-default combination" issue already found
+   and fixed for .srw-btn once before, just never hit a <select> until
+   the Whisparr quality-profile dropdowns (2026-09-12): unreadable
+   black-on-near-black. Explicit color/background on both the closed
+   box and the open dropdown's own options fixes it in Chromium (the
+   only engine Stash's own webview-based clients need to support). */
+.srw-settings-section select,
+.srw-filter-preset-select,
+.srw-filter-preset-name {
+  background: #1e1e1e;
+  color: #e0e0e0;
+  border: 1px solid rgba(128, 128, 128, 0.4);
+  border-radius: 4px;
+  padding: 0.15rem 0.3rem;
+}
+
+.srw-settings-section select option,
+.srw-filter-preset-select option {
+  background: #1e1e1e;
+  color: #e0e0e0;
+}
+
+/* Search page (2026-09-19) -- a card grid, distinct from the flat
+   list styles used elsewhere (watchlist/release list), since a search
+   result benefits from a visible thumbnail the way Stash's own
+   Performers/Studios grids do. */
+.srw-search-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.srw-search-card {
+  border: 1px solid rgba(128, 128, 128, 0.3);
+  border-radius: 6px;
+  padding: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.srw-search-card-image {
+  width: 100%;
+  aspect-ratio: 2 / 3;
+  object-fit: cover;
+  border-radius: 4px;
+}
+
+.srw-search-card-title {
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.srw-sabnzbd-history {
+  margin: 0.5rem 0 0;
+  padding-left: 1.25rem;
+}
+
+.srw-sabnzbd-history li {
+  margin-bottom: 0.5rem;
+  word-break: break-all;
+}
+
+/* Download Clients / Quality Profiles CRUD lists (Milestone 3,
+   2026-09-19) -- one row per existing entity, plus a trailing
+   add/edit form reusing the same block. */
+.srw-dc-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid rgba(128, 128, 128, 0.2);
+}
+
+.srw-dc-form {
+  margin-top: 0.75rem;
+  padding-top: 0.5rem;
+}
+
+/* No max-width (had 40rem, then 60rem -- both still wrapped noticeably
+   before the real edge of the settings section on a wide window, ~50%
+   of the screen per the user's report, 2026-09-13). A hint paragraph
+   isn't prose that needs a capped line-length for readability; let it
+   use whatever width its container actually has. */
+.srw-hint {
+  opacity: 0.7;
+  font-size: 1em; /* as big as the normal text (v0.162.0; was 0.93em) */
+}
+
+/* "Send/Search all in Whisparr" (2026-09-15) -- a standalone <button>
+   sibling of the countHint <p> and the grouped list <div>, needs its
+   own block-level spacing rather than relying on a flex row's gap. */
+.srw-bulk-handoff-btn {
+  display: block;
+  margin: 0.5rem 0;
+}
+
+/* A more visible callout than .srw-hint above -- for a behavior the
+   user should actually notice (e.g. "this sends automatically, no
+   confirmation"), not just background/explanatory text. Reuses the
+   amber accent already established for ThePornDB-sourced items
+   elsewhere in this plugin, read here as "pay attention" rather than
+   "this came from ThePornDB". 2026-09-13: replaces a window.confirm()
+   popup on enabling Auto Whisparr hand-off, which became a hindrance
+   when enabling it for several entities in a row -- the warning is
+   said once, prominently, in-page, instead of interrupting every
+   individual checkbox click. */
+.srw-callout {
+  background: rgba(224, 176, 80, 0.15);
+  border-left: 3px solid #e0b050;
+  border-radius: 4px;
+  padding: 0.5rem 0.75rem;
+  margin: 0.5rem 0;
+  font-weight: 600;
+}
+
+/* Instant favorite-change decision banner (2026-09-21) -- same visual
+   weight as .srw-callout above (both interrupt-until-acted-on), a
+   distinct blue rather than amber since this isn't a warning, just a
+   decision waiting on the user. */
+.srw-pending-decision {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  background: rgba(80, 140, 224, 0.15);
+  border-left: 3px solid #508ce0;
+  border-radius: 4px;
+  padding: 0.5rem 0.75rem;
+  margin: 0.5rem 0;
+}
+
+.srw-pending-decision-text {
+  flex: 1 1 auto;
+  font-weight: 600;
+}
+
+/* Groups settings within one connection's own box (2026-09-12,
+   replaces .srw-connection-heading now that each connection has its
+   own top-level box/heading instead of sharing one big "Connections"
+   box) -- lighter than an <h4> since it's a sub-grouping, not a new
+   section. */
+.srw-subsection-heading {
+  font-weight: 700;
+  margin: 1.25rem 0 0.4rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid rgba(128, 128, 128, 0.2);
+  opacity: 0.85;
+}
+
+/* Naming-token documentation (2026-09-21) -- a compact reference list,
+   not full-width prose, since each entry is just "{Token} — one-line
+   description". */
+.srw-naming-token-list {
+  margin: 0 0 0.75rem;
+  padding-left: 1.25rem;
+  font-size: 0.93em;
+}
+
+.srw-naming-token-list li {
+  margin-bottom: 0.15rem;
+}
+
+.srw-naming-token-list code {
+  background: rgba(128, 128, 128, 0.15);
+  border-radius: 3px;
+  padding: 0.05rem 0.3rem;
+}
+
+.srw-entity-icon {
+  width: 0.85em;
+  height: 0.85em;
+  flex: 0 0 auto;
+  opacity: 0.75;
+}
+
+.srw-entity-icon-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3em;
+  flex: 0 0 auto;
+}
+
+/* Separate, additional link to the entity's own local Stash page --
+   the title/pill above it already links to StashDB/ThePornDB (the
+   scene). See buildLocalEntityLink()'s docstring in
+   stash-release-manager-releases.js. */
+.srw-local-entity-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3em;
+  flex: 0 0 auto;
+  color: inherit;
+  text-decoration: none;
+  opacity: 0.75;
+}
+
+.srw-local-entity-link:hover {
+  opacity: 1;
+  text-decoration: underline;
+}
+
+/* Visible entity name inside .srw-local-entity-link (2026-09-20) --
+   previously that link only ever wrapped a bare icon. The unlinked
+   fallback (.srw-local-entity-name-plain, no entity_local_id yet) gets
+   the same look minus the link affordance. */
+.srw-local-entity-name,
+.srw-local-entity-name-plain {
+  font-size: 0.93em;
+  font-weight: 500;
+}
+
+.srw-local-entity-name-plain {
+  opacity: 0.75;
+}
+
+/* The scene's own studio, shown as context next to a release matched
+   via a watched PERFORMER (2026-09-20) -- see buildStudioContext()/
+   entity-panel.js's inline equivalent. Same subdued treatment as
+   .srw-release-date. */
+.srw-release-studio-context {
+  opacity: 0.7;
+  font-size: 0.93em;
+}
+
+/* Wraps .srw-release-thumb in a link to the scene page (2026-09-20) --
+   the image itself keeps its existing sizing, this just removes the
+   default link underline/focus outline from the image's own layout. */
+.srw-release-thumb-link {
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+/* Bottom action row instead of squeezed in next to the title/studio
+   text (changed 2026-09-12) -- three icons crammed vertically-centered
+   alongside the text ate too much of the pill's width; the studio line
+   usually has slack under it (shorter than the title) for this row to
+   sit in instead. Right-aligned since the text column above is already
+   left-aligned and these are secondary actions, not content. */
+.srw-cal-pill-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 0.35rem;
+  margin-top: 0.15rem;
+}
+
+/* All three actions sized identically (2026-09-12 -- the real Whisparr
+   logo image made the other two look mismatched once it was bumped up
+   for a bigger click target) -- same 25px hit box, same 21px visible
+   icon, same muted opacity/hover behavior, regardless of whether the
+   content is an <a>, a <button> with a text glyph, or a <button>
+   holding an <img>. */
+.srw-cal-pill-actions .srw-local-entity-link,
+.srw-cal-pill-whisparr,
+.srw-cal-pill-dismiss {
+  width: 25px;
+  height: 25px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  opacity: 0.6;
+}
+
+.srw-cal-pill-actions .srw-local-entity-link:hover,
+.srw-cal-pill-whisparr:hover,
+.srw-cal-pill-dismiss:hover {
+  opacity: 1;
+}
+
+.srw-cal-pill-actions .srw-entity-icon {
+  width: 21px;
+  height: 21px;
+}
+
+/* The "×" glyph's own ink is noticeably smaller than its font-size box
+   (a lot of side-bearing/whitespace baked into the character itself) --
+   21px here rendered visibly smaller than the other two 21px SVG/img
+   icons, which fill their box edge-to-edge. Bumped up (and bolded) to
+   match their actual visual weight, confirmed live side-by-side against
+   the local-link/Whisparr icons -- not clipped by the 25px hit box.
+   2026-09-13, reported by the user. */
+.srw-cal-pill-dismiss {
+  appearance: none;
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font-size: 32px;
+  font-weight: 600;
+  line-height: 1;
+  color: inherit;
+}
+
+.srw-cal-pill-whisparr {
+  appearance: none;
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: inherit; /* a <button> does not inherit the pill's colour by itself; the icon mask below uses currentColor (v0.129.2) */
+}
+
+/* Generic download-arrow glyph (2026-09-19, replaces the real Whisparr
+   logo used here since 2026-09-12 -- see DOWNLOAD_ICON_DATA_URI's own
+   comment in the .js file for why). Drawn as a mask in the pill's own
+   colour since v0.129.2 (it was a fixed-blue image before). */
+.srw-cal-pill-whisparr-icon {
+  width: 21px;
+  height: 21px;
+  display: block;
+  /* A mask, not an <img>: the icon takes the pill's own colour like the other icons (v0.129.2; the blue img looked wrong on the orange pills). */
+  background-color: currentColor;
+  -webkit-mask: var(--srw-icon) center / contain no-repeat;
+  mask: var(--srw-icon) center / contain no-repeat;
+}
+
+.srw-panel > summary {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.srw-view-toggle {
+  display: inline-flex;
+  gap: 0.25rem;
+  margin-left: 0.75rem;
+}
+
+/* Per-provider checkboxes (2026-09-19) -- shared by the List and
+   Calendar filter bars, see buildProviderCheckboxes() in
+   stash-release-manager-releases.js. */
+.srw-provider-filter {
+  display: inline-flex;
+  gap: 0.75rem;
+  margin-left: 0.75rem;
+  align-items: center;
+}
+
+.srw-provider-filter-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  white-space: nowrap;
+}
+
+/* Search + Studio/Performer/All filter for the Calendar view
+   (2026-09-13) -- a purpose-built equivalent of Stash's own Scenes/
+   Studios filter UI, which isn't reusable here (this plugin's root is
+   mounted outside Stash's own React tree). Sits above the month
+   header, same reasoning as the Watchlist's own filter bar: secondary
+   controls, not primary navigation, so visually lighter than the
+   Prev/Next/Today row below it. */
+/* Styled to match Stash's own filter toolbar (`.filtered-list-toolbar`
+   on the Scenes/Studios pages) rather than this plugin's usual button
+   language -- 2026-09-13, user asked for this filter specifically to
+   look like Stash's, not just function like it. Values below are
+   copied from that toolbar's own computed styles (read live, not
+   eyeballed): bar background rgb(25,25,25), 7px gap, search input
+   background rgb(33,33,33) with no border, and secondary buttons at
+   rgba(0,0,0,0.15) with a rgb(85,85,85) border -- all at Stash's own
+   3.5px border-radius. Generic name (renamed from .srw-cal-filter-bar,
+   2026-09-13) -- originally built for the Calendar view, now reused
+   as-is for the Watchlist page's own text+type filter bar too. */
+.srw-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  /* Stash's own toolbar declares this too (confirmed live via
+     getComputedStyle, 2026-09-13) -- not obviously visible there since
+     its content happens to fill nearly the full row, but it's a real
+     part of the style being matched, not just the colors/borders. */
+  justify-content: center;
+  gap: 7px;
+  margin: 0.5rem 0;
+  padding: 7px;
+  background: rgb(25, 25, 25);
+  border-radius: 4px;
+}
+
+.srw-search-input {
+  background: rgb(33, 33, 33);
+  color: #fff;
+  border: none;
+  border-radius: 3.5px;
+  padding: 5.25px 10.5px;
+  font-size: 14px;
+  /* A fixed-ish width, not flex-grow -- Stash's own search field in
+     that toolbar isn't flex-grow either (measured ~202px, a natural
+     width, not stretched to fill available space), which is what lets
+     `justify-content: center` above actually show. */
+  width: 16rem;
+  max-width: 100%;
+}
+
+.srw-filter-bar .srw-btn {
+  background: rgba(0, 0, 0, 0.15);
+  border: 1px solid rgb(85, 85, 85);
+  border-radius: 3.5px;
+  color: rgba(255, 255, 255, 0.65);
+  padding: 5.25px 10.5px;
+}
+
+.srw-filter-bar .srw-btn:hover {
+  color: #fff;
+}
+
+/* The active filter keeps this plugin's own accent-highlight
+   treatment (same idea as Stash's own active view-mode icon getting a
+   highlighted background) rather than Stash's neutral secondary
+   look, so it's still obvious which filter is selected. */
+.srw-filter-bar .srw-btn-primary {
+  background: #2b6cb0;
+  border-color: #2b6cb0;
+  color: #fff;
+}
+
+.srw-cal-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.5rem 0 0.75rem;
+}
+
+.srw-cal-title {
+  font-weight: 600;
+  min-width: 10rem;
+  text-align: center;
+}
+
+/* Grid lines made deliberately more visible than the original thin
+   (1px, 0.2 opacity) gap-as-border trick (2026-09-19, user request --
+   "könnte noch ein Grid vertragen"/could use more of a grid) --
+   confirmed live that trick was nearly invisible once a day's own
+   pills (each with a fairly saturated blue/orange background, see
+   .srw-cal-pill-* below) filled most of the cell right up to its
+   edges, leaving no contrast for the thin line to show against.
+   Explicit per-cell borders instead of relying on gap+background give
+   consistent contrast regardless of what's rendered inside. */
+.srw-cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 4px;
+  overflow: hidden;
+  overflow-x: auto;
+}
+
+.srw-cal-weekday {
+  background: rgba(255, 255, 255, 0.08);
+  padding: 0.3rem 0.4rem;
+  font-size: 0.93em;
+  font-weight: 600;
+  opacity: 0.85;
+  text-align: center;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.3);
+  border-right: 1px solid rgba(255, 255, 255, 0.18);
+}
+
+.srw-cal-weekday:last-child {
+  border-right: none;
+}
+
+.srw-cal-day {
+  background: var(--srw-cal-day-bg, transparent);
+  min-height: 7.5rem;
+  padding: 0.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  border-right: 1px solid rgba(255, 255, 255, 0.18);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.18);
+}
+
+.srw-cal-day:nth-child(7n) {
+  border-right: none;
+}
+
+.srw-cal-day-blank {
+  opacity: 0.4;
+}
+
+.srw-cal-day-today {
+  box-shadow: inset 0 0 0 1px #2b6cb0;
+}
+
+.srw-cal-daynum {
+  font-size: 0.93em;
+  opacity: 0.6;
+}
+
+/* Column, not a single row (changed 2026-09-12 alongside the actions
+   row above) -- the scene link (avatar + title/studio) is its own row
+   on top, actions sit in their own row underneath instead of sharing
+   horizontal space with the text. */
+.srw-cal-pill {
+  display: flex;
+  flex-direction: column;
+  padding: 0.2rem 0.35rem;
+  border-radius: 4px;
+  border-left: 3px solid currentColor;
+  min-width: 0; /* let the text column actually shrink/ellipsis in a grid/flex ancestor */
+}
+
+/* Was the pill itself (a single <a>) before it also needed a separate
+   local-entity link (2026-09-12) -- an <a> can't nest inside another
+   <a>, so the scene link is now this inner element and the pill's
+   outer element is a plain <div>. */
+.srw-cal-pill-link {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex: 1 1 auto;
+  min-width: 0;
+  text-decoration: none;
+  color: inherit;
+}
+
+.srw-cal-avatar {
+  flex: 0 0 auto;
+  width: 2.6em;
+  height: 2.6em;
+  border-radius: 3px;
+  object-fit: cover;
+  background: rgba(128, 128, 128, 0.15);
+}
+
+.srw-cal-avatar-performer {
+  border-radius: 50%;
+}
+
+.srw-cal-avatar-studio {
+  object-fit: contain;
+}
+
+.srw-cal-avatar-fallback {
+  width: 1.4em;
+  height: 1.4em;
+  opacity: 0.75;
+}
+
+.srw-cal-pill-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.3;
+}
+
+/* Stash's own UI (checked live 2026-09-11: scene-card titles etc.) stays
+   at its 14px base throughout and builds hierarchy with font-weight, not
+   with much-smaller font-size -- these were originally 0.85em/0.7em,
+   noticeably smaller than that convention, so brought close to 1em/full
+   size instead, same idea. */
+.srw-cal-pill-title {
+  font-size: 1em;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.srw-cal-pill-studio {
+  font-size: 0.86em;
+  opacity: 0.75;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.srw-cal-pill-new {
+  background: rgba(43, 108, 176, 0.25);
+  color: #6fa8e0;
+}
+
+/* Whisparr's own icon color -- sampled directly from the live
+   instance's apple-touch-icon.png (113, 55, 200), not guessed -- moved
+   off the amber it shared with .srw-cal-pill-theporndb below, which
+   made the two look identical in the legend despite meaning different
+   things. */
+.srw-cal-pill-sent_to_whisparr {
+  background: rgba(113, 55, 200, 0.25);
+  color: #aa87de;
+}
+
+.srw-cal-pill-imported {
+  background: rgba(56, 161, 105, 0.25);
+  color: #5cc98a;
+}
+
+/* Same red already used for a real error state elsewhere in this
+   plugin (e.g. the "✗" in Check Connections, srw-btn-danger) -- an
+   import_failed release is a genuine failure, not just "still
+   waiting" like the purple sent_to_whisparr color implies. Added
+   2026-09-21 alongside fetching this status for the Calendar at all
+   (previously never shown here regardless of color). */
+.srw-cal-pill-import_failed {
+  background: rgba(224, 92, 92, 0.25);
+  color: #e05c5c;
+}
+
+/* A distinct teal, not reused from anywhere else in this plugin --
+   overrides the plain sent_to_whisparr purple for a release that's
+   been searched at least once with nothing usable found (see
+   isStuck()'s own comment in releases.js). Declared after
+   .srw-cal-pill-sent_to_whisparr so it wins when both would otherwise
+   apply. */
+.srw-cal-pill-stuck {
+  background: rgba(45, 178, 178, 0.25);
+  color: #3ecfcf;
+}
+
+.srw-cal-more-btn {
+  appearance: none;
+  background: transparent;
+  border: none;
+  padding: 0.1rem 0.35rem;
+  font-size: 0.93em;
+  opacity: 0.75;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.srw-cal-more-btn:hover {
+  opacity: 1;
+  text-decoration: underline;
+}
+
+.srw-cal-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin-top: 0.75rem;
+  font-size: 1em;
+  opacity: 0.85;
+}
+
+.srw-cal-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.srw-cal-legend-swatch {
+  display: inline-block;
+  width: 0.9rem;
+  height: 0.9rem;
+  border-radius: 3px;
+}
+
+@media (max-width: 480px) {
+  .srw-cal-day {
+    min-height: 3.5rem;
+  }
+  .srw-cal-pill-text {
+    display: none;
+  }
+}
+
+/* Maintenance page (2026-09-16) */
+.srw-maintenance-paths {
+  margin: 0.5rem 0;
+}
+
+.srw-maintenance-path-label {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  cursor: pointer;
+  margin: 0.2rem 0;
+}
+
+/* Directory picker, mirroring Stash's own "Select folders" dialog
+   (Scan/Clean/Generate's "Selective..." buttons) -- browse via
+   stash_client.browse_directory(), "+ Add" commits the current
+   directory as a removable chip, distinct from the browser itself. */
+.srw-maintenance-selective {
+  margin: 0.4rem 0 0.4rem 1.4rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid rgba(128, 128, 128, 0.3);
+  border-radius: 6px;
+}
+
+.srw-maintenance-shortcuts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem;
+  margin-bottom: 0.5rem;
+}
+
+.srw-maintenance-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-bottom: 0.5rem;
+}
+
+.srw-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 4px;
+  background: rgba(43, 108, 176, 0.2);
+  border: 1px solid #2b6cb0;
+  font-size: 0.93em;
+}
+
+.srw-chip-remove {
+  appearance: none;
+  background: transparent;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  font-weight: 700;
+  padding: 0 0.15rem;
+}
+
+.srw-maintenance-browse-row {
+  display: flex;
+  gap: 0.4rem;
+  margin-bottom: 0.4rem;
+}
+
+.srw-maintenance-browse-row input[type="text"] {
+  flex: 1;
+  background: transparent;
+  color: inherit;
+  border: 1px solid rgba(128, 128, 128, 0.4);
+  border-radius: 4px;
+  padding: 0.15rem 0.4rem;
+}
+
+.srw-maintenance-browse-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 12rem;
+  overflow-y: auto;
+}
+
+.srw-maintenance-browse-list li {
+  margin: 0.15rem 0;
+}
+
+.srw-maintenance-file-path {
+  font-family: monospace;
+  font-size: 0.93em;
+  opacity: 0.8;
+  word-break: break-all;
+}
+
+.srw-progress-track {
+  height: 0.6rem;
+  border-radius: 4px;
+  background: rgba(128, 128, 128, 0.2);
+  overflow: hidden;
+  margin: 0.5rem 0 0.25rem;
+}
+
+.srw-progress-fill {
+  height: 100%;
+  background: #2b6cb0;
+  transition: width 0.3s ease;
+}
+
+.srw-maintenance-mismatches h3 {
+  margin: 1rem 0 0.25rem;
+  font-size: 1.05em;
+}
+
+/* Calendar/List "Dismiss N shown" + Undo (2026-09-24), sits directly
+   below the filter bar, centered to match it. */
+.srw-bulk-dismiss {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 7px;
+}
+
+.srw-bulk-dismiss:empty {
+  display: none;
+}
+
+.srw-bulk-dismiss-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+/* Releases-page filter presets (2026-09-24) -- dropdown + delete +
+   save, first item in both filter bars. */
+.srw-filter-presets {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Backend-aware manual search actions (2026-09-25, see core.js's
+   buildSearchActions()) -- Releases page and Studio/Performer panel. */
+.srw-search-actions {
+  display: contents;
+}
+
+/* Let the manual-search panel break out of its wrapper span and become
+   a direct flex item of the release row, so its `flex: 0 0 100%` gives
+   it a full-width line of its own below the row (it used to be squeezed
+   into the row's right edge, noticed 2026-09-25); `order` keeps the
+   row's remaining buttons (Dismiss) on the row itself. */
+.srw-prowlarr-search {
+  display: contents;
+}
+
+.srw-manual-search-panel {
+  order: 99;
+}
+
+/* Search log verdict badge (2026-09-25, see core.js's buildLastSearch()). */
+.srw-verdict {
+  font-size: 0.86em;
+  padding: 0.05rem 0.4rem;
+  border-radius: 3px;
+  background: rgba(128, 128, 128, 0.25);
+  white-space: nowrap;
+}
+
+.srw-verdict-grabbed .srw-verdict { background: rgba(60, 170, 90, 0.45); }
+.srw-verdict-review .srw-verdict { background: rgba(220, 160, 40, 0.45); }
+.srw-verdict-lower_rank .srw-verdict { background: rgba(70, 130, 200, 0.4); }
+
+/* Imported without fingerprint verification yet (2026-09-25). */
+.srw-unverified-badge {
+  font-size: 0.86em;
+  padding: 0.05rem 0.4rem;
+  border-radius: 3px;
+  background: rgba(220, 160, 40, 0.35);
+  white-space: nowrap;
+}
+
+/* Row a Calendar pill jumped to (2026-09-26, jumpToWishlistRow()). */
+.srw-row-highlight {
+  outline: 2px solid rgba(70, 160, 230, 0.9);
+  outline-offset: 2px;
+  transition: outline-color 0.3s;
+}
+
+/* Floating notifications (2026-09-26, core.js notify()) -- non-blocking,
+   top-right below Stash's navbar, each stays until closed. */
+.srw-notifications {
+  position: fixed;
+  top: 60px;
+  right: 16px;
+  z-index: 2000;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(380px, calc(100vw - 32px));
+  pointer-events: none;
+}
+
+.srw-notification {
+  pointer-events: auto;
+  position: relative;
+  padding: 0.6rem 2rem 0.6rem 0.8rem;
+  border-radius: 6px;
+  border-left: 4px solid #4a90d9;
+  background: rgba(32, 37, 43, 0.97);
+  color: #e0e0e0;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+  font-size: 0.93em;
+  word-break: break-word;
+}
+
+.srw-notification-success { border-left-color: #3fb950; }
+.srw-notification-info { border-left-color: #4a90d9; }
+.srw-notification-error { border-left-color: #e5534b; }
+.srw-notification-warning { border-left-color: #d29922; }
+
+.srw-notification-title { font-weight: 600; margin-bottom: 0.15rem; }
+.srw-notification-message { opacity: 0.85; white-space: pre-line; }
+
+.srw-notification-close {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  background: none;
+  border: none;
+  color: #bbb;
+  font-size: 1.2em;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.srw-notification-close:hover { color: #fff; }
+
+/* Watchlist icon next to Stash's own Favorite (heart) button on a
+   Studio/Performer page (2026-09-26, tag watchlist mode). Same muted
+   grey as Stash's own inactive header buttons (organized-button's
+   not-organized state), a blue accent when watched. */
+.srw-watch-button.srw-not-watched,
+.srw-watch-button.srw-not-watched:hover { color: rgba(191, 204, 214, 0.5); }
+.srw-watch-button.srw-watched,
+.srw-watch-button.srw-watched:hover { color: #4ab3f4; }
+.srw-watch-button:disabled { opacity: 0.6; }
+
+/* "Probably inactive" review list (2026-09-26), Settings > Watchlist. */
+.srw-inactive-review > summary { cursor: pointer; font-weight: 600; font-size: 1.1rem; }
+.srw-inactive-list { list-style: none; padding-left: 0; margin-top: 0.5rem; }
+.srw-inactive-list li { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; padding: 0.2rem 0; }
+.srw-inactive-bulk { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; margin-top: 0.5rem; }
+.srw-inactive-reasons { opacity: 0.75; margin-right: 0.4rem; }
+
+/* Back-catalogue additions (2026-09-26): scenes the scan routed to the
+   backlog because they were added to StashDB/ThePornDB long after their
+   release date. "New" (first 30 days after discovery) gets a green
+   badge + row accent; older ones a muted "Added late" badge. */
+.srw-late-badge {
+  display: inline-block; font-size: 0.86rem; padding: 0.05rem 0.4rem; border-radius: 0.6rem;
+  border: 1px solid rgba(191, 204, 214, 0.4); color: rgba(191, 204, 214, 0.8); white-space: nowrap;
+}
+.srw-late-badge-new { background: #2ea043; border-color: #2ea043; color: #fff; font-weight: 600; }
+.srw-release-item.srw-late-new { box-shadow: inset 3px 0 0 #2ea043; background: rgba(46, 160, 67, 0.08); }
+
+/* Calendar pill "search options" jump (2026-09-26): SVG magnifier at the
+   same 21px visible size as the other pill icons, same blue as the
+   download glyph (the button itself keeps the shared hit box/opacity). */
+.srw-cal-pill-search { font-size: 0; color: inherit; } /* the pill's own colour like the other icons (v0.130.1; was a fixed blue) */
+.srw-cal-pill-search-icon { width: 19px; height: 19px; }
+
+/* "Missing from Catalog" year picker (2026-09-26): loaded years green
+   with ✓, years outside the entity's date window greyed out. */
+.srw-backlog-year-label.srw-year-loaded { color: #3fb950; font-weight: 600; }
+.srw-backlog-year-label.srw-year-outside { opacity: 0.35; text-decoration: line-through; }
+.srw-window-editor { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; margin-bottom: 0.5rem; }
+.srw-window-editor > .srw-hint:last-child { flex-basis: 100%; margin: 0; }
+
+/* Import phases on the progress bar (2026-09-26): downloading keeps the
+   default colour, the import copy is teal, "waiting"/"verifying" amber
+   and full width. */
+.srw-download-progress[data-phase="copying"] .srw-download-progress-fill,
+.srw-download-progress[data-phase="preparing"] .srw-download-progress-fill { background: #2aa198; }
+.srw-download-progress[data-phase="waiting_import"] .srw-download-progress-fill,
+.srw-download-progress[data-phase="verifying"] .srw-download-progress-fill { background: #d29922; }
+
+/* VR check verdict badge (2026-09-26, Maintenance). */
+.srw-vr-verdict { display: inline-block; min-width: 3.6rem; text-align: center; font-size: 0.86rem; font-weight: 600;
+  padding: 0.1rem 0.4rem; border-radius: 0.6rem; margin-right: 0.5rem; }
+.srw-vr-verdict-mono { background: #e5534b; color: #fff; }
+.srw-vr-verdict-unclear { background: #d29922; color: #111; }
+.srw-vr-thumb-link { flex: 0 0 auto; margin-right: 0.6rem; }
+.srw-vr-thumb { width: 200px; height: auto; max-height: 112px; object-fit: contain; background: #000; border-radius: 3px; display: block; }
+.srw-vr-thumb.srw-vr-thumb-frame { outline: 2px solid #2aa198; }
+.srw-vr-misid { color: #d29922; }
+.srw-vr-verdict-vr_mono { background: #6f42c1; color: #fff; }
+.srw-vr-mono-note { color: #b392f0; }
+
+/* Upgrade search reasons (2026-09-26, Maintenance). */
+.srw-upgrade-reason { display: inline-block; min-width: 6.5rem; text-align: center; font-size: 0.86rem; font-weight: 600;
+  padding: 0.1rem 0.4rem; border-radius: 0.6rem; margin-right: 0.5rem; color: #fff; }
+.srw-upgrade-reason-vr_2d { background: #e5534b; }
+.srw-upgrade-reason-ok { background: #2f8f4e; }
+.srw-review-compare { margin: 0.2rem 0; }
+.srw-upgrade-reason-vr_mono { background: #6f42c1; }
+.srw-upgrade-reason-vr_low_quality { background: #d29922; color: #111; }
+.srw-upgrade-reason-below_cutoff { background: #4a90d9; }
+
+/* History page (2026-09-28, v0.79.0) */
+.srw-history-entry { flex-wrap: wrap; }
+.srw-history-level { font-size: 0.86rem; padding: 0.05rem 0.4rem; border-radius: 0.2rem; font-weight: 600; }
+.srw-history-level-info { background: rgba(74, 144, 217, 0.2); color: #8ab8ec; }
+.srw-history-level-warning { background: rgba(210, 153, 34, 0.25); color: #e3b341; }
+.srw-history-level-error { background: rgba(229, 83, 75, 0.25); color: #f47067; }
+.srw-history-category { font-size: 0.93rem; opacity: 0.7; }
+.srw-history-message { flex-basis: 100%; white-space: pre-line; }
+.srw-history-details { flex-basis: 100%; font-size: 0.93rem; }
+.srw-history-details pre { white-space: pre-wrap; margin: 0.25rem 0 0; opacity: 0.8; }
+
+/* Activity > Needs review (2026-09-28) */
+.srw-review-box { flex-basis: 100%; display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; padding-left: 1rem; }
+
+/* Compare scenes (2026-09-30) */
+.srw-cmp-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin: 0.5rem 0; }
+@media (max-width: 1100px) { .srw-cmp-grid { grid-template-columns: 1fr; } }
+.srw-cmp-col { min-width: 0; border: 1px solid rgba(128, 128, 128, 0.3); border-radius: 6px; padding: 0.5rem 0.75rem; }
+.srw-cmp-video { width: 100%; max-height: 60vh; background: #000; border-radius: 4px; }
+.srw-cmp-table { width: 100%; font-size: 0.93rem; margin-top: 0.5rem; border-collapse: collapse; }
+.srw-cmp-table th { text-align: left; white-space: nowrap; vertical-align: top; padding: 0.15rem 0.6rem 0.15rem 0; opacity: 0.7; font-weight: 600; }
+.srw-cmp-table td { word-break: break-word; white-space: pre-wrap; padding: 0.15rem 0; }
+.srw-cmp-ids { margin-top: 0.5rem; }
+.srw-cmp-id { border-top: 1px solid rgba(128, 128, 128, 0.25); padding: 0.4rem 0; }
+.srw-cmp-bar { position: sticky; top: 0; z-index: 2; padding: 0.25rem 0; background: var(--bs-body-bg, #1a1a1a); }
+.srw-cmp-frames { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0.25rem 0; }
+.srw-cmp-frame { margin: 0; }
+.srw-cmp-frame img { width: 150px; border-radius: 3px; display: block; }
+
+
+/* ---- Navigation (2026-10-04, UI review) ---- */
+.srw-main-tabs { margin: 0.25rem 0 1rem; }
+.srw-main-tabs .nav-link { cursor: pointer; }
+.srw-activity-badge,
+.srw-entity-tab-count,
+.srw-sidenav-badge {
+  display: inline-block;
+  min-width: 1.35em;
+  margin-left: 0.45em;
+  padding: 0 0.4em;
+  border-radius: 1em;
+  background: var(--primary, #137cbd);
+  color: #fff;
+  font-size: 0.86em;
+  line-height: 1.5;
+  text-align: center;
+}
+.srw-activity-badge[hidden], .srw-nav-dot[hidden] { display: none; }
+/* Plugin icon among Stash's utility icons (MainNavBar.UtilityItems): no drop-down caret, the activity dot sits on the icon. */
+.srw-nav-menu { position: relative; }
+.srw-nav-menu .btn { position: relative; }
+.srw-nav-menu .srw-nav-dot { position: absolute; top: 0.35em; right: 0.2em; margin: 0; }
+.srw-nav-dot {
+  display: inline-block;
+  width: 0.55em;
+  height: 0.55em;
+  margin-left: 0.4em;
+  border-radius: 50%;
+  background: #f5a623;
+  vertical-align: middle;
+}
+
+.srw-side-layout {
+  display: grid;
+  grid-template-columns: 14rem minmax(0, 1fr);
+  gap: 1.25rem;
+  align-items: start;
+}
+.srw-sidenav { position: sticky; top: 4.5rem; }
+.srw-sidenav .nav-link { cursor: pointer; }
+.srw-side-content { min-width: 0; }
+@media (max-width: 768px) {
+  .srw-side-layout { grid-template-columns: 1fr; }
+  .srw-sidenav { position: static; flex-direction: row !important; flex-wrap: wrap; }
+}
+
+/* A former collapsible panel shown as a page of its own (Maintenance areas, 2026-10-04): open, no fold-away, summary as heading. */
+.srw-panel-flat { border: none; padding: 0; margin: 0 0 1rem; }
+.srw-panel-flat > summary {
+  list-style: none;
+  cursor: default;
+  pointer-events: none;
+  font-size: 1.17rem;
+  font-weight: 600;
+  margin: 0 0 0.5rem;
+}
+.srw-panel-flat > summary::-webkit-details-marker { display: none; }
+.srw-maintenance-area { min-width: 0; }
+
+/* Note that a part of the UI comes from another plugin (Stash-Sense 2), not from this project. */
+.srw-sense-notice {
+  margin: 0 0 1rem;
+  padding: 0.6rem 0.9rem;
+  border-left: 3px solid #f5a623;
+  background: rgba(245, 166, 35, 0.1);
+  font-size: 0.93em;
+}
+
+/* ---- Three navigation levels, three looks (2026-10-04, UI review step 4) ----
+   1. page tabs (Stash nav-tabs, see buildPageHeader)  2. .srw-subtabs = views of one page (pills, accent when active)
+   3. .srw-view-toggle = FILTER chips (small, outlined, neutral when active) -- never the same look as navigation. */
+.srw-subtabs { display: flex; flex-wrap: wrap; gap: 0.25rem; margin: 0.25rem 0 0.75rem; }
+.srw-subtabs > .srw-btn {
+  background: transparent;
+  border: none;
+  border-radius: 0.25rem;
+  padding: 0.35rem 0.9rem;
+  font-size: 0.95rem;
+  color: inherit;
+  opacity: 0.75;
+}
+.srw-subtabs > .srw-btn:hover:not(:disabled) { opacity: 1; background: rgba(128, 128, 128, 0.18); }
+.srw-subtabs > .srw-btn.srw-btn-primary { background: var(--primary, #137cbd); color: #fff; opacity: 1; }
+
+.srw-view-toggle > .srw-btn {
+  background: transparent;
+  border: 1px solid rgba(128, 128, 128, 0.55);
+  border-radius: 1em;
+  padding: 0.25rem 0.8rem; /* normal button height (v0.162.0; was 0.05rem) */
+  font-size: 1rem;
+  color: inherit;
+}
+.srw-view-toggle > .srw-btn:hover:not(:disabled) { background: rgba(128, 128, 128, 0.18); }
+.srw-view-toggle > .srw-btn.srw-btn-primary {
+  background: rgba(128, 128, 128, 0.32);
+  border-color: currentColor;
+  font-weight: 600;
+}
+
+.srw-entity-tab-count[hidden] { display: none; }
+
+/* Sizes (2026-10-04, user: buttons and texts on Review looked too small compared with other pages): inside Maintenance
+   the "small" buttons are as big as normal ones, hints and tables are readable. */
+.srw-maintenance-area .srw-btn-sm { padding: 0.25rem 0.6rem; font-size: 1em; }
+.srw-maintenance-area .srw-hint { font-size: 0.95em; opacity: 0.8; }
+.srw-maintenance-area .srw-cmp-table { font-size: 0.95rem; }
+.srw-maintenance-area .srw-view-toggle > .srw-btn { font-size: 1rem; padding: 0.1rem 0.8rem; }
+
+/* Sections inside the Releases tab of Performer/Studio pages: the sub-tabs carry the titles, so the section headings are not repeated. */
+#srw-releases-pane > details[hidden] { display: none; }
+#srw-releases-pane > .srw-panel-flat > summary { display: none; }
+
+/* Size floor (2026-10-04, user: UI elements must not be smaller than the normal case): form controls inside the plugin pages
+   are the normal 14px, also the ones the browser would otherwise render at 13.3px. */
+#srw-plugin-root input:not([type=checkbox]):not([type=radio]):not([type=range]),
+#srw-plugin-root select,
+#srw-plugin-root textarea,
+#srw-releases-pane input:not([type=checkbox]):not([type=radio]):not([type=range]),
+#srw-releases-pane select,
+#srw-releases-pane textarea { font-size: 1rem; }
+.srw-subtabs > .srw-btn { font-size: 1rem; }
+.srw-review-candidate .srw-btn,
+.srw-cal-more-btn { font-size: 1rem; }
+/* One minimum height for text fields and selects, close to the buttons next to them (30px). */
+#srw-plugin-root input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=hidden]),
+#srw-plugin-root select,
+#srw-releases-pane input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=hidden]),
+#srw-releases-pane select { min-height: 30px; box-sizing: border-box; }
+.srw-watchlist-nav-link { font-size: 1rem; }
+#srw-plugin-root code, #srw-releases-pane code { font-size: 0.93em; }
+
+/* Releases page: the status sections are tabs now; headings of the sections are not repeated. */
+.srw-releases-page-list > details.srw-panel-flat > summary { display: none; }
+.srw-releases-page-list > details[hidden], .srw-releases-main-pane[hidden] { display: none; }
+/* Third look for the List/Calendar switch inside the "New releases" tab: underline instead of filled pill. */
+.srw-subtabs-inner { margin: 0 0 0.5rem; }
+.srw-subtabs-inner > .srw-btn.srw-btn-primary {
+  background: transparent;
+  color: inherit;
+  border-radius: 0;
+  border-bottom: 2px solid var(--primary, #137cbd);
+}
+
+/* Activity: the sections are tabs (headings hidden, they carry the live numbers into the tab labels). */
+.srw-activity-tabbed > details.srw-panel-flat > summary { display: none; }
+.srw-activity-tabbed > details[hidden] { display: none; }
+
+/* Needs review rows: info on the left (scene, then the candidate), decision buttons on the right. */
+.srw-review-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.4rem 1rem;
+  align-items: center;
+  padding: 0.6rem 0;
+}
+.srw-review-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.2rem 0.6rem; }
+.srw-review-head .srw-release-title { font-weight: 600; }
+.srw-review-info .srw-review-box { flex-basis: auto; padding-left: 0; margin-top: 0.3rem; overflow-wrap: anywhere; }
+.srw-review-actions { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; justify-content: flex-end; }
+.srw-review-warning {
+  padding: 0 0.5rem;
+  border-radius: 0.25rem;
+  background: rgba(245, 166, 35, 0.2);
+  border: 1px solid #f5a623;
+  font-size: 0.93em;
+}
+/* Movie covers are portrait posters: fixed height, width follows the image, never cropped (v0.131.3). */
+.srw-release-thumb.srw-movie-cover { width: auto; height: 120px; max-width: 180px; object-fit: contain; }
+/* With a cover (v0.131.2): [cover | info | buttons]. */
+.srw-review-row-thumb { grid-template-columns: auto minmax(0, 1fr) auto; }
+@media (max-width: 700px) { .srw-review-row-thumb { grid-template-columns: auto minmax(0, 1fr); } .srw-review-row-thumb .srw-review-actions { grid-column: 1 / -1; } }
+@media (max-width: 700px) { .srw-review-row { grid-template-columns: 1fr; } .srw-review-actions { justify-content: flex-start; } }
+.srw-notification-message { white-space: pre-wrap; overflow-wrap: anywhere; }
+.srw-review-head .srw-release-date, .srw-review-head .srw-history-category { margin-left: 0; }
+
+/* Needs review: the confirmation replaces Accept/Reject where they stand (right column, no line break of the box). */
+.srw-review-actions { flex-wrap: nowrap; }
+/* The title otherwise grows (flex: 1 1 auto) and pushes studio/date to the far edge. */
+.srw-review-head .srw-release-title { flex: 0 1 auto; }
+
+/* Release rows (v0.102.7): [thumbnail] [icons+names / release name / date+badges] [buttons]. Only the name may wrap; the buttons stay in one line. */
+.srw-release-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  column-gap: 0.75rem;
+  row-gap: 0.3rem;
+  align-items: center;
+  flex-wrap: nowrap;
+}
+.srw-release-row.srw-release-row-nothumb { grid-template-columns: minmax(0, 1fr) auto; }
+.srw-release-row > .srw-review-candidate { grid-column: 1 / -1; }
+.srw-rr-info { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; }
+.srw-rr-entity, .srw-rr-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 0.2rem 0.6rem; min-width: 0; }
+.srw-rr-title { min-width: 0; overflow-wrap: anywhere; }
+.srw-rr-title .srw-release-title { flex: none; }
+.srw-rr-actions { display: flex; flex-wrap: nowrap; align-items: center; gap: 0.4rem; white-space: nowrap; justify-content: flex-end; }
+.srw-rr-actions .srw-search-actions { display: inline-flex; flex-wrap: nowrap; align-items: center; gap: 0.4rem; }
+.srw-rr-actions:empty { display: none; }
+
+.srw-release-studio-link { color: inherit; text-decoration: none; }
+.srw-release-studio-link:hover { text-decoration: underline; }
+
+/* A search panel opened from a release row spans all columns, under the row's three areas. */
+.srw-release-row > .srw-manual-search-panel { grid-column: 1 / -1; order: 0; white-space: normal; }
+
+/* History: the Log and Imported sections are tabs (headings hidden, they carry the numbers into the tab labels). */
+.srw-history-tabbed details.srw-panel-flat > summary { display: none; }
+.srw-history-tabbed > details[hidden], .srw-history-tabbed > div[hidden] { display: none; }
+
+.srw-inline-confirm-text.srw-inline-confirm-long { white-space: normal; max-width: 42rem; overflow-wrap: break-word; }
+
+/* Undo card after a Dismiss (v0.104.0) */
+.srw-notification-actions { margin-top: 0.4rem; }
+
+/* Upgrade wanted rows (v0.106.0): the buttons stay together on the right instead of one of them wrapping alone */
+.srw-upgrade-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 0.5rem; margin-left: auto; }
+
+/* VR rows (v0.106.1): the buttons are their own cell that wraps INSIDE itself; the info block takes the remaining width */
+.srw-row-info { flex: 1 1 18rem; min-width: 0; }
+.srw-row-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 0.5rem; margin-left: auto; flex: 0 1 24rem; }
+
+/* Imported although the fingerprints did not match -- confirmed by the user (v0.106.6). */
+.srw-confirmed-badge {
+  font-size: 0.86em;
+  padding: 0.05rem 0.4rem;
+  border-radius: 3px;
+  background: rgba(70, 130, 200, 0.4);
+  white-space: nowrap;
+}
+
+/* Film wishlist (v0.108.0) */
+.srw-film-row { align-items: flex-start; }
+.srw-film-thumb { width: 54px; height: 80px; object-fit: cover; border-radius: 3px; flex: 0 0 auto; }
+.srw-film-thumb-sm { width: 36px; height: 54px; }
+.srw-film-thumb-empty { display: inline-flex; align-items: center; justify-content: center; background: rgba(128,128,128,0.2); font-size: 1.4em; }
+.srw-film-class { margin-left: 0.5rem; font-size: 0.86em; padding: 0.05rem 0.4rem; border-radius: 3px; white-space: nowrap; background: rgba(128,128,128,0.3); }
+.srw-film-class-sure { background: rgba(46, 160, 67, 0.4); }
+.srw-film-class-likely { background: rgba(70, 130, 200, 0.4); }
+.srw-film-class-unsure { background: rgba(220, 160, 40, 0.4); }
+.srw-film-class-none { background: rgba(229, 83, 75, 0.35); }
+.srw-page-tabs { margin: 0.5rem 0; }
+
+/* Menu icons (v0.113.0): Font Awesome icons from Stash's own library, same size as the label */
+.srw-icon { width: 1em; height: 1em; margin-right: 0.45rem; vertical-align: -0.125em; flex: 0 0 auto; }
+.srw-main-tabs .nav-link, .srw-sidenav .nav-link { display: inline-flex; align-items: center; }
+.srw-sidenav .nav-link { display: flex; }
+
+/* Multi-file groups: one local scene with its thumbnail, link and assignment (v0.114.0) */
+.srw-group-scene { display: flex; align-items: center; flex-wrap: wrap; gap: 0.75rem; }
+.srw-group-scene > div { flex: 1 1 14rem; min-width: 0; }
+.srw-group-scene select { max-width: 26rem; }
+.srw-group-scene input[type=text] { min-width: 14rem; }
+
+/* Seed line of a movie suggestion: saved cover + text, both open the seed's original page (v0.117.0) */
+.srw-seed-line { display: flex; align-items: center; gap: 0.5rem; }
+.srw-seed-line a { color: inherit; text-decoration: underline dotted; }
+
+/* "Open scene" link-buttons stay hidden until the scene's Stash id is known (the display rules of .srw-btn / the pill icons must not win). */
+a.srw-open-scene[hidden] { display: none !important; }
+a.srw-cal-pill-open { text-decoration: none; color: inherit; cursor: pointer; }
+
+/* Inline confirm inside a calendar pill (v0.129.4): the prompt was wider than the pill and stuck out on the left. It covers the pill's icon row
+   instead, exactly as wide as the pill; a long question wraps. */
+.srw-cal-pill { position: relative; }
+.srw-cal-pill .srw-inline-confirm {
+  position: absolute; left: 4px; right: 4px; bottom: 4px; z-index: 5;
+  max-width: none; flex-wrap: wrap; justify-content: center;
+  background: #161b22; border-color: rgba(224, 176, 80, 0.7);
+}
+.srw-cal-pill .srw-inline-confirm-text, .srw-cal-pill .srw-inline-confirm-text.srw-inline-confirm-long { white-space: normal; max-width: 100%; }
+
+/* Movie calendar (v0.138.0): the scene calendar's pill, with the movie's cover (portrait) where a scene has the entity avatar. */
+.srw-cal-avatar-movie { width: 1.85em; height: 2.6em; border-radius: 3px; object-fit: cover; flex: 0 0 auto; }
+
+.srw-scan-row { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
+.srw-scan-row > .srw-page-tabs { flex: 0 1 auto; }
+
+/* Settings that do nothing under the chosen Whisparr scope (v0.149.0): greyed out via the inert attribute, with a line saying why. */
+.srw-inert { opacity: 0.5; }
+
+/* Watchlist (v0.150.0): the Auto -> Wishlist notice is a muted red (the amber of .srw-callout is ThePornDB's colour), and the per-entity date
+   window sits behind one button that opens a floating box instead of two always-visible date fields that made every row wrap. */
+.srw-callout.srw-callout-auto { background: rgba(200, 100, 95, 0.15); border-left-color: #c8645f; }
+.srw-window-wrap { position: relative; }
+.srw-window-pop {
+  position: absolute; top: calc(100% + 4px); left: 0; z-index: 30; min-width: 280px; max-width: 360px;
+  display: flex; flex-direction: column; gap: 0.5rem; padding: 0.7rem 0.8rem;
+  background: #161b22; border: 1px solid rgba(224, 176, 80, 0.7); border-radius: 6px; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+  white-space: normal; font-size: 0.93em;
+}
+.srw-window-pop-title { font-weight: 600; }
+.srw-window-pop-hint { opacity: 0.75; }
+.srw-window-pop label { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+.srw-window-pop-actions { display: flex; gap: 0.4rem; }
+.srw-auto-handoff.srw-pop-open { position: relative; z-index: 40; opacity: 1; }
+
+/* Provider colours (row tint, badge, calendar pill) are generated from the provider registry by core.js (renderProviderStyles). */
+
+/* Group headings in a side menu (v0.153.0, Maintenance): a muted line over the links of the group. */
+.srw-sidenav-heading { padding: 0.7rem 0.75rem 0.2rem; font-size: 0.86em; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; opacity: 0.55; }
+.srw-sidenav-heading:first-child { padding-top: 0.2rem; }
+
+/* One look for every text-like input on the plugin pages (v0.161.0): Settings and Maintenance used the unstyled browser inputs (white, square), the other
+   pages the dark rounded .srw-search-input. Scoped to the plugin root, so Stash's own inputs are not touched. */
+#srw-plugin-root input:is([type=text], [type=search], [type=number], [type=password], [type=date], [type=url], [type=email], :not([type])),
+#srw-plugin-root textarea {
+  background: rgb(33, 33, 33);
+  color: #e0e0e0;
+  border: 1px solid rgba(128, 128, 128, 0.3);
+  border-radius: 3.5px;
+  padding: 4px 8px;
+  font-size: 14px;
+  color-scheme: dark;
+  box-sizing: border-box;
+  min-height: 30px;
+}
+#srw-plugin-root input:is([type=text], [type=search], [type=number], [type=password], [type=date], [type=url], [type=email], :not([type])):disabled,
+#srw-plugin-root textarea:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* UI consistency step 2 (v0.162.0): ONE size for the titles inside the plugin pages (Settings cards were h4 = 21px, Maintenance areas h3 = 24.5px), and
+   selects never narrower than their label ("On" / "Off" in a Settings row was a tiny box). */
+#srw-plugin-root h3, #srw-plugin-root h4 { font-size: 1.3rem; }
+#srw-plugin-root select { min-width: 5.5rem; }
+
+/* Releases page while it is being built (v0.175.0): only the header shows, then everything appears at once. */
+.srw-page-loading > :not(.srw-page-header) { display: none !important; }
+.srw-page-loading::after { content: 'Loading…'; display: block; padding: 1rem 0; opacity: 0.7; }
+
+/* "Development mode" item of the header pill (v0.178.0). */
+.srw-status-dot.warn { background: #d29922; }
+
+/* Reminder under the page header while the first-start setup is not finished (v0.179.0). */
+.srw-setup-banner { margin: 0.5rem 0; padding: 0.5rem 0.75rem; border-left: 3px solid #d29922; background: rgba(210, 153, 34, 0.12); }
+
+/* Drop area for an export file in Settings > General > Backup & move (v0.180.0). */
+.srw-dropzone { margin: 0.5rem 0; padding: 0.9rem 1rem; border: 2px dashed var(--bs-secondary, #6c757d); border-radius: 6px; }
+.srw-dropzone-over { border-color: var(--primary, #137cbd); background: rgba(19, 124, 189, 0.12); }
+.srw-dropzone-busy { opacity: 0.7; pointer-events: none; }

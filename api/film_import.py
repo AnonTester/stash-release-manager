@@ -1,0 +1,297 @@
+"""Film wishlist, step 4 (v0.110.0): imports a completed film download and builds its Group.
+
+1. A 'grabbed' film whose SABnzbd job is Completed: the video file(s) are moved (hardlink, else copy -- like scenes) into
+   <library>/Movies/<Title> (<Year>)/ and Stash is told to scan that folder. The new paths are recorded on the film
+   (pending_import_path, a JSON list) -- the scene(s) do not exist yet.
+2. Once Stash has created the scene(s) for ALL files (next run; a finished scan kicks a run): the summed length is compared with the film's
+   length (+-15 %), then the Group is created from the ThePornDB movie (or the film's existing empty Stash group, or just the title) and
+   the scenes are put in it in file-name order. The film is 'imported'. A length that doesn't fit leaves it 'import_failed' with
+   the files in place -- "Group anyway" (force) builds the Group regardless.
+A SABnzbd job that failed puts the film back on the wishlist. Nothing is deleted except what a normal import also cleans up
+(the download folder, an identical target file goes to the recycle bin)."""
+import json
+import logging
+import os
+import re
+import shutil
+import subprocess
+
+import download_client_repo
+import film_names
+import download_jobs
+import file_importer
+import film_repo
+import film_whisparr
+import history
+import quality_detect
+from sabnzbd_client import SabnzbdClient
+
+logger = logging.getLogger(__name__)
+
+LENGTH_TOLERANCE = 0.15
+_MIN_PART_RATIO = 0.10  # a video smaller than 10 % of the biggest one is a sample/trailer, not a part
+
+
+def _safe(name):
+    t = re.sub(r'[\\/:*?"<>|]', " ", name or "")
+    return re.sub(r"\s+", " ", t).strip().rstrip(".")
+
+
+def folder_name(film):
+    return film_names.with_year(_safe(film["title"]), film.get("year"))
+
+
+unreadable = file_importer.unreadable  # moved to file_importer in v0.165.1 (scene import shares it)
+
+
+def _to_local(remote_path, cfg):
+    root = cfg["stash_root"].rstrip("/")
+    return cfg["local_media_mount"].rstrip("/") + remote_path[len(root):] if remote_path.startswith(root) else remote_path
+
+
+def _video_files(local_path):
+    if os.path.isfile(local_path):
+        return [local_path]
+    found = []
+    for root, _dirs, files in os.walk(local_path):
+        for name in files:
+            if os.path.splitext(name)[1].lower() in file_importer.VIDEO_EXTENSIONS:
+                full = os.path.join(root, name)
+                found.append((os.path.getsize(full), full))
+    if not found:
+        return []
+    biggest = max(size for size, _ in found)
+    return sorted(full for size, full in found if size >= biggest * _MIN_PART_RATIO)
+
+
+def _to_remote(local_path, cfg):
+    mount = cfg["local_media_mount"].rstrip("/")
+    return cfg["stash_root"].rstrip("/") + local_path[len(mount):]
+
+
+def import_downloaded(db, stash_client, film, job, cfg):
+    """Step 1 -- moves the finished download into the library and starts the scan."""
+    keep_source = bool(job.get("keep_source"))  # torrent: the files keep seeding (hard-linked / copied, never moved)
+    out = file_importer._to_local_path(job["storage"], job.get("remote_root") or cfg["sab_remote_root"],
+                                       job.get("local_mount") or cfg["sab_local_mount"])
+    videos = _video_files(out)
+    if not videos:
+        film_repo.update(db, film["id"], import_error=f"Downloaded file not found under {out} -- retrying automatically")
+        history.event("warning", "movies", f"{film['title']}: downloaded file not found -- retrying", dedupe_minutes=24 * 60)
+        return {"id": film["id"], "status": "waiting_for_file"}
+    for video in videos:  # a download that is not a readable video never goes into the library: back on the wishlist, the release is rejected
+        reason = unreadable(video)
+        if reason:
+            msg = (f"The downloaded file \"{os.path.basename(video)}\" is not a readable video ({reason}) -- probably a failed unpack. "
+                   "Nothing was moved into the library; the release is rejected and the movie is searched again")
+            rejected = [*film.get("rejected_titles", []), *([film["grabbed_title"]] if film.get("grabbed_title") else [])]
+            film_repo.update(db, film["id"], status="wanted", download_client_id=None, download_job_id=None, grabbed_title=None, grabbed_at=None, review_candidate=None,
+                             import_error=msg, last_search_result="unreadable", rejected_titles=rejected)
+            history.event("warning", "movies", f"{film['title']}: {msg}")
+            return {"id": film["id"], "status": "unreadable"}
+    base = folder_name(film)  # (for the History line; the paths come from the movie templates)
+    targets, folders = [], []
+    for index, source in enumerate(videos, 1):
+        quality = quality_detect.detect_quality(source, film.get("grabbed_title") or os.path.basename(source))
+        tokens = film_names.movie_tokens(_safe(film["title"]), film.get("year"), index if len(videos) > 1 else None, quality,
+                                         film.get("studio_name") or "", cfg.get("naming_options"))
+        rel = film_names.render_movie_path(cfg.get("movie_folder_format"), cfg.get("movie_naming_format"), tokens, os.path.splitext(source)[1])
+        target = os.path.join(cfg["local_media_mount"].rstrip("/"), rel.lstrip("/"))
+        if os.path.dirname(target) not in folders:
+            folders.append(os.path.dirname(target))
+        file_importer._recycle_existing_target(target, cfg["local_media_mount"], cfg["recycle_bin_path"])
+        file_importer._move_file(source, target, cfg["use_hardlinks"], keep_source=keep_source)
+        file_importer._apply_permissions(target, cfg["set_permissions"], cfg["chmod_folder"], cfg["chown_group"])
+        targets.append(_to_remote(target, cfg))
+    if not keep_source:
+        file_importer._delete_extra_files(out)
+        file_importer._cleanup_source_dir(out)
+    film_repo.update(db, film["id"], pending_import_path=json.dumps(targets), import_error=None)
+    stash_client.scan_paths([_to_remote(f, cfg) for f in folders])
+    history.event("info", "movies", f"{film['title']}: {len(targets)} file(s) moved into the library, Stash scan started",
+                  details={"folder": base})
+    return {"id": film["id"], "status": "moved", "files": len(targets)}
+
+
+def _scene_for_path(stash_client, path):
+    sc = stash_client.find_scene_by_path(path)
+    if sc is None:
+        return None
+    full = stash_client._graphql("query($id: ID!) { findScene(id: $id) { id files { path duration } } }", {"id": str(sc["id"])})["findScene"]
+    duration = sum((f.get("duration") or 0) for f in full["files"] if f["path"] == path) or sum((f.get("duration") or 0) for f in full["files"])
+    return {"id": str(sc["id"]), "duration": duration}
+
+
+def _tpdb_record(film, get_provider_client):
+    """The full ThePornDB movie record for the group data (the search result may be thin); one request, falls back to the stored one."""
+    stored = film.get("tpdb_json")
+    if not film.get("tpdb_id"):
+        return None
+    client = get_provider_client("theporndb") if get_provider_client else None
+    if client is not None:
+        try:
+            resp = client._get(f"/movies/{film['tpdb_id']}")
+            resp.raise_for_status()
+            data = resp.json()
+            return data.get("data", data)
+        except Exception:  # noqa: BLE001
+            logger.exception("movie import: ThePornDB movie detail failed for %s, using the stored record", film["tpdb_id"])
+    return stored
+
+
+def finalize(db, stash_client, film, movies, get_provider_client, force=False, cfg=None):
+    """Step 2 -- scenes -> length check -> Group. Returns {"status": waiting | imported | import_failed, ...}. With `cfg`, a file that Stash has not turned
+    into a scene is checked for being a readable video at all: if not, the movie goes to import_failed (use "Wrong movie") instead of waiting forever."""
+    paths = json.loads(film["pending_import_path"])
+    scenes = []
+    for path in paths:
+        sc = _scene_for_path(stash_client, path)
+        if sc is None:
+            reason = unreadable(_to_local(path, cfg)) if cfg else None
+            if reason:
+                msg = (f"The file \"{os.path.basename(path)}\" is not a readable video ({reason}), so Stash cannot make a scene of it -- probably a failed unpack. "
+                       "Use 'Wrong movie' to remove it and search again")
+                film_repo.update(db, film["id"], status="import_failed", import_error=msg)
+                history.event("warning", "movies", f"{film['title']}: {msg}")
+                return {"id": film["id"], "status": "import_failed", "reason": "unreadable"}
+            return {"id": film["id"], "status": "waiting"}  # Stash has not created every scene yet
+        scenes.append(sc)
+    ids = [s["id"] for s in scenes]
+    actual = sum(s["duration"] for s in scenes) / 60
+    expected = film.get("duration_min")
+    if expected and actual and not force and abs(actual / expected - 1) > LENGTH_TOLERANCE:
+        msg = (f"The file(s) are {actual:.0f} min, ThePornDB says {expected:.0f} min -- a different cut or the wrong movie. "
+               "Nothing was grouped; look at it (Open file in Stash), then 'Group anyway' or fix it by hand")
+        film_repo.update(db, film["id"], status="import_failed", import_error=msg)
+        history.event("warning", "movies", f"{film['title']}: {msg}")
+        return {"id": film["id"], "status": "import_failed", "actual": round(actual, 1), "expected": expected}
+    if film.get("stash_group_id"):
+        group = movies.create_group(None, ids, group_id=film["stash_group_id"])
+        group_id = group["group_id"]
+    elif film.get("tpdb_id"):
+        record = _tpdb_record(film, get_provider_client)
+        res = movies.create_from_tpdb(record, ids, movies.local_studio_index()) if record else movies.create_group(film["title"], ids)
+        group_id = res["group_id"]
+    else:
+        group_id = movies.create_group(film["title"], ids)["group_id"]
+    for sid in ids:
+        file_importer._trigger_generate(stash_client, sid)
+    film_repo.update(db, film["id"], status="imported", imported_group_id=group_id, pending_import_path=None, import_error=None)
+    film_whisparr.queue_file(db, film["id"])
+    history.event("info", "movies", f"{film['title']} imported: group {group_id} with {len(ids)} scene(s)",
+                  details={"scenes": ids, "minutes": round(actual, 1)})
+    return {"id": film["id"], "status": "imported", "group_id": group_id, "scenes": len(ids)}
+
+
+def _make_group(db, film, ids, movies, get_provider_client):
+    if film.get("stash_group_id"):
+        return movies.create_group(None, ids, group_id=film["stash_group_id"])["group_id"]
+    if film.get("tpdb_id"):
+        record = _tpdb_record(film, get_provider_client)
+        if record:
+            return movies.create_from_tpdb(record, ids, movies.local_studio_index())["group_id"]
+    return movies.create_group(film["title"], ids)["group_id"]
+
+
+def assemble(db, stash_client, film, movies, get_provider_client):
+    """Mode B (v0.111.0): the film is put together from StashDB scenes that went on the scene wishlist. Waits until ALL of them are
+    imported (normal scene import, fingerprint-verified), then builds the Group with the scenes in "Scene k" order."""
+    import release_repo
+    ordered = sorted(film.get("scene_ids") or [], key=lambda s: s["k"])
+    if not ordered:
+        return {"id": film["id"], "status": "waiting"}
+    for sc in ordered:
+        if not any(r["status"] == "imported" for r in release_repo.list_rows_for_scene(db, "stashdb", sc["id"])):
+            return {"id": film["id"], "status": "waiting"}
+    local = []
+    for sc in ordered:
+        found = stash_client.find_scene_ids_by_stash_id(stash_client.stashdb_endpoint, sc["id"])
+        if not found:
+            return {"id": film["id"], "status": "waiting"}  # imported, but Stash has not got the id on the scene yet
+        local.append(found[0])
+    group_id = _make_group(db, film, local, movies, get_provider_client)
+    film_repo.update(db, film["id"], status="imported", imported_group_id=group_id, import_error=None)
+    film_whisparr.queue_file(db, film["id"])
+    history.event("info", "movies", f"{film['title']} put together from {len(local)} StashDB scene(s): group {group_id}",
+                  details={"scenes": local})
+    return {"id": film["id"], "status": "imported", "group_id": group_id, "scenes": len(local)}
+
+
+def run(db, stash_client, movies, get_provider_client, cfg):
+    """One pass over every 'grabbed' film -- called at the end of every file-import run (loop, SABnzbd webhook, finished scan)."""
+    result = {"moved": [], "imported": [], "failed": [], "waiting": []}
+    for row in film_repo.list_films(db, ["grabbed"], per_page=0)["rows"]:
+        film = film_repo.get(db, row["id"], with_json=True)
+        try:
+            if film.get("mode") == "scenes":
+                out = assemble(db, stash_client, film, movies, get_provider_client)
+                (result["imported"] if out["status"] == "imported" else result["waiting"]).append(out)
+                continue
+            if film.get("pending_import_path"):
+                out = finalize(db, stash_client, film, movies, get_provider_client, cfg=cfg)
+                {"imported": result["imported"], "import_failed": result["failed"]}.get(out["status"], result["waiting"]).append(out)
+                continue
+            client_row = download_client_repo.get_one(db, film["download_client_id"]) if film.get("download_client_id") else None
+            if client_row is None or client_row["type"] not in ("sabnzbd", "qbittorrent") or not film.get("download_job_id"):
+                continue
+            job = download_jobs.job_state(client_row, film["download_job_id"])
+            if job["state"] == "failed":
+                label = job.get("client") or "SABnzbd"
+                msg = f"Download failed in {label}{(': ' + job['fail_message']) if job.get('fail_message') else ''} -- back on the wishlist"
+                film_repo.update(db, film["id"], status="wanted", download_job_id=None, download_client_id=None, import_error=msg,
+                                 last_search_result="download_failed")
+                history.event("error", "movies", f"{film['title']}: {msg}")
+                result["failed"].append({"id": film["id"], "status": "download_failed"})
+                continue
+            if job["state"] == "post_processing":  # "Completed" comes before the output path is set (found with the first real film grab, v0.125.3)
+                result["waiting"].append({"id": film["id"], "status": "post_processing"})
+                continue
+            if job["state"] != "completed":
+                continue  # still downloading, or the client doesn't know the id (yet) / a torrent removed by hand
+            out = import_downloaded(db, stash_client, film, job, cfg)
+            (result["failed"] if out.get("status") == "unreadable" else result["moved"]).append(out)
+        except Exception as e:  # noqa: BLE001
+            logger.exception("movie import failed for movie %s", film["id"])
+            film_repo.update(db, film["id"], import_error=f"{type(e).__name__}: {e}")
+            result["failed"].append({"id": film["id"], "status": "error", "error": str(e)})
+    return result
+
+
+def discard(db, stash_client, film, recycle, to_local, dismiss=False):
+    """"Wrong movie" for a movie whose import failed (status import_failed, files already in the library): removes the Stash scene of each
+    downloaded file (only when the scene holds just that file), moves the file to the recycle bin (reversible for its retention time), drops
+    the empty movie folder and the Stash entries, blocklists the release for this movie and sets the movie back to 'wanted' (searched again)
+    or, with `dismiss`, to 'dismissed'. Only the files recorded in pending_import_path are touched."""
+    paths = json.loads(film.get("pending_import_path") or "[]")
+    if not paths:
+        raise ValueError("no imported file is recorded for this movie")
+    removed_scenes, recycled, missing = [], [], []
+    for path in paths:
+        sc = stash_client.find_scene_by_path(path)
+        if sc is not None and len(stash_client.scene_files(str(sc["id"])) or []) <= 1:
+            stash_client.destroy_scene(str(sc["id"]), delete_file=False)
+            removed_scenes.append(str(sc["id"]))
+        local = to_local(path)
+        if os.path.exists(local):
+            recycle(local)
+            recycled.append(os.path.basename(local))
+        else:
+            missing.append(os.path.basename(local))
+    folders = sorted({os.path.dirname(p) for p in paths})
+    for folder in folders:
+        try:
+            os.rmdir(to_local(folder))  # only succeeds when empty
+        except OSError:
+            pass
+    try:
+        stash_client.clean_paths(folders)
+    except Exception:  # noqa: BLE001
+        logger.exception("movie discard: Stash clean for %s failed (the entries go with the next clean)", folders)
+    rejected = [*film.get("rejected_titles", []), *([film["grabbed_title"]] if film.get("grabbed_title") else [])]
+    film_repo.update(db, film["id"], status="dismissed" if dismiss else "wanted", pending_import_path=None, import_error=None,
+                     download_client_id=None, download_job_id=None, grabbed_title=None, grabbed_at=None,
+                     review_candidate=None, last_search_at=None, last_search_result="rejected", rejected_titles=rejected)
+    history.event("info", "movies", f"{film['title']}: wrong movie removed ({len(recycled)} file(s) in the recycle bin), "
+                  + ("dismissed" if dismiss else "searched again"),
+                  details={"scenes": removed_scenes, "files": recycled, "missing": missing, "blocklisted": film.get("grabbed_title")})
+    return {"ok": True, "files": recycled, "scenes": removed_scenes, "missing": missing, "status": "dismissed" if dismiss else "wanted"}

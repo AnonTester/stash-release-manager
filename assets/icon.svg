@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="256" height="256">
+  <title>Stash box with a calendar badge</title>
+  <rect width="128" height="128" rx="26" fill="#212121"/>
+  <path d="M28 50 10 40l30-12 24 8zM100 50l18-10-30-12-24 8z" fill="#5b95cf"/>
+  <path d="M28 50 64 36l36 14-36 14z" fill="#16202a"/>
+  <path d="M28 50 64 64v38L28 88z" fill="#2f6fb3"/>
+  <path d="M64 64l36-14v38l-36 14z" fill="#245a93"/>
+  <rect x="68" y="64" width="46" height="46" rx="10" fill="#212121"/>
+  <rect x="73" y="69" width="36" height="36" rx="7" fill="#f4f7fb"/>
+  <path d="M73 76a7 7 0 0 1 7-7h22a7 7 0 0 1 7 7v5H73z" fill="#f2a33a"/>
+  <path d="M80 91h6M91 91h6M80 98h6" stroke="#245a93" stroke-width="3.5" stroke-linecap="round"/>
+</svg>

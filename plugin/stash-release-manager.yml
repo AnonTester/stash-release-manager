@@ -1,0 +1,85 @@
+name: StashReleaseManager
+description: Tracking, acquisition, sorting and housekeeping for your Stash library -- watches StashDB/ThePornDB for new releases of what you follow, searches your indexers, imports, organizes and identifies, with a Maintenance page for duplicates and reviews (formerly "Stash Release Watcher").
+version: 0.196.0
+url: https://github.com/northwindlab/stash-release-manager
+
+ui:
+  javascript:
+    - stash-release-manager-core.js
+    - stash-release-manager-releases.js
+    - stash-release-manager-films.js
+    - stash-release-manager-activity.js
+    - stash-release-manager-history.js
+    - stash-release-manager-entity-panel.js
+    - stash-release-manager-group-panel.js
+    - stash-release-manager-settings.js
+    - stash-release-manager-maintenance.js
+    - stash-release-manager-search.js
+    - stash-release-manager.js
+  css:
+    - stash-release-manager.css
+
+settings:
+  sidecarUrl:
+    displayName: Sidecar API URL
+    description: URL of the stash-release-manager sidecar container (e.g. http://localhost:6961)
+    type: STRING
+  stashUrl:
+    displayName: Stash URL
+    description: >-
+      URL of this Stash instance, as reachable from the sidecar container
+      (e.g. http://localhost:9999). Kept here (not on the plugin's own
+      Connections page) since it's always required and shouldn't be
+      editable/removable alongside optional backends like Whisparr/Prowlarr.
+    type: STRING
+  stashApiKey:
+    displayName: Stash API key
+    description: This Stash instance's own API key (Settings > Security), for the sidecar to call back into it.
+    type: STRING
+
+exec:
+  - python
+  - "{pluginDir}/stash_release_manager_backend.py"
+interface: raw
+
+# Instant local favorite-change detection (2026-09-21, user request) --
+# fires this same exec script immediately on any Studio/Performer
+# update (Stash doesn't filter more granularly than the entity type),
+# instead of only ever noticing a favorite change whenever the next
+# scheduled/manual scan happens to run its own watchlist sync. See
+# stash_release_manager_backend.py's _handle_hook() for what this
+# actually does once triggered. `Studio.Update.Post` is assumed to
+# exist by the same naming convention as the already-confirmed
+# `Performer.Update.Post` (see stashdb_favorites.py's own docstring,
+# which documents a DIFFERENT installed plugin reacting to that one) --
+# not yet independently verified live as of writing this.
+hooks:
+  # Since 2026-09-26 also watchlist-tag changes (the watchlist can follow
+  # a Stash tag instead of Favorites, see api/watchlist_source.py).
+  - name: Watchlist favorite/tag changed
+    description: >-
+      Detects a Studio/Performer favorite or watchlist-tag change
+      immediately, instead of waiting for the next scheduled scan's own
+      sync step.
+    triggeredBy:
+      - Performer.Update.Post
+      - Studio.Update.Post
+  # Event-driven import verification (2026-09-25): replaces the sidecar
+  # polling Stash's scan job for up to 600s per imported file. Fires for
+  # EVERY scene Stash creates; the sidecar ignores anything that isn't
+  # one of its own pending imports (cheap no-op). See
+  # file_importer.verify_created_scene().
+  # "Organized" hook (v0.196.0): marking a scene Organized in Stash moves/renames it (movie scenes; ready source-folder scenes) when the
+  # setting Settings > Import & Naming > "When you mark a scene Organized" is on or on preview. The script forwards ONLY updates that
+  # carry the organized field set to true; everything else ends in the script at once.
+  - name: Scene marked Organized
+    description: >-
+      Moves/renames a scene when you mark it Organized, if enabled in Settings.
+    triggeredBy:
+      - Scene.Update.Post
+  - name: Imported scene created
+    description: >-
+      Verifies and tags a scene this plugin just imported as soon as
+      Stash's scan creates it, instead of waiting for the next import run.
+    triggeredBy:
+      - Scene.Create.Post
