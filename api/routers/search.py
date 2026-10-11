@@ -145,7 +145,7 @@ def favorite_studio(provider: str, stashdb_id: str, body: dict):
 
 
 @router.post("/{provider}/scenes/handoff")
-def handoff_scene(provider: str, body: dict):
+def handoff_scene(provider: str, body: dict, search: bool = True):
     """`body` is one full scene dict exactly as returned by
     search_scenes() above -- the frontend already has it from the
     search results, no need to re-fetch it server-side. Any provider
@@ -171,7 +171,7 @@ def handoff_scene(provider: str, body: dict):
             _db, _get_whisparr_client(), provider, body["id"], entity_type, entity_stashdb_id,
             whisparr_quality_profile_id, whisparr_vr_quality_profile_id, _settings.whisparr_root_folder_path,
             quality_profile, vr_search_enabled, search_source=_get_search_source(),
-            get_provider_client=_get_provider_client, get_stash_client=_get_stash_client,
+            get_provider_client=_get_provider_client, get_stash_client=_get_stash_client, search=search,
         )
     except ValueError as e:
         raise HTTPException(404, str(e))

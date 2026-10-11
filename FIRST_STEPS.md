@@ -85,7 +85,7 @@ Scenes that are older than the watchlist entry appear under **Added late**, or -
 
 ## 5. From release to library
 
-Press the arrow on a release (or *Add to Wishlist* in the list view). The plugin then:
+On a release in the list view there are two buttons: **Add** puts it on the wishlist and leaves the search to the schedule (Settings > Jobs); **Add + search** also asks the indexers right away. (In the calendar the arrow on a pill is *Add + search*.) A search that takes longer than about 20 seconds goes on in the background, so a slow indexer no longer ends in an error message; the result shows under Activity and History. The plugin then:
 
 1. looks for the scene at your indexers (Prowlarr or direct), with the scene's current title, date and cast from StashDB;
 2. picks the best match for your quality profile -- only a result that really is that scene; anything doubtful is shown for you to decide;

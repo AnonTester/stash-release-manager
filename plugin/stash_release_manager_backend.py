@@ -100,7 +100,9 @@ def main():
     elif mode == "releases_handoff":
         path = (f"/releases/{args.get('provider')}/{args.get('entity_type')}/"
                 f"{args.get('entity_stashdb_id')}/{args.get('scene_stashdb_id')}/handoff")
-        result = _post(sidecar_url, path, {}, timeout=60)
+        if args.get("search") is False:
+            path += "?search=false"  # "Add" without "Add + search": the scheduled search finds it later
+        result = _post(sidecar_url, path, {}, timeout=90)
     elif mode == "releases_fix_mismatch":
         # See routers/releases.py's fix_mismatch()/handoff.py's
         # fix_mismatched_download() -- deletes the wrong file from
@@ -634,7 +636,8 @@ def main():
     elif mode == "search_handoff_scene":
         # A real Whisparr add-movie + indexer-search round trip, same
         # generous timeout class as releases_handoff.
-        result = _post(sidecar_url, f"/search/{args.get('provider')}/scenes/handoff", args.get("scene") or {}, timeout=60)
+        result = _post(sidecar_url, f"/search/{args.get('provider')}/scenes/handoff" + ("?search=false" if args.get("search") is False else ""),
+                       args.get("scene") or {}, timeout=90)
     elif mode == "releases_whisparr_fallback":
         # Milestone 3 (2026-09-19): manual fallback to Whisparr's own
         # automatic search+grab, same generous timeout class as

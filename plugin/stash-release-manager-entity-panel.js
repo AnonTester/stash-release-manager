@@ -216,9 +216,18 @@
         // stopped describing what the button does; Whisparr is still
         // registered with for bookkeeping, but that's an implementation
         // detail, not the user-facing action.
+        const addOnly = el('button', {
+          className: 'srw-btn srw-whisparr-add-only', textContent: 'Add',
+          title: 'Put it on the wishlist without searching now -- the scheduled search finds it later',
+        });
+        addOnly.addEventListener('click', () => window.SRW.confirmInline(addOnly,
+          `Add "${r.title || r.scene_stashdb_id}" to your wishlist? It is searched by the schedule, not right now.`,
+          () => doHandoff(r, onDone, showSearchStatus, false)));
+        items.push(addOnly);
         items.push(el('button', {
           className: 'srw-btn srw-btn-primary srw-whisparr-action',
-          textContent: 'Add to Wishlist',
+          textContent: 'Add + search',
+          title: 'Put it on the wishlist and search the indexers right now',
           onClick: (e) => confirmHandoff(r, onDone, e.currentTarget.textContent, showSearchStatus, e.currentTarget),
         }));
       }
@@ -282,6 +291,7 @@
     }
     const { el } = window.SRW;
     const actionBtn = li.querySelector('.srw-whisparr-action');
+    if (info.whisparr_exists || info.whisparr_has_file || info.whisparr_file_mismatch) li.querySelectorAll('.srw-whisparr-add-only').forEach((x) => x.remove());
     if (info.in_library) {
       const label = info.quality ? `In Library — ${info.quality}` : 'In Library';
       const badge = el('span', { className: 'srw-release-in-library', textContent: label });
@@ -463,11 +473,12 @@
     await doHandoff(release, onDone, localPatch);
   }
 
-  async function doHandoff(release, onDone, localPatch) {
+  async function doHandoff(release, onDone, localPatch, search = true) {
     try {
       const result = await window.SRW.runOp('releases_handoff', {
         provider: release.provider, entity_type: release.entity_type,
         entity_stashdb_id: release.entity_stashdb_id, scene_stashdb_id: release.scene_stashdb_id,
+        ...(search ? {} : { search: false }),
       });
       if (result.error) {
         window.SRW.notify(`Adding failed: ${release.title || ''}`, result.error, 'error');
@@ -501,8 +512,10 @@
     if (!li) return;
     const statusSpan = li.querySelector('.srw-search-status');
     if (statusSpan) {
-      statusSpan.textContent = window.SRW.searchStatusLabel(null, result.search_result);
+      statusSpan.textContent = result.search_skipped ? 'on the wishlist, searched by the schedule'
+        : (result.search_running ? 'searching in the background...' : window.SRW.searchStatusLabel(null, result.search_result));
     }
+    li.querySelectorAll('.srw-whisparr-add-only').forEach((x) => x.remove()); // it is on the wishlist now
     try {
       const status = await window.SRW.runOp('releases_library_status', {
         scenes: [{ scene_stashdb_id: release.scene_stashdb_id, is_vr: !!release.is_vr }],

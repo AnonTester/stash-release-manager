@@ -891,9 +891,11 @@
         // 2026-09-19 -- see entity-panel.js's confirmHandoff() rename
         // note (the actual search runs in this sidecar now, not
         // Whisparr).
+        items.push(window.SRW.buildAddOnlyButton(r, () => renderReleaseList(container)));
         items.push(el('button', {
           className: 'srw-btn srw-btn-primary srw-whisparr-action',
-          textContent: 'Add to Wishlist',
+          textContent: 'Add + search',
+          title: 'Put it on the wishlist and search the indexers right now',
           onClick: async (e) => {
             const doHandoff = async () => {
               const result = await window.SRW.runOp('releases_handoff', {
@@ -979,6 +981,7 @@
         if (!li) return;
         if (info.satisfied) { li.remove(); return; }
         const actionBtn = li.querySelector('.srw-whisparr-action');
+        if (info.whisparr_exists || info.whisparr_has_file || info.whisparr_file_mismatch) li.querySelectorAll('.srw-whisparr-add-only').forEach((x) => x.remove());
         if (info.in_library) {
           const label = info.quality ? `In Library — ${info.quality}` : 'In Library';
           const badge = el('span', { className: 'srw-release-in-library', textContent: label });
@@ -1102,8 +1105,10 @@
       if (status === 'late') {
         li.push(el('span', { className: 'srw-release-date', textContent: r.scene_date || '' }));
         li.push(window.SRW.buildLateAdditionBadge(r));
+        li.push(window.SRW.buildAddOnlyButton(r, () => renderReleaseList(container)));
         li.push(el('button', {
-          className: 'srw-btn srw-btn-primary srw-whisparr-action', textContent: 'Add to Wishlist',
+          className: 'srw-btn srw-btn-primary srw-whisparr-action', textContent: 'Add + search',
+          title: 'Put it on the wishlist and search the indexers right now',
           onClick: (e) => window.SRW.confirmInline(e.currentTarget,
             `Add "${r.title || r.scene_stashdb_id}" to your wishlist and search for it?`, async () => {
               const result = await window.SRW.runOp('releases_handoff', {

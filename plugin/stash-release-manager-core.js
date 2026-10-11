@@ -981,12 +981,37 @@
     } else if (result.already_sent) {
       notify(`Already on the wishlist: ${name}`, result.search_result
         ? `Searched again: ${searchStatusLabel(null, result.search_result)}.` : '', 'info');
+    } else if (result.search_running) {
+      notify(`Added to wishlist: ${name}`, 'The search takes a while (slow indexer) and goes on in the background -- the result shows under Activity and History.', 'success');
+    } else if (result.search_skipped) {
+      notify(`Added to wishlist: ${name}`, 'Not searched now -- the scheduled search will find it. "Search now" looks right away.', 'success');
     } else if (!result.search_result) {
       notify(`Added to wishlist: ${name}`, 'Whisparr is searching for it.', 'success');
     } else {
       notify(`Added to wishlist: ${name}`,
         `${searchStatusLabel(null, result.search_result)} -- it keeps being searched automatically.`, 'success');
     }
+  }
+
+  // "Add" next to "Add + search" (v0.205.0): puts the release on the wishlist WITHOUT asking the indexers now -- the scheduled search finds it
+  // later. One shared button for the list views; `onDone()` redraws the list. (The status annotation removes it again for releases that are
+  // already tracked, together with the "Add + search" button's change to "Search now".)
+  function buildAddOnlyButton(release, onDone) {
+    const btn = el('button', {
+      className: 'srw-btn srw-whisparr-add-only', textContent: 'Add',
+      title: 'Put it on the wishlist without searching now -- the scheduled search finds it later',
+    });
+    btn.addEventListener('click', () => confirmInline(btn,
+      `Add "${release.title || release.scene_stashdb_id}" to your wishlist? It is searched by the schedule, not right now.`, async () => {
+        const result = await runOp('releases_handoff', {
+          provider: release.provider, entity_type: release.entity_type,
+          entity_stashdb_id: release.entity_stashdb_id, scene_stashdb_id: release.scene_stashdb_id, search: false,
+        });
+        if (result.error) { notify(`Adding failed: ${release.title || ''}`, result.error, 'error'); return; }
+        notifyHandoff(release.title, result);
+        if (onDone) await onDone();
+      }));
+    return btn;
   }
 
   // ==================== Remembered open/closed state ====================
@@ -2106,7 +2131,7 @@
     getRoute, onNavigate, initNavigationWatcher,
     el, waitForElement, entityIcon, buildPageHeader,
     searchStatusLabel, confirmInline, buildManagedList, buildSearchActions, whenNoOpenPanel, buildManualSearch, getSearchCapabilities,
-    rememberOpen, icon, mismatchWarning, buildPagedList, buildPager, releaseTitleNode, notify, dismissedNotice, releaseDismissedNotice, notifyHandoff,
+    rememberOpen, icon, mismatchWarning, buildPagedList, buildPager, releaseTitleNode, notify, dismissedNotice, releaseDismissedNotice, notifyHandoff, buildAddOnlyButton,
     sceneUrl, loadMetadataProviderUrls, loadProviders, resetProviders, providerInfo, providerLabel, providerKeys, providerOn, providersAllOn, providersSelected, isLateAdditionNew, buildLateAdditionBadge,
     buildFilteredPagedList, buildSafetyPanel, ignoreRenamers, pairingOptionsFor, castOptionsFor, buildPairingBadge, localPageFetcher, releaseQueryArgs, filterLocally, isFilterActive,
     describeProgress, applyProgress, attachLive, buildLiveHint,

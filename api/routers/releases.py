@@ -289,7 +289,7 @@ def reviews():
 
 
 @router.post("/{provider}/{entity_type}/{entity_stashdb_id}/{scene_stashdb_id}/handoff")
-def handoff(provider: str, entity_type: str, entity_stashdb_id: str, scene_stashdb_id: str):
+def handoff(provider: str, entity_type: str, entity_stashdb_id: str, scene_stashdb_id: str, search: bool = True):
     """Explicit hand-off to Whisparr -- the frontend must have already
     shown a confirmation step before calling this (see PROGRESS.md's
     confirm-first hand-off UX decision); this endpoint performs the
@@ -302,13 +302,14 @@ def handoff(provider: str, entity_type: str, entity_stashdb_id: str, scene_stash
             _db, _get_whisparr_client(), provider, scene_stashdb_id, entity_type, entity_stashdb_id,
             whisparr_quality_profile_id, whisparr_vr_quality_profile_id, _settings.whisparr_root_folder_path,
             quality_profile, vr_search_enabled, search_source=_get_search_source(),
-            get_provider_client=_get_provider_client, get_stash_client=_get_stash_client,
+            get_provider_client=_get_provider_client, get_stash_client=_get_stash_client, search=search,
         )
     except ValueError as e:
         raise HTTPException(404, str(e))
     if not result.get("already_in_library"):
-        history.scene("info", "wishlist", "Search now (searched again)" if result.get("already_sent")
-                      else "Added to the wishlist", provider, scene_stashdb_id)
+        history.scene("info", "wishlist", "Search now (searched again)" if result.get("already_sent") and search
+                      else ("Added to the wishlist (search follows by schedule)" if not search else "Added to the wishlist"),
+                      provider, scene_stashdb_id)
     return result
 
 

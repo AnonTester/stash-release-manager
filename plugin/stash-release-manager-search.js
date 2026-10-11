@@ -181,11 +181,21 @@
       if (totalPages > 1) resultsArea.appendChild(buildPager(resultsPage, totalPages));
     }
 
+    // Same box for every card (v0.205.2): a missing or broken image becomes a grey placeholder of the same size, so the text and the
+    // buttons of cards in one row start at the same height. The buttons sit in a footer pushed to the bottom of the card.
+    function cardImage(url, landscape = false, contain = false) {
+      const cls = `srw-search-card-image${landscape ? ' srw-search-card-image-scene' : ''}${contain ? ' srw-search-card-image-contain' : ''}`;
+      const box = () => el('div', { className: `${cls} srw-search-card-noimage` });
+      if (!url) return box();
+      const img = el('img', { src: url, className: cls, alt: '', loading: 'lazy' });
+      img.addEventListener('error', () => img.replaceWith(box()));
+      return img;
+    }
+    const cardFooter = (...nodes) => el('div', { className: 'srw-search-card-actions' }, nodes);
+
     function buildEntityCard(entity, entityType) {
       const card = el('div', { className: 'srw-search-card' });
-      if (entity.image_url) {
-        card.appendChild(el('img', { src: entity.image_url, className: 'srw-search-card-image' }));
-      }
+      card.appendChild(cardImage(entity.image_url, false, entityType === 'studio')); // a studio logo is shown whole, not cropped
       const icon = window.SRW.entityIcon(entityType);
       card.appendChild(el('div', { className: 'srw-search-card-title' }, [icon, ' ' + entity.name]));
       if (entity.is_favorite) {
@@ -222,8 +232,7 @@
           btn.disabled = false;
         }
       });
-      card.appendChild(btn);
-      card.appendChild(status);
+      card.appendChild(cardFooter(btn, status));
       return card;
     }
 
@@ -250,9 +259,7 @@
 
     function buildSceneCard(scene) {
       const card = el('div', { className: 'srw-search-card' });
-      if (scene.image_url) {
-        card.appendChild(el('img', { src: scene.image_url, className: 'srw-search-card-image' }));
-      }
+      card.appendChild(cardImage(scene.image_url, true)); // scenes are landscape (3/2), people and studios portrait (2/3)
       card.appendChild(el('div', { className: 'srw-search-card-title', textContent: scene.title || '(untitled)' }));
       const meta = [(scene.studio || {}).name, scene.date].filter(Boolean).join(' · ');
       if (meta) card.appendChild(el('p', { className: 'srw-hint', textContent: meta }));
@@ -263,32 +270,38 @@
       // Renamed from "Send to Whisparr" 2026-09-19 (Milestone 3) -- the
       // actual indexer search now runs in this sidecar, not Whisparr,
       // see entity-panel.js's confirmHandoff() rename note.
-      const btn = el('button', { className: 'srw-btn srw-btn-primary', textContent: 'Add to Wishlist' });
+      const btn = el('button', { className: 'srw-btn srw-btn-primary', textContent: 'Add + search', title: 'Put it on the wishlist and search the indexers right now' });
+      const addBtn = el('button', { className: 'srw-btn', textContent: 'Add', title: 'Put it on the wishlist without searching now -- the scheduled search finds it later' });
       // Any provider since 2026-09-25 (non-StashDB scenes are handled
       // without Whisparr, see handoff.hand_off()).
       {
-        btn.addEventListener('click', () => {
-          window.SRW.confirmInline(btn, `Add "${scene.title || scene.id}" to your wishlist and search for it?`, async () => {
-            status.textContent = ' adding...';
-            try {
-              const result = await window.SRW.runOp('search_handoff_scene', { provider, scene });
-              if (result.error) {
-                status.textContent = ` error: ${result.error}`;
-                window.SRW.notify(`Adding failed: ${scene.title || scene.id}`, result.error, 'error');
-                return;
+        // One handler for both buttons: `search` false = "Add" (the scheduled search finds it later).
+        const wire = (button, search) => button.addEventListener('click', () => {
+          window.SRW.confirmInline(button,
+            search ? `Add "${scene.title || scene.id}" to your wishlist and search for it?`
+              : `Add "${scene.title || scene.id}" to your wishlist? It is searched by the schedule, not right now.`, async () => {
+              status.textContent = ' adding...';
+              try {
+                const result = await window.SRW.runOp('search_handoff_scene', { provider, scene, ...(search ? {} : { search: false }) });
+                if (result.error) {
+                  status.textContent = ` error: ${result.error}`;
+                  window.SRW.notify(`Adding failed: ${scene.title || scene.id}`, result.error, 'error');
+                  return;
+                }
+                window.SRW.notifyHandoff(scene.title || scene.id, result);
+                status.textContent = result.already_sent ? ' already added' : ' added';
+                btn.textContent = 'Added';
+                btn.disabled = true; // stays visible (confirmInline restores display on success too) but no second click
+                addBtn.disabled = true;
+              } catch (err) {
+                status.textContent = ` error: ${err.message}`;
               }
-              window.SRW.notifyHandoff(scene.title || scene.id, result);
-              status.textContent = result.already_sent ? ' already added' : ' added';
-              btn.textContent = 'Added';
-              btn.disabled = true; // stays visible (confirmInline restores display on success too) but no second click
-            } catch (err) {
-              status.textContent = ` error: ${err.message}`;
-            }
-          });
+            });
         });
+        wire(btn, true);
+        wire(addBtn, false);
       }
-      card.appendChild(btn);
-      card.appendChild(status);
+      card.appendChild(cardFooter(addBtn, btn, status));
       return card;
     }
   }

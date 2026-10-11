@@ -2047,3 +2047,16 @@ a.srw-cal-pill-open { text-decoration: none; color: inherit; cursor: pointer; }
   white-space: normal; min-width: 0; max-width: 100%; flex: 1 1 100%; overflow-wrap: anywhere;
 }
 .srw-search-card { min-width: 0; }
+
+/* Search page cards (v0.205.2): long words and long performer lists wrap inside the card; the buttons sit in a footer at the bottom, so
+   they are at the same height on every card of a row; a missing image is a grey box of the same size. */
+.srw-search-card > * { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
+.srw-search-card-title { overflow-wrap: anywhere; }
+.srw-search-card .srw-hint { margin: 0; white-space: normal; }
+.srw-search-card-noimage { background: rgba(128, 128, 128, 0.18); }
+.srw-search-card-actions { margin-top: auto; padding-top: 0.35rem; display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; }
+.srw-search-card-actions .srw-key-status { flex: 1 1 100%; overflow-wrap: anywhere; }
+.srw-search-card-image-scene { aspect-ratio: 3 / 2; }
+.srw-search-card-image-contain { object-fit: contain; }
+.srw-search-grid { grid-auto-rows: 1fr; } /* every card of the page has the height of the tallest one */
+.srw-search-card-image-contain { aspect-ratio: 1 / 1; } /* studio logos: square box, shown whole */

@@ -6,6 +6,15 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.205.6
+- Search page: the cards of a page have the same height; scene images are 3:2, performers 2:3, studio logos sit whole in a square box. Missing images are a grey box of the same size, the buttons sit at the bottom of the card, long words wrap.
+
+## 0.205.1
+- Fix: "Possible match" on the wishlist no longer offers a release in a resolution the quality profile does not accept (e.g. 2160p while the profile takes 1080p / 720p).
+
+## 0.205.0
+- Two ways to put a release on the wishlist: "Add" only adds it (the scheduled search finds it later), "Add + search" also asks the indexers right away. A slow indexer no longer ends in a time-out error: the search runs in the background after 20 seconds, the result is in Activity / History, and a second click does not start another search.
+
 ## 0.204.3
 - Compare / Review "Search via Stash scraper": ThePornDB is offered as Stash's stash-box (the same source as "Scrape with ..." in Stash) instead of the community scraper of that name, which failed on systems that cannot verify the certificate chain of its server.
 

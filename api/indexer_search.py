@@ -801,7 +801,7 @@ def _review_identity(candidate_title):
 
 
 def _select_review_candidate(releases, scene_title, scene_date, performer_names, rejected_titles,
-                             is_vr=False, size_limits=None, vr_rules=None):
+                             is_vr=False, size_limits=None, vr_rules=None, allowed_resolutions=None, allow_unknown_resolution=False):
     """Finds the single best "needs review" candidate among `releases`
     -- one that names EVERY one of the movie's credited performers (see
     `_all_performers_plausible()`) but doesn't clear `_candidate_plausible()`'s
@@ -815,7 +815,9 @@ def _select_review_candidate(releases, scene_title, scene_date, performer_names,
     a second-best "ask a human" option. Ranked by age then size (largest
     first), same tiebreak spirit as `_select_best()`, since there's no
     meaningful quality-profile ranking to apply to a candidate that
-    hasn't been confirmed as the right scene yet."""
+    hasn't been confirmed as the right scene yet. The profile still sets the
+    bounds (v0.205.1): a 2D release in a resolution the profile does not accept
+    is not offered either -- "Accept" would grab something the profile forbids."""
     rejected = _split_rejected(rejected_titles)
     best, best_key = None, None
     for r in releases:
@@ -839,6 +841,10 @@ def _select_review_candidate(releases, scene_title, scene_date, performer_names,
             continue
         if too_large(r, is_vr, size_limits, vr_rules):
             continue  # e.g. a whole 147 GB site pack naming the performer
+        if not is_vr and allowed_resolutions:
+            resolution = ((r.get("quality") or {}).get("quality") or {}).get("resolution")
+            if resolution not in allowed_resolutions and not (resolution is None and allow_unknown_resolution):
+                continue  # e.g. a 2160p release while the profile accepts 1080p / 720p
         # A VR scene (or a VR upgrade) is only ever offered a VR release, exactly like the automatic choice demands
         # (_select_best(require_vr=True)). Found 2026-10-04: a flat 720p release with the same two performers was offered as the
         # "upgrade" of a VR scene -- the review fallback had skipped the VR test.
@@ -1144,7 +1150,9 @@ def search_and_grab(db, whisparr_client, movie_id, provider, scene_stashdb_id, s
         # v0.41.7) or silently filing it next to a genuine non-match.
         review_candidate = _select_review_candidate(releases, scene_title, scene_date, performer_names,
                                                       list(rejected_titles) + taken_titles, is_vr=is_vr,
-                                                      size_limits=size_limits, vr_rules=vr_rules)
+                                                      size_limits=size_limits, vr_rules=vr_rules,
+                                                      allowed_resolutions=allowed_resolutions,
+                                                      allow_unknown_resolution=allow_unknown_resolution)
         _log(_explain_candidates(releases, allowed_resolutions, scene_title, scene_date, performer_names,
                                  is_vr, rejected_titles, None, review_candidate, vr_rules,
                                  allow_unknown_resolution, taken_titles, size_limits))

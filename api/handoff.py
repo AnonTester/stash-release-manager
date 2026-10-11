@@ -15,6 +15,8 @@ it, rather than silently leaving a studio/performer monitored.
 """
 import history
 import logging
+import threading
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 
 import release_repo
 from indexer_search import _build_queries, parent_studio_names, search_and_grab, RESULT_PROVIDER_LOOKUP_FAILED
@@ -35,7 +37,7 @@ def uses_whisparr(db, provider):
 def hand_off(db, whisparr_client, provider, scene_stashdb_id, entity_type, entity_stashdb_id,
              whisparr_quality_profile_id, whisparr_vr_quality_profile_id, root_folder_path,
              quality_profile, vr_search_enabled, search_source=None, get_provider_client=None,
-             get_stash_client=None):
+             get_stash_client=None, search=True):
     """The single "Add to Wishlist" entry point (2026-09-25) -- every
     caller (Releases page, Search page, automatic favorite hand-off)
     goes through here. Whisparr-tracked releases take the unchanged
@@ -43,6 +45,8 @@ def hand_off(db, whisparr_client, provider, scene_stashdb_id, entity_type, entit
     which never touches Whisparr. `get_provider_client(provider)`
     returns that provider's metadata client (needed only by the
     Whisparr-free path, for performer names -- see main.py).
+    `search=False` (v0.205.0, "Add" without "Add + search"): only puts the release on the wishlist, the scheduled search finds it later
+    (Whisparr-tracked StashDB releases always search: Whisparr's own add does that).
     `get_stash_client` (2026-09-28): enables the "already imported via
     another provider" check, see link_imported_equivalent()."""
     if get_stash_client is not None and link_imported_equivalent(db, provider, scene_stashdb_id, get_stash_client):
@@ -53,7 +57,7 @@ def hand_off(db, whisparr_client, provider, scene_stashdb_id, entity_type, entit
                                 whisparr_quality_profile_id, whisparr_vr_quality_profile_id, root_folder_path,
                                 quality_profile, vr_search_enabled, search_source, get_provider_client)
     return send_to_sidecar(db, provider, scene_stashdb_id, entity_type, entity_stashdb_id,
-                           quality_profile, vr_search_enabled, search_source, get_provider_client)
+                           quality_profile, vr_search_enabled, search_source, get_provider_client, search=search)
 
 
 def link_imported_equivalent(db, provider, scene_stashdb_id, get_stash_client):
@@ -84,8 +88,32 @@ def link_imported_equivalent(db, provider, scene_stashdb_id, get_stash_client):
     return other
 
 
+# A hand-off search runs in a worker thread and is waited for only this long: a slow indexer must not turn the click into a time-out
+# error (the tester saw "failed" and added the release again). Longer searches go on in the background, the result is in History / Activity.
+SEARCH_WAIT_SECONDS = 20
+_search_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="handoff-search")
+_running = {}
+_running_lock = threading.Lock()
+
+
+def search_with_wait(key, fn, wait=None):
+    """Runs fn() in the pool and returns its result, or {"running": True} when it takes longer than `wait` seconds (it then
+    continues). A second call for the same key while one is running does not start another search."""
+    with _running_lock:
+        fut = _running.get(key)
+        started_here = fut is None
+        if started_here:
+            fut = _search_pool.submit(fn)
+            _running[key] = fut
+            fut.add_done_callback(lambda _f, k=key: _running.pop(k, None))
+    try:
+        return fut.result(timeout=SEARCH_WAIT_SECONDS if wait is None else wait) if started_here else {"running": True, "again": True}
+    except FutureTimeout:
+        return {"running": True}
+
+
 def send_to_sidecar(db, provider, scene_stashdb_id, entity_type, entity_stashdb_id,
-                    quality_profile, vr_search_enabled, search_source, get_provider_client):
+                    quality_profile, vr_search_enabled, search_source, get_provider_client, search=True):
     """Whisparr-free hand-off (2026-09-25): puts the release on the
     wishlist (status 'sent_to_whisparr' -- the internal name predates
     this path; the UI calls it "On Wishlist") and runs this sidecar's
@@ -104,8 +132,14 @@ def send_to_sidecar(db, provider, scene_stashdb_id, entity_type, entity_stashdb_
     already_sent = release["status"] == "sent_to_whisparr"
     if not already_sent:
         release_repo.set_status_for_scene(db, provider, scene_stashdb_id, "sent_to_whisparr")
-    search_outcome = attempt_sidecar_search(db, provider, scene_stashdb_id, release, quality_profile,
-                                            vr_search_enabled, search_source, get_provider_client)
+    if not search:
+        return {"already_sent": already_sent, "movie": None, "grabbed": None, "search_result": None, "search_skipped": True}
+    search_outcome = search_with_wait(
+        (provider, scene_stashdb_id),
+        lambda: attempt_sidecar_search(db, provider, scene_stashdb_id, release, quality_profile,
+                                       vr_search_enabled, search_source, get_provider_client))
+    if search_outcome.get("running"):
+        return {"already_sent": already_sent, "movie": None, "grabbed": None, "search_result": None, "search_running": True}
     return {
         "already_sent": already_sent, "movie": None,
         "grabbed": search_outcome["grab"], "search_result": search_outcome["result"],
