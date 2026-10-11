@@ -137,7 +137,7 @@ def _film_scenes(pending):
 
 
 @router.get("/search-tpdb")
-def search_tpdb(q: str):
+def search_tpdb(q: str, limit: int = 12):
     """ThePornDB movie search (ONE request) for 'Add to film wishlist' / 'Link movie'."""
     if not q.strip():
         raise HTTPException(400, "q is required")
@@ -145,7 +145,7 @@ def search_tpdb(q: str):
     if client is None:
         raise HTTPException(503, "ThePornDB is not configured")
     try:
-        resp = client._get("/movies", params={"q": q.strip(), "per_page": 12})
+        resp = client._get("/movies", params={"q": q.strip(), "per_page": max(1, min(limit, 50))})
         resp.raise_for_status()
         results = resp.json().get("data") or []
     except Exception as e:  # noqa: BLE001

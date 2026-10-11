@@ -2060,3 +2060,20 @@ a.srw-cal-pill-open { text-decoration: none; color: inherit; cursor: pointer; }
 .srw-search-card-image-contain { object-fit: contain; }
 .srw-search-grid { grid-auto-rows: 1fr; } /* every card of the page has the height of the tallest one */
 .srw-search-card-image-contain { aspect-ratio: 1 / 1; } /* studio logos: square box, shown whole */
+
+/* Search page scene card states (v0.206.0): the colours of the calendar pills (new / on the wishlist / imported / failed). */
+.srw-search-card-badge { align-self: flex-start; padding: 0.05rem 0.55rem; border-radius: 999px; font-weight: 600; font-size: 0.9em; }
+.srw-search-card-state-sent_to_whisparr { border-color: rgba(113, 55, 200, 0.8); background: rgba(113, 55, 200, 0.10); }
+.srw-search-card-state-sent_to_whisparr .srw-search-card-badge { background: rgba(113, 55, 200, 0.25); color: #aa87de; }
+.srw-search-card-state-imported, .srw-search-card-state-in_library { border-color: rgba(56, 161, 105, 0.8); background: rgba(56, 161, 105, 0.10); }
+.srw-search-card-state-imported .srw-search-card-badge, .srw-search-card-state-in_library .srw-search-card-badge { background: rgba(56, 161, 105, 0.25); color: #5cc98a; }
+.srw-search-card-state-import_failed { border-color: rgba(224, 92, 92, 0.8); background: rgba(224, 92, 92, 0.10); }
+.srw-search-card-state-import_failed .srw-search-card-badge { background: rgba(224, 92, 92, 0.25); color: #e05c5c; }
+.srw-search-card-state-dismissed { opacity: 0.6; }
+.srw-search-card-state-dismissed .srw-search-card-badge { background: rgba(128, 128, 128, 0.25); }
+
+/* Search cards: image and title are links to the provider's page (v0.207.0) */
+.srw-search-card-link { display: block; color: inherit; text-decoration: none; }
+.srw-search-card-link:hover .srw-search-card-title { text-decoration: underline; }
+.srw-search-tag-scenes { margin-top: 0.75rem; }
+a.srw-btn { text-decoration: none; display: inline-block; text-align: center; }

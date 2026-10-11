@@ -30,7 +30,11 @@
     { key: 'performers', label: 'Performers' },
     { key: 'studios', label: 'Studios' },
     { key: 'scenes', label: 'Scenes' },
+    { key: 'movies', label: 'Movies' }, // ThePornDB only (it has movies; the stash-boxes do not)
   ];
+  // What a provider can search: movies only on ThePornDB; the tag search of scenes only on the stash-boxes (ThePornDB's tag filter does not work).
+  const hasMovies = (provider) => provider === 'theporndb';
+  const hasTagSearch = (provider) => provider !== 'theporndb';
   // Matches the Watchlist page's own page size (stash-release-manager-
   // settings.js) -- same reasoning: a result grid this size per page
   // reads comfortably without an endless scroll, and reusing the exact
@@ -63,23 +67,34 @@
 
     const providerButtons = PROVIDERS.map((p) => el('button', {
       className: 'srw-btn srw-btn-sm', textContent: p.label,
-      onClick: () => { provider = p.key; updateToggles(); },
+      onClick: () => { provider = p.key; if (!hasMovies(provider) && type === 'movies') type = 'scenes'; if (!hasTagSearch(provider) && type === 'tags') type = 'scenes'; updateToggles(); },
     }));
     const typeButtons = TYPES.map((t) => el('button', {
       className: 'srw-btn srw-btn-sm', textContent: t.label,
-      onClick: () => { type = t.key; updateToggles(); },
+      onClick: () => { type = t.key === 'scenes' && type === 'tags' ? 'tags' : t.key; updateToggles(); },
     }));
 
     function updateToggles() {
       providerButtons.forEach((btn, i) => btn.classList.toggle('srw-btn-primary', PROVIDERS[i].key === provider));
-      typeButtons.forEach((btn, i) => btn.classList.toggle('srw-btn-primary', TYPES[i].key === type));
+      typeButtons.forEach((btn, i) => {
+        btn.hidden = TYPES[i].key === 'movies' && !hasMovies(provider);
+        btn.classList.toggle('srw-btn-primary', TYPES[i].key === type || (TYPES[i].key === 'scenes' && type === 'tags'));
+      });
+      // "By title" / "By tag" belongs to the scene search only
+      const sceneMode = type === 'scenes' || type === 'tags';
+      scenesModeBar.hidden = !(sceneMode && hasTagSearch(provider));
+      byTitleBtn.classList.toggle('srw-btn-primary', type === 'scenes');
+      byTagBtn.classList.toggle('srw-btn-primary', type === 'tags');
+      termInput.placeholder = type === 'tags' ? 'Search for a tag…' : type === 'movies' ? 'Search movies by title…' : 'Search by name or title…';
     }
-    updateToggles();
-
+    const byTitleBtn = el('button', { className: 'srw-btn srw-btn-sm', textContent: 'By title', onClick: () => { type = 'scenes'; updateToggles(); } });
+    const byTagBtn = el('button', { className: 'srw-btn srw-btn-sm', textContent: 'By tag', onClick: () => { type = 'tags'; updateToggles(); } });
+    const scenesModeBar = el('span', { className: 'srw-view-toggle' }, [byTitleBtn, byTagBtn]);
     const termInput = el('input', {
       type: 'search', placeholder: 'Search by name or title…', className: 'srw-search-input',
     });
     const resultsArea = el('div', { className: 'srw-search-results' });
+    updateToggles(); // after the term input exists (it sets the placeholder)
 
     // Paginated client-side over whatever this search already fetched
     // (up to 100 per search_${type}, see the client's own docstrings)
@@ -94,14 +109,18 @@
     let currentResults = [];
     let currentTotal = null;
     let resultsPage = 1;
+    let tagScenesArea = null; // where renderResultsPage draws while a tag is open
 
     async function runSearch() {
       const term = termInput.value.trim();
       if (!term) { resultsArea.innerHTML = ''; return; }
+      tagScenesArea = null;
       resultsArea.innerHTML = '';
       resultsArea.appendChild(el('p', { className: 'srw-hint', textContent: 'Searching…' }));
       try {
-        const response = await window.SRW.runOp(`search_${type}`, { provider, term });
+        if (type === 'tags') { await runTagSearch(term); return; }
+        const response = type === 'movies' ? await window.SRW.runOp('films_search_tpdb', { q: term, limit: 40 })
+          : await window.SRW.runOp(`search_${type}`, { provider, term });
         if (response && response.error) {
           resultsArea.innerHTML = '';
           resultsArea.appendChild(el('p', { className: 'srw-hint', textContent: `Error: ${response.error}` }));
@@ -120,11 +139,42 @@
         resultsArea.appendChild(el('p', { className: 'srw-hint', textContent: `Error: ${e.message}` }));
       }
     }
+    // "Tags": the term finds tags (buttons); a click on one lists its newest scenes below, as ordinary scene cards.
+    async function runTagSearch(term) {
+      const response = await window.SRW.runOp('search_tags', { provider, term });
+      resultsArea.innerHTML = '';
+      if (response && response.error) {
+        resultsArea.appendChild(el('p', { className: 'srw-hint', textContent: `Error: ${response.error}` }));
+        return;
+      }
+      const tags = Array.isArray(response.results) ? response.results : [];
+      if (!tags.length) { resultsArea.appendChild(el('p', { className: 'srw-hint', textContent: 'No tags found.' })); return; }
+      const sceneArea = el('div', { className: 'srw-search-tag-scenes' });
+      const tagButtons = tags.map((t) => el('button', {
+        className: 'srw-btn srw-btn-sm', textContent: t.name, title: t.description || '',
+        onClick: async () => {
+          tagButtons.forEach((b) => b.classList.toggle('srw-btn-primary', b === tagButtons[tags.indexOf(t)]));
+          sceneArea.innerHTML = '';
+          sceneArea.appendChild(el('p', { className: 'srw-hint', textContent: `Loading scenes tagged "${t.name}"…` }));
+          try {
+            const r = await window.SRW.runOp('search_scenes_by_tag', { provider, tag_id: t.id });
+            if (r && r.error) { sceneArea.innerHTML = ''; sceneArea.appendChild(el('p', { className: 'srw-hint', textContent: `Error: ${r.error}` })); return; }
+            // Same paging and cards as a scene search: the shared result state, drawn into the area below the tags.
+            tagScenesArea = sceneArea;
+            renderResults(Array.isArray(r.results) ? r.results : [], r.total);
+          } catch (e) { sceneArea.innerHTML = ''; sceneArea.appendChild(el('p', { className: 'srw-hint', textContent: `Error: ${e.message}` })); }
+        },
+      }));
+      resultsArea.appendChild(el('p', { className: 'srw-hint', textContent: `${tags.length}${response.total > tags.length ? ` of ${response.total}` : ''} tag(s) — pick one to list its newest scenes.` }));
+      resultsArea.appendChild(el('div', { className: 'srw-filter-bar' }, tagButtons));
+      resultsArea.appendChild(sceneArea);
+    }
     termInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') runSearch(); });
 
     container.appendChild(el('div', { className: 'srw-filter-bar' }, [
       el('span', { className: 'srw-view-toggle' }, providerButtons),
       el('span', { className: 'srw-view-toggle' }, typeButtons),
+      scenesModeBar,
     ]));
     container.appendChild(el('div', { className: 'srw-toolbar' }, [
       termInput,
@@ -149,9 +199,10 @@
     }
 
     function renderResultsPage() {
-      resultsArea.innerHTML = '';
+      const out = type === 'tags' && tagScenesArea ? tagScenesArea : resultsArea; // under the tag buttons while a tag is open
+      out.innerHTML = '';
       if (!currentResults.length) {
-        resultsArea.appendChild(el('p', { className: 'srw-hint', textContent: 'No results.' }));
+        out.appendChild(el('p', { className: 'srw-hint', textContent: 'No results.' }));
         return;
       }
       // `total` is null when the provider itself doesn't report one
@@ -160,25 +211,27 @@
       // plain count in that case, since "more may exist" can't be said
       // with any actual confidence either way.
       if (currentTotal != null && currentTotal > currentResults.length) {
-        resultsArea.appendChild(el('p', {
+        out.appendChild(el('p', {
           className: 'srw-callout',
-          textContent: `Showing ${currentResults.length} of ${currentTotal} matches — try a more specific `
-            + 'search term to find one further down the list (this provider doesn’t rank results by '
-            + 'relevance to your search).',
+          textContent: type === 'tags'
+            ? `Showing the newest ${currentResults.length} of ${currentTotal} scenes with this tag.`
+            : `Showing ${currentResults.length} of ${currentTotal} matches — try a more specific `
+              + 'search term to find one further down the list (this provider doesn’t rank results by '
+              + 'relevance to your search).',
         }));
       } else {
-        resultsArea.appendChild(el('p', { className: 'srw-hint', textContent: `${currentResults.length} result(s).` }));
+        out.appendChild(el('p', { className: 'srw-hint', textContent: `${currentResults.length} result(s).` }));
       }
       const totalPages = Math.max(1, Math.ceil(currentResults.length / PAGE_SIZE));
       resultsPage = Math.min(Math.max(resultsPage, 1), totalPages);
       const pageItems = currentResults.slice((resultsPage - 1) * PAGE_SIZE, resultsPage * PAGE_SIZE);
       const grid = el('div', { className: 'srw-search-grid' });
       pageItems.forEach((r) => grid.appendChild(
-        type === 'scenes' ? buildSceneCard(r) : buildEntityCard(r, type === 'performers' ? 'performer' : 'studio'),
+        type === 'movies' ? buildMovieCard(r) : type === 'scenes' || type === 'tags' ? buildSceneCard(r) : buildEntityCard(r, type === 'performers' ? 'performer' : 'studio'),
       ));
-      if (totalPages > 1) resultsArea.appendChild(buildPager(resultsPage, totalPages)); // top and bottom, like Stash's own lists
-      resultsArea.appendChild(grid);
-      if (totalPages > 1) resultsArea.appendChild(buildPager(resultsPage, totalPages));
+      if (totalPages > 1) out.appendChild(buildPager(resultsPage, totalPages)); // top and bottom, like Stash's own lists
+      out.appendChild(grid);
+      if (totalPages > 1) out.appendChild(buildPager(resultsPage, totalPages));
     }
 
     // Same box for every card (v0.205.2): a missing or broken image becomes a grey placeholder of the same size, so the text and the
@@ -191,13 +244,48 @@
       img.addEventListener('error', () => img.replaceWith(box()));
       return img;
     }
+    // The image and the title open the item's page on the provider's own website in a new tab (`source_url` comes with the result).
+    const linked = (node, url) => (url
+      ? el('a', { href: url, target: '_blank', rel: 'noopener noreferrer', className: 'srw-search-card-link', title: 'Open on the provider’s website' }, [node])
+      : node);
     const cardFooter = (...nodes) => el('div', { className: 'srw-search-card-actions' }, nodes);
+
+    // A ThePornDB movie: "Add to film wishlist" puts it on the Films wishlist (the same call as the Films page's "Add film").
+    function buildMovieCard(m) {
+      const card = el('div', { className: 'srw-search-card' });
+      const slug = (m.record || {}).slug;
+      const link = slug ? `https://theporndb.net/movies/${slug}` : null;
+      card.appendChild(linked(cardImage(m.image_url), link));
+      card.appendChild(linked(el('div', { className: 'srw-search-card-title', textContent: m.title || '(untitled)' }), link));
+      const meta = [m.year, m.studio_name, m.duration_min ? `${Math.round(m.duration_min)} min` : null].filter(Boolean).join(' · ');
+      if (meta) card.appendChild(el('p', { className: 'srw-hint', textContent: meta }));
+      const cast = (m.performers || []).slice(0, 8).join(', ');
+      if (cast) card.appendChild(el('p', { className: 'srw-hint', textContent: cast + ((m.performers || []).length > 8 ? ', …' : '') }));
+      const status = el('span', { className: 'srw-key-status' });
+      const footer = cardFooter();
+      const onList = () => { footer.replaceChildren(el('span', { className: 'srw-unverified-badge', textContent: 'on film wishlist' })); };
+      if (m.on_list) { onList(); card.appendChild(footer); return card; }
+      const btn = el('button', { className: 'srw-btn srw-btn-primary', textContent: 'Add to film wishlist', title: 'Put the movie on the Films wishlist' });
+      btn.addEventListener('click', () => window.SRW.confirmInline(btn, `Add "${m.title}" to the film wishlist?`, async () => {
+        status.textContent = ' adding...';
+        try {
+          const r = await window.SRW.runOp('films_add', { movie: m.record });
+          if (r.error) { status.textContent = ` error: ${r.error}`; return; }
+          status.textContent = '';
+          window.SRW.notify(r.created ? `Film wishlist: ${m.title}` : `Already on the film wishlist: ${m.title}`, '', 'success');
+          onList();
+        } catch (err) { status.textContent = ` error: ${err.message}`; }
+      }));
+      footer.replaceChildren(btn, status);
+      card.appendChild(footer);
+      return card;
+    }
 
     function buildEntityCard(entity, entityType) {
       const card = el('div', { className: 'srw-search-card' });
-      card.appendChild(cardImage(entity.image_url, false, entityType === 'studio')); // a studio logo is shown whole, not cropped
+      card.appendChild(linked(cardImage(entity.image_url, false, entityType === 'studio'), entity.source_url)); // a studio logo is shown whole, not cropped
       const icon = window.SRW.entityIcon(entityType);
-      card.appendChild(el('div', { className: 'srw-search-card-title' }, [icon, ' ' + entity.name]));
+      card.appendChild(linked(el('div', { className: 'srw-search-card-title' }, [icon, ' ' + entity.name]), entity.source_url));
       if (entity.is_favorite) {
         const providerLabel = window.SRW.providerLabel(provider);
         card.appendChild(el('p', {
@@ -257,51 +345,92 @@
       card.appendChild(status);
     }
 
+    // A scene card knows what this program has done with the scene (v0.206.0): `scene.release_status` comes with the search result
+    // (sent_to_whisparr / imported / import_failed / dismissed, or nothing). The card takes the calendar's colour for that state and offers
+    // what fits it: Add / Add + search, or Search now / Dismiss for a scene on the wishlist, or Restore for a dismissed one.
+    const STATE_LABEL = { sent_to_whisparr: 'On Wishlist', in_library: 'In library', imported: 'Imported', import_failed: 'Import failed', dismissed: 'Dismissed' };
+
     function buildSceneCard(scene) {
       const card = el('div', { className: 'srw-search-card' });
-      card.appendChild(cardImage(scene.image_url, true)); // scenes are landscape (3/2), people and studios portrait (2/3)
-      card.appendChild(el('div', { className: 'srw-search-card-title', textContent: scene.title || '(untitled)' }));
+      card.appendChild(linked(cardImage(scene.image_url, true), scene.source_url)); // scenes are landscape (3/2), people and studios portrait (2/3)
+      const badge = el('span', { className: 'srw-search-card-badge' });
+      card.appendChild(linked(el('div', { className: 'srw-search-card-title', textContent: scene.title || '(untitled)' }), scene.source_url));
       const meta = [(scene.studio || {}).name, scene.date].filter(Boolean).join(' · ');
       if (meta) card.appendChild(el('p', { className: 'srw-hint', textContent: meta }));
       const performerNames = (scene.performers || []).map((p) => p.name).join(', ');
       if (performerNames) card.appendChild(el('p', { className: 'srw-hint', textContent: performerNames }));
 
       const status = el('span', { className: 'srw-key-status' });
-      // Renamed from "Send to Whisparr" 2026-09-19 (Milestone 3) -- the
-      // actual indexer search now runs in this sidecar, not Whisparr,
-      // see entity-panel.js's confirmHandoff() rename note.
-      const btn = el('button', { className: 'srw-btn srw-btn-primary', textContent: 'Add + search', title: 'Put it on the wishlist and search the indexers right now' });
-      const addBtn = el('button', { className: 'srw-btn', textContent: 'Add', title: 'Put it on the wishlist without searching now -- the scheduled search finds it later' });
-      // Any provider since 2026-09-25 (non-StashDB scenes are handled
-      // without Whisparr, see handoff.hand_off()).
-      {
-        // One handler for both buttons: `search` false = "Add" (the scheduled search finds it later).
-        const wire = (button, search) => button.addEventListener('click', () => {
-          window.SRW.confirmInline(button,
-            search ? `Add "${scene.title || scene.id}" to your wishlist and search for it?`
-              : `Add "${scene.title || scene.id}" to your wishlist? It is searched by the schedule, not right now.`, async () => {
-              status.textContent = ' adding...';
-              try {
-                const result = await window.SRW.runOp('search_handoff_scene', { provider, scene, ...(search ? {} : { search: false }) });
-                if (result.error) {
-                  status.textContent = ` error: ${result.error}`;
-                  window.SRW.notify(`Adding failed: ${scene.title || scene.id}`, result.error, 'error');
-                  return;
-                }
-                window.SRW.notifyHandoff(scene.title || scene.id, result);
-                status.textContent = result.already_sent ? ' already added' : ' added';
-                btn.textContent = 'Added';
-                btn.disabled = true; // stays visible (confirmInline restores display on success too) but no second click
-                addBtn.disabled = true;
-              } catch (err) {
-                status.textContent = ` error: ${err.message}`;
-              }
-            });
-        });
-        wire(btn, true);
-        wire(addBtn, false);
+      const footer = cardFooter();
+      const title = scene.title || scene.id;
+      let state = scene.release_status || null;
+
+      const sceneOp = (mode, extra = {}) => window.SRW.runOp(mode, { provider, scene_stashdb_id: scene.id, ...extra });
+      // Add (search = false) / Add + search / Search now: all go through the one hand-off.
+      const handoff = async (search) => {
+        status.textContent = search ? ' adding and searching...' : ' adding...';
+        try {
+          const result = await window.SRW.runOp('search_handoff_scene', { provider, scene, ...(search ? {} : { search: false }) });
+          if (result.error) {
+            status.textContent = ` error: ${result.error}`;
+            window.SRW.notify(`Adding failed: ${title}`, result.error, 'error');
+            return;
+          }
+          window.SRW.notifyHandoff(title, result);
+          status.textContent = '';
+          if (result.stash_scene_id) scene.stash_scene_id = result.stash_scene_id;
+          setState(result.already_in_library ? 'in_library' : 'sent_to_whisparr');
+        } catch (err) {
+          status.textContent = ` error: ${err.message}`;
+        }
+      };
+      const button = (text, cls, titleText, onClick) => el('button', { className: `srw-btn ${cls}`.trim(), textContent: text, title: titleText, onClick });
+      const confirmed = (text, cls, titleText, question, run) => {
+        const b = button(text, cls, titleText);
+        b.addEventListener('click', () => window.SRW.confirmInline(b, question, run));
+        return b;
+      };
+
+      function setState(next) {
+        state = next;
+        Object.keys(STATE_LABEL).forEach((k) => card.classList.toggle(`srw-search-card-state-${k}`, k === state));
+        badge.textContent = state ? STATE_LABEL[state] : '';
+        badge.hidden = !state;
+        const buttons = [];
+        if (!state) {
+          buttons.push(
+            confirmed('Add', '', 'Put it on the wishlist without searching now -- the scheduled search finds it later',
+              `Add "${title}" to your wishlist? It is searched by the schedule, not right now.`, () => handoff(false)),
+            confirmed('Add + search', 'srw-btn-primary', 'Put it on the wishlist and search the indexers right now',
+              `Add "${title}" to your wishlist and search for it?`, () => handoff(true)));
+        } else if (state === 'sent_to_whisparr') {
+          buttons.push(
+            button('Search now', 'srw-btn-whisparr', 'Ask the indexers for it right now', () => handoff(true)),
+            button('Dismiss', '', 'Take it off the wishlist (Restore brings it back)', async () => {
+              status.textContent = ' dismissing...';
+              const r = await sceneOp('releases_dismiss');
+              if (r.error) { status.textContent = ` error: ${r.error}`; return; }
+              status.textContent = '';
+              setState('dismissed');
+            }));
+        } else if (state === 'in_library' && scene.stash_scene_id) {
+          // /scenes/<id> is the local Stash (the page has <base href="/">), a new tab like the provider link
+          buttons.push(el('a', { className: 'srw-btn', href: `/scenes/${scene.stash_scene_id}`, target: '_blank', rel: 'noopener noreferrer',
+            textContent: 'Open in Stash', title: 'The scene in your Stash library' }));
+        } else if (state === 'dismissed') {
+          buttons.push(button('Restore', '', 'Back to the releases list; Add puts it on the wishlist again', async () => {
+            status.textContent = ' restoring...';
+            const r = await sceneOp('releases_undismiss');
+            if (r.error) { status.textContent = ` error: ${r.error}`; return; }
+            status.textContent = '';
+            setState(null);
+          }));
+        }
+        footer.replaceChildren(...buttons, status);
       }
-      card.appendChild(cardFooter(addBtn, btn, status));
+      card.insertBefore(badge, card.children[1]);
+      setState(state);
+      card.appendChild(footer);
       return card;
     }
   }

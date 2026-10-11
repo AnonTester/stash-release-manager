@@ -823,9 +823,42 @@ class StashDBClient:
         if data.get("errors"):
             raise RuntimeError(str(data["errors"]))
         wrapper = data["data"]["searchScenes"]
-        results = wrapper["scenes"]
+        return {"total": wrapper["count"], "results": self._normalize_search_scenes(wrapper["scenes"])}
+
+    @staticmethod
+    def _normalize_search_scenes(results):
         for s in results:
             s["image_url"] = (s.pop("images", None) or [{}])[0].get("url")
             s["is_vr"] = any(t.get("name") == VR_TAG_NAME for t in (s.pop("tags", None) or []))
             s["performers"] = [p["performer"] for p in (s.get("performers") or [])]
-        return {"total": wrapper["count"], "results": results}
+        return results
+
+    def search_tags(self, term, limit=30):
+        """Tag search for the Search page's "Tags" tab: `{"total", "results": [{id, name, description}]}`. Tags are looked up by name
+        (queryTags), the scenes of one tag come from search_scenes_by_tag()."""
+        resp = self._post({
+            "query": "query($input: TagQueryInput!) { queryTags(input: $input) { count tags { id name description } } }",
+            "variables": {"input": {"name": term, "per_page": limit, "sort": "NAME", "direction": "ASC"}},
+        })
+        resp.raise_for_status()
+        data = resp.json()
+        if data.get("errors"):
+            raise RuntimeError(str(data["errors"]))
+        wrapper = data["data"]["queryTags"]
+        return {"total": wrapper["count"], "results": wrapper["tags"]}
+
+    def search_scenes_by_tag(self, tag_id, limit=100):
+        """The newest scenes carrying one tag, same normalized shape as search_scenes() (so Add / Add + search work on them)."""
+        resp = self._post({
+            "query": "query($input: SceneQueryInput!) { queryScenes(input: $input) "
+                      "{ count scenes { id title date created details duration studio { id name } "
+                      "performers { performer { id name } } images { url } tags { name } } } }",
+            "variables": {"input": {"tags": {"value": [tag_id], "modifier": "INCLUDES"}, "page": 1, "per_page": limit,
+                                    "sort": "DATE", "direction": "DESC"}},
+        })
+        resp.raise_for_status()
+        data = resp.json()
+        if data.get("errors"):
+            raise RuntimeError(str(data["errors"]))
+        wrapper = data["data"]["queryScenes"]
+        return {"total": wrapper["count"], "results": self._normalize_search_scenes(wrapper["scenes"])}

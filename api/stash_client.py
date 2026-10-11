@@ -1283,6 +1283,26 @@ class StashClient:
         self._graphql("mutation($i: SceneUpdateInput!) { sceneUpdate(input: $i) { id } }",
                       {"i": {"id": str(scene_id), "stash_ids": self._merged_stash_ids(scene_id, endpoint, stash_id)}})
 
+    def stash_ids_in_library(self, endpoint, stash_ids):
+        """Which of these provider scene ids are in Stash with at least one file? Returns {provider id: local Stash scene id} (v0.207.2,
+        the Search page links to the scene). One query per 100 ids. Same EQUALS-with-a-list filter as library_heights_by_stash_ids(),
+        but for any stash-box endpoint."""
+        wanted = [str(i) for i in stash_ids if i]
+        found = {}
+        for start in range(0, len(wanted), 100):
+            chunk = wanted[start:start + 100]
+            data = self._graphql(FIND_SCENES_BY_STASH_IDS_QUERY, {
+                "scene_filter": {"stash_ids_endpoint": {"stash_ids": chunk, "endpoint": endpoint, "modifier": "EQUALS"}},
+                "filter": {"per_page": len(chunk)},
+            })
+            for sc in data["findScenes"]["scenes"]:
+                if not sc["files"]:
+                    continue
+                for sid in sc["stash_ids"]:
+                    if sid["endpoint"] == endpoint and sid["stash_id"] in chunk:
+                        found.setdefault(sid["stash_id"], sc["id"])
+        return found
+
     def find_scene_ids_by_stash_id(self, endpoint, stash_id):
         data = self._graphql(
             "query($f: SceneFilterType) { findScenes(scene_filter: $f, filter: {per_page: 5}) { scenes { id } } }",

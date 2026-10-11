@@ -939,6 +939,30 @@ def adopt_imported_status(db, provider, scene_stashdb_id):
     return changed
 
 
+_WISHLIST_STATE_ORDER = ("imported", "sent_to_whisparr", "import_failed", "dismissed")
+
+
+def wishlist_states(db, provider, scene_ids):
+    """{scene id: 'imported' | 'sent_to_whisparr' | 'import_failed' | 'dismissed'} for the scenes of `scene_ids` this program already knows,
+    one query (v0.206.0, Search page: a scene that is on the wishlist is shown as such). A scene with several rows (one per watched studio /
+    performer) gets the most advanced state; scenes that are only 'new' / 'backlog' / 'late' are left out."""
+    ids = [str(i) for i in scene_ids if i]
+    out = {}
+    if not ids:
+        return out
+    with db.connect() as conn:
+        for start in range(0, len(ids), 500):
+            chunk = ids[start:start + 500]
+            marks = ",".join("?" for _ in chunk)
+            for r in conn.execute(f"SELECT scene_stashdb_id, status FROM release WHERE provider = ? AND scene_stashdb_id IN ({marks})",
+                                  [provider] + chunk):
+                if r["status"] in _WISHLIST_STATE_ORDER:
+                    cur = out.get(r["scene_stashdb_id"])
+                    if cur is None or _WISHLIST_STATE_ORDER.index(r["status"]) < _WISHLIST_STATE_ORDER.index(cur):
+                        out[r["scene_stashdb_id"]] = r["status"]
+    return out
+
+
 def list_rows_for_scene(db, provider, scene_stashdb_id):
     with db.connect() as conn:
         return [dict(r) for r in conn.execute(

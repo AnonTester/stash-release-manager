@@ -152,7 +152,7 @@ def main():
         qs = "&".join(f"{k}={quote(str(args[k]))}" for k in keys if args.get(k) not in (None, ""))
         result = _get(sidecar_url, f"/films?{qs}", timeout=30)
     elif mode == "films_search_tpdb":
-        result = _get(sidecar_url, f"/films/search-tpdb?q={quote(str(args.get('q') or ''))}", timeout=40)
+        result = _get(sidecar_url, f"/films/search-tpdb?q={quote(str(args.get('q') or ''))}" + (f"&limit={int(args['limit'])}" if args.get("limit") else ""), timeout=40)
     elif mode == "films_add":
         result = _post(sidecar_url, "/films/add", {k: args.get(k) for k in ("movie", "title", "year") if args.get(k) is not None}, timeout=30)
     elif mode == "films_set_status":
@@ -622,11 +622,15 @@ def main():
     elif mode == "recycle_bin_cleanup_status":
         result = _get(sidecar_url, "/file-import/recycle-bin/status", timeout=15)
     elif mode == "search_performers":
-        result = _get(sidecar_url, f"/search/{args.get('provider')}/performers?term={quote(args.get('term', ''))}", timeout=20)
+        result = _get(sidecar_url, f"/search/{args.get('provider')}/performers?term={quote(args.get('term', ''))}", timeout=60)
     elif mode == "search_studios":
-        result = _get(sidecar_url, f"/search/{args.get('provider')}/studios?term={quote(args.get('term', ''))}", timeout=20)
+        result = _get(sidecar_url, f"/search/{args.get('provider')}/studios?term={quote(args.get('term', ''))}", timeout=60)
     elif mode == "search_scenes":
-        result = _get(sidecar_url, f"/search/{args.get('provider')}/scenes?term={quote(args.get('term', ''))}", timeout=20)
+        result = _get(sidecar_url, f"/search/{args.get('provider')}/scenes?term={quote(args.get('term', ''))}", timeout=60)
+    elif mode == "search_tags":
+        result = _get(sidecar_url, f"/search/{args.get('provider')}/tags?term={quote(args.get('term', ''))}", timeout=60)
+    elif mode == "search_scenes_by_tag":
+        result = _get(sidecar_url, f"/search/{args.get('provider')}/scenes-by-tag?tag_id={quote(str(args.get('tag_id', '')), safe='')}", timeout=60)
     elif mode == "search_favorite_performer":
         path = f"/search/{args.get('provider')}/performers/{quote(args.get('stashdb_id'), safe='')}/favorite"
         result = _post(sidecar_url, path, {"name": args.get("name", "")}, timeout=20)

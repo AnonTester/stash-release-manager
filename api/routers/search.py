@@ -25,6 +25,8 @@ Two actions once something's found:
 After Milestone 3, a scene hand-off should go straight to this
 sidecar's own download handling instead of via Whisparr -- not
 implemented yet, deliberately deferred (see the roadmap memory)."""
+import logging
+
 import history
 from fastapi import APIRouter, HTTPException
 
@@ -33,6 +35,8 @@ import release_repo
 import watchlist_source
 from handoff import hand_off
 from routers.settings import resolve_whisparr_quality_profiles, resolve_quality_profiles
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/search", tags=["search"])
 
@@ -97,20 +101,56 @@ def _reraise_as_http(e, provider):
     raise HTTPException(502, f"{provider} search failed: {e}")
 
 
+_THEPORNDB_WEB = "https://theporndb.net"
+_SOURCE_PATH = {"performer": "performers", "studio": "studios", "scene": "scenes"}
+
+
+def _add_source_urls(provider, client, kind, results):
+    """`source_url` on every hit: the page of this item on the provider's own website (the card opens it on a click). A stash-box's site
+    is its GraphQL address without "/graphql"; ThePornDB's pages are addressed by slug (a studio by its uuid)."""
+    if provider == "theporndb":
+        for r in results:
+            ident = r.get("id") if kind == "studio" else (r.get("slug") or r.get("id"))
+            r["source_url"] = f"{_THEPORNDB_WEB}/{'sites' if kind == 'studio' else _SOURCE_PATH[kind]}/{ident}"
+        return results
+    base = str(getattr(client, "url", "") or "").rstrip("/")
+    if base.endswith("/graphql"):
+        base = base[: -len("/graphql")]
+    if base:
+        for r in results:
+            r["source_url"] = f"{base}/{_SOURCE_PATH[kind]}/{r.get('id')}"
+    return results
+
+
 @router.get("/{provider}/performers")
 def search_performers(provider: str, term: str):
     client = _client_for(provider)
     try:
-        return client.search_performers(term)
+        found = client.search_performers(term)
     except Exception as e:
         _reraise_as_http(e, provider)
+    _add_source_urls(provider, client, "performer", found.get("results", []))
+    return found
 
 
 @router.get("/{provider}/studios")
 def search_studios(provider: str, term: str):
     client = _client_for(provider)
     try:
-        return client.search_studios(term)
+        found = client.search_studios(term)
+    except Exception as e:
+        _reraise_as_http(e, provider)
+    _add_source_urls(provider, client, "studio", found.get("results", []))
+    return found
+
+
+@router.get("/{provider}/tags")
+def search_tags(provider: str, term: str):
+    client = _client_for(provider)
+    if not hasattr(client, "search_tags"):
+        raise HTTPException(400, f"Searching by tag is not available for {provider}: its scene filter by tag does not work (every tag returns no scenes).")
+    try:
+        return client.search_tags(term)
     except Exception as e:
         _reraise_as_http(e, provider)
 
@@ -119,9 +159,46 @@ def search_studios(provider: str, term: str):
 def search_scenes(provider: str, term: str):
     client = _client_for(provider)
     try:
-        return client.search_scenes(term)
+        found = client.search_scenes(term)
     except Exception as e:
         _reraise_as_http(e, provider)
+    return _decorate_scenes(provider, client, found)
+
+
+@router.get("/{provider}/scenes-by-tag")
+def search_scenes_by_tag(provider: str, tag_id: str):
+    client = _client_for(provider)
+    if not hasattr(client, "search_scenes_by_tag"):
+        raise HTTPException(400, f"Searching by tag is not available for {provider}.")
+    try:
+        found = client.search_scenes_by_tag(tag_id)
+    except Exception as e:
+        _reraise_as_http(e, provider)
+    return _decorate_scenes(provider, client, found)
+
+
+def _ids_in_library(provider, ids):
+    """{provider scene id: local Stash scene id} for the scenes Stash already has with a file (v0.207.1). A Stash that does not answer
+    must not break the search: then nothing is marked."""
+    try:
+        stash_client = _get_stash_client()
+        return stash_client.stash_ids_in_library(_endpoint_for(provider, stash_client), ids)
+    except Exception:
+        logger.exception("search: library check against Stash failed (ignored)")
+        return {}
+
+
+def _decorate_scenes(provider, client, found):
+    _add_source_urls(provider, client, "scene", found.get("results", []))
+    ids = [s.get("id") for s in found.get("results", [])]
+    # What this program already knows about each hit (v0.206.0): on the wishlist / imported / dismissed / import failed.
+    states = release_repo.wishlist_states(_db, provider, ids)
+    # ... and what Stash already has (v0.207.1): a file under this id means "in library", whatever the release table says.
+    in_library = _ids_in_library(provider, ids)
+    for s in found.get("results", []):
+        s["release_status"] = "in_library" if s.get("id") in in_library else states.get(str(s.get("id")))
+        s["stash_scene_id"] = in_library.get(s.get("id"))
+    return found
 
 
 @router.post("/{provider}/performers/{stashdb_id}/favorite")
@@ -160,6 +237,12 @@ def handoff_scene(provider: str, body: dict, search: bool = True):
         entity_type, entity_stashdb_id = "performer", performers[0]["id"]
     else:
         raise HTTPException(400, "This scene has no studio or performer to record the hand-off against")
+
+    # Stash already has it (a stale tab, or a result that was fetched before the file arrived): no wishlist row, no search.
+    local = _ids_in_library(provider, [body["id"]]).get(body["id"])
+    if local:
+        return {"already_sent": False, "grabbed": None, "search_result": "already_in_library", "already_in_library": True,
+                "stash_scene_id": local}
 
     with _db.connect() as conn:
         release_repo.insert_release(_db, conn, body, provider, entity_type, entity_stashdb_id, status="new")

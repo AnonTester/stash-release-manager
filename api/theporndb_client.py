@@ -362,7 +362,7 @@ class ThePornDBClient:
         resp = self._get("/performers", params={"q": term, "per_page": limit})
         resp.raise_for_status()
         body = resp.json()
-        results = [{"id": p["id"], "name": p["name"], "image_url": p.get("image")} for p in (body.get("data") or [])]
+        results = [{"id": p["id"], "name": p["name"], "image_url": p.get("image"), "slug": p.get("slug")} for p in (body.get("data") or [])]
         return {"total": (body.get("meta") or {}).get("total"), "results": results}
 
     def search_studios(self, term, limit=100):
@@ -400,7 +400,7 @@ class ThePornDBClient:
                 "id": s["id"], "title": s.get("title") or "", "date": s.get("date"), "created": s["created"],
                 "studio": {"id": site.get("uuid"), "name": site.get("name") or ""},
                 "performers": [{"id": p["id"], "name": p["name"]} for p in (s.get("performers") or [])],
-                "image_url": best_image(s),
+                "image_url": best_image(s), "slug": s.get("slug"),
                 "details": s.get("description") or "",
                 "duration": s.get("duration"),
                 "is_vr": "vr" in (site.get("name") or "").lower(),

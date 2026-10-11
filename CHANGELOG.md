@@ -6,6 +6,29 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.208.1
+- Releases list: a release that came in through a watched studio but belongs to one of its sub-studios now shows the scene's own studio next to the watched one, so "Hide studio" is clearly about the sub-studio.
+
+## 0.208.0
+- Search page, ThePornDB: a "Movies" tab searches ThePornDB movies and puts one on the film wishlist ("Add to film wishlist"); a movie already there shows "on film wishlist".
+- Search page: the tag search is now "By title | By tag" under Scenes and only offered for providers that can do it (StashDB and added stash-boxes, not ThePornDB).
+
+## 0.207.2
+- Search page: a scene marked "In library" has an "Open in Stash" button.
+
+## 0.207.1
+- Search page: a scene that Stash already has (a file under the same provider id) is marked "In library" and cannot be added again, also when this program never saw it before. If Stash does not answer, the search works as before.
+
+## 0.207.0
+- Search page: new way to search scenes by tag (StashDB and added stash-boxes): the term finds tags, a click lists the tag's newest scenes with Add / Add + search. ThePornDB cannot do it (its tag filter returns nothing).
+- Search page: the image and title of every card open the item's page on the provider's website.
+
+## 0.206.1
+- Search page: the plugin waits up to 60 seconds (was 20) for a search, so a slow stash-box no longer ends in "Read timed out" while the sidecar is fine.
+
+## 0.206.0
+- Search page, scenes: a scene this program already knows is shown as such, also on a new search. On the wishlist: purple with "On Wishlist", "Search now" and "Dismiss"; imported: green; import failed: red; dismissed: grey with "Restore". After "Add" / "Add + search" the card changes at once.
+
 ## 0.205.6
 - Search page: the cards of a page have the same height; scene images are 3:2, performers 2:3, studio logos sit whole in a square box. Missing images are a grey box of the same size, the buttons sit at the bottom of the card, long words wrap.
 

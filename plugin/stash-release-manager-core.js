@@ -283,7 +283,11 @@
   // release was matched via a watched PERFORMER, not the studio
   // itself).
   function buildStudioContext(r) {
-    if (r.entity_type === 'studio' || !r.studio_name) return null;
+    if (!r.studio_name) return null;
+    // A studio hit normally IS the scene's studio (the name is already shown). Not for a sub-studio of a watched network studio
+    // (Evil Angel -> Transsexual Angel): the row names the watched parent, so the scene's own studio is shown next to it (v0.208.1).
+    const compact = (t) => String(t || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+    if (r.entity_type === 'studio' && (!r.entity_name || compact(r.entity_name) === compact(r.studio_name))) return null;
     // Linked to the studio's Stash page when that studio exists locally (r.studio_local_id, resolved by the sidecar, v0.102.8).
     if (r.studio_local_id) {
       return el('a', {
@@ -975,7 +979,7 @@
   function notifyHandoff(sceneTitle, result) {
     const name = sceneTitle || 'Scene';
     if (result.already_in_library) {
-      notify(`Already in the library: ${name}`, 'Imported earlier via another provider -- linked, not searched.', 'info');
+      notify(`Already in the library: ${name}`, 'Stash already has it (or it was imported earlier via another provider) -- not searched.', 'info');
     } else if (result.grabbed) {
       notify(`Grabbed: ${name}`, `${result.grabbed.title} (${result.grabbed.indexer || 'indexer'}) -- sent to the download client.`, 'success');
     } else if (result.already_sent) {
