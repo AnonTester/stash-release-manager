@@ -48,10 +48,11 @@ _get_whisparr_client = None
 _get_search_source = None
 _get_provider_client = None
 _settings = None
+_readd = None
 
 
 def init_search_router(db, get_stashdb_client, get_theporndb_client, get_stash_client, get_whisparr_client,
-                        get_search_source, settings, get_provider_client=None):
+                        get_search_source, settings, get_provider_client=None, readd=None):
     """Factories, not fixed instances -- same reasoning as every other
     router here (a Settings-page connection edit takes effect on the
     very next call). `get_search_source` (2026-09-25, was
@@ -59,7 +60,8 @@ def init_search_router(db, get_stashdb_client, get_theporndb_client, get_stash_c
     passed straight through to handoff_scene()'s send_to_whisparr()
     call below."""
     global _db, _get_stashdb_client, _get_theporndb_client, _get_stash_client, _get_whisparr_client
-    global _get_search_source, _settings, _get_provider_client
+    global _get_search_source, _settings, _get_provider_client, _readd
+    _readd = readd
     _get_provider_client = get_provider_client
     _db, _get_stashdb_client, _get_theporndb_client, _get_stash_client, _get_whisparr_client = (
         db, get_stashdb_client, get_theporndb_client, get_stash_client, get_whisparr_client
@@ -166,12 +168,17 @@ def search_scenes(provider: str, term: str):
 
 
 @router.get("/{provider}/scenes-by-tag")
-def search_scenes_by_tag(provider: str, tag_id: str):
+def search_scenes_by_tag(provider: str, tag_id: str = "", tag_ids: str = "", exclude_ids: str = ""):
+    """tag_ids: comma-separated, a scene must carry all of them (v0.210.0); tag_id: the single-tag form; exclude_ids: scenes with any of
+    these tags are left out (v0.211.0)."""
+    ids = [t for t in (tag_ids or tag_id).split(",") if t.strip()]
+    if not ids:
+        raise HTTPException(400, "Select at least one tag to include (excluded tags alone cannot be searched).")
     client = _client_for(provider)
     if not hasattr(client, "search_scenes_by_tag"):
         raise HTTPException(400, f"Searching by tag is not available for {provider}.")
     try:
-        found = client.search_scenes_by_tag(tag_id)
+        found = client.search_scenes_by_tag(ids, exclude_ids=[t for t in exclude_ids.split(',') if t.strip()])
     except Exception as e:
         _reraise_as_http(e, provider)
     return _decorate_scenes(provider, client, found)
@@ -219,6 +226,19 @@ def favorite_studio(provider: str, stashdb_id: str, body: dict):
     watch_tag_id = watchlist_source.watch_tag_id_for_new_entity(_db, stash_client)
     return {**stash_client.create_or_favorite_studio(stashdb_id, body.get("name", ""), endpoint, watch_tag_id),
             "watch_mode": watchlist_source.get_mode(_db)}
+
+
+@router.post("/{provider}/scenes/readd")
+def readd_scene(provider: str, body: dict, search: bool = True):
+    """Fetch a scene again although Stash already has a file for it (v0.209.0; the Search page's "Re-add"). Replaces the old file after a
+    verified download, see upgrades.py (old file -> recycle bin)."""
+    local = _ids_in_library(provider, [body.get("id")]).get(body.get("id"))
+    if not local:
+        raise HTTPException(404, "Stash has no file with this scene id -- use Add instead")
+    result = _readd(local, "readd", None, search)
+    if "error" not in result:
+        history.scene("info", "wishlist", "Re-added although a file exists (Search page)", provider, body["id"], scene_title=body.get("title"))
+    return result
 
 
 @router.post("/{provider}/scenes/handoff")

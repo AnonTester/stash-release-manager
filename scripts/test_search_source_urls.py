@@ -32,5 +32,48 @@ try:
     search.search_tags("theporndb", "x"); check("theporndb tag search refused", False)
 except HTTPException as e:
     check("theporndb tag search refused with a clear message", e.status_code == 400)
+# several tags (v0.210.0): INCLUDES_ALL for 2+, INCLUDES for one; the router splits the comma list
+sent = []
+class Fake(stashdb_client.StashDBClient):
+    def __init__(self): pass
+    def _post(self, payload):
+        sent.append(payload["variables"]["input"]["tags"])
+        class R:
+            def raise_for_status(self): pass
+            def json(self): return {"data": {"queryScenes": {"count": 0, "scenes": []}}}
+        return R()
+f = Fake()
+f.search_scenes_by_tag(["a", "b"]); f.search_scenes_by_tag("a")
+check("two tags -> INCLUDES_ALL", sent[0] == {"value": ["a", "b"], "modifier": "INCLUDES_ALL"})
+check("one tag -> INCLUDES", sent[1] == {"value": ["a"], "modifier": "INCLUDES"})
+# excluded tags are filtered out client-side over several pages (StashDB takes one tags criterion)
+def mk(i, tags): return {"id": str(i), "title": "t", "images": [], "performers": [], "tags": [{"id": t, "name": t} for t in tags]}
+pages = {1: [mk(i, ["x"] if i % 2 else []) for i in range(100)], 2: [mk(100 + i, []) for i in range(30)]}
+class Fake2(stashdb_client.StashDBClient):
+    def __init__(self): self.calls = 0
+    def _post(self, payload):
+        self.calls += 1
+        pg = payload["variables"]["input"]["page"]
+        class R:
+            def raise_for_status(self): pass
+            def json(self): return {"data": {"queryScenes": {"count": 130, "scenes": pages.get(pg, [])}}}
+        return R()
+f2 = Fake2(); out = f2.search_scenes_by_tag(["a"], limit=100, exclude_ids=["x"])
+check("exclude: reads on to page 2 to fill the list", f2.calls == 2 and len(out["results"]) == 80 and out["total"] == 80)
+check("exclude: no excluded scene left", all(r["id"] not in {str(i) for i in range(100) if i % 2} for r in out["results"]))
+f3 = Fake2(); out = f3.search_scenes_by_tag(["a"], limit=100)
+check("no exclude: one page, provider total", f3.calls == 1 and out["total"] == 130 and len(out["results"]) == 100)
+got = []
+class Rec:
+    def search_scenes_by_tag(self, ids, exclude_ids=()): got.append(ids); return {"results": []}
+search._client_for = lambda provider: Rec()
+search._decorate_scenes = lambda provider, client, found: found
+search.search_scenes_by_tag("stashdb", tag_ids="x,y")
+search.search_scenes_by_tag("stashdb", tag_id="z")
+check("router: tag_ids split, tag_id still works", got == [["x", "y"], ["z"]])
+try:
+    search.search_scenes_by_tag("stashdb"); check("no tag refused", False)
+except HTTPException as e:
+    check("no tag refused", e.status_code == 400)
 print("\nALL OK" if all(res) else "\nFAILED")
 sys.exit(0 if all(res) else 1)

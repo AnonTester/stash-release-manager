@@ -921,9 +921,7 @@
         className: 'srw-btn',
         textContent: 'Dismiss',
         onClick: async () => {
-          const res = await window.SRW.runOp('releases_dismiss', {
-            provider: r.provider, scene_stashdb_id: r.scene_stashdb_id,
-          });
+          const res = await window.SRW.dismissRelease(r);
           window.SRW.releaseDismissedNotice(r, res, () => renderReleaseList(container));
           await renderReleaseList(container);
         },
@@ -1123,7 +1121,7 @@
         li.push(el('button', {
           className: 'srw-btn', textContent: 'Dismiss',
           onClick: async () => {
-            const res = await window.SRW.runOp('releases_dismiss', { provider: r.provider, scene_stashdb_id: r.scene_stashdb_id });
+            const res = await window.SRW.dismissRelease(r);
             window.SRW.releaseDismissedNotice(r, res, () => statusSectionViews.late.reload());
             await statusSectionViews.late.reload();
           },
@@ -1950,9 +1948,7 @@
           title: 'Dismiss',
           textContent: '×',
           onClick: async () => {
-            const res = await window.SRW.runOp('releases_dismiss', {
-              provider: r.provider, scene_stashdb_id: r.scene_stashdb_id,
-            });
+            const res = await window.SRW.dismissRelease(r);
             window.SRW.releaseDismissedNotice(r, res, () => renderCalendarView(container));
             await renderCalendarView(container);
           },

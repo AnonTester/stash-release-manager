@@ -276,6 +276,8 @@ DEFAULTS = {
     # date_until}, shared by the List and Calendar views (Calendar just
     # ignores the date fields). One setting row, no schema change needed.
     "filter_presets": "[]",
+    # Saved tag combinations of the Search page's "By tag" (v0.210.0): JSON list of {name, provider, tags: [{id, name}]}.
+    "search_tag_presets": "[]",
     # Permissions (2026-09-19) -- Whisparr's own Media Management >
     # Permissions section (Set Permissions / chmod Folder / chown
     # Group). Off by default (empty/false), same reasoning as Whisparr's
@@ -661,6 +663,13 @@ def set_one(key: str, body: dict):
             parsed = None
         if not isinstance(parsed, list) or not all(isinstance(p, dict) and p.get("name") for p in parsed):
             raise HTTPException(400, "filter_presets must be a JSON list of objects with a 'name'")
+    if key == "search_tag_presets":
+        try:
+            parsed = json.loads(value)
+        except ValueError:
+            parsed = None
+        if not isinstance(parsed, list) or not all(isinstance(p, dict) and p.get("name") and isinstance(p.get("tags"), list) for p in parsed):
+            raise HTTPException(400, "search_tag_presets must be a JSON list of objects with a 'name' and a 'tags' list")
     if key == "watchlist_source" and value not in WATCHLIST_SOURCES:
         raise HTTPException(400, f"watchlist_source must be one of {WATCHLIST_SOURCES}, got {value!r}")
     if key == "watchlist_tag_name" and not value.strip():

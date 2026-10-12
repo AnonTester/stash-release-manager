@@ -62,6 +62,8 @@ import verification
 from version import SIDECAR_VERSION
 import vr_check
 import upgrades
+import duration_check
+import handoff as _handoff_module
 import file_importer as _file_importer_module
 import inactive_check
 from stashdb_favorites import import_stashdb_favorites
@@ -647,6 +649,7 @@ def _stash_path_to_local(path):
 
 
 vr_job = vr_check.VrCheckJob(db, get_stash_client, get_provider_client, _stash_path_to_local)
+duration_job = duration_check.DurationCheckJob(db, get_stash_client, get_provider_client)
 
 
 def _organizer():
@@ -740,6 +743,29 @@ def run_upgrade_search(cand_id, dry_run=True):
     profile, vr_enabled = resolve_quality_profiles(db)
     return upgrades.search_one(db, cand_id, get_provider_client, get_search_source(), profile, vr_enabled,
                                dry_run=dry_run)
+
+
+def readd_library_scene(stash_scene_id, reason, provider_duration=None, search=True):
+    """Fetch a scene again although Stash has a file for it (v0.209.0; Search page "Re-add", Maintenance > Duration mismatch): an upgrade candidate
+    of the user's own (reason 'readd' / 'duration'). search=False only queues it (the scheduled upgrade search finds it); search=True also
+    searches now -- waits 20 s like the wishlist add, a slower search goes on in the background."""
+    res = upgrades.add_manual_candidate(db, get_stash_client(), stash_scene_id, reason, provider_duration)
+    if "error" in res:
+        return res
+    cand_id = res["id"]
+    cand = upgrades.get_candidate(db, cand_id)
+    if cand["status"] == "grabbed":
+        return {"error": "a download for this file is already running", "candidate_id": cand_id}
+    if cand["status"] != "wanted":
+        upgrades.set_candidate(db, cand_id, status="wanted", last_search_at=None, last_search_result=None, review_candidate=None)
+    if not search:
+        return {"queued": True, "candidate_id": cand_id}
+    out = _handoff_module.search_with_wait(("readd", cand_id), lambda: run_upgrade_search(cand_id, dry_run=False))
+    if out.get("running"):
+        return {"queued": True, "candidate_id": cand_id, "search_running": True}
+    if out.get("error"):
+        return {"queued": True, "candidate_id": cand_id, "search_error": out["error"]}
+    return {"queued": True, "candidate_id": cand_id, "grabbed": out.get("grab"), "search_result": out.get("result")}
 
 
 def _fix_wrong_download_for(provider, scene_stashdb_id, entity_type, entity_stashdb_id, file_path=None):
@@ -1505,7 +1531,8 @@ init_backlog_router(db, get_provider_client, get_stash_client, get_whisparr_clie
 init_maintenance_router(db, get_stash_client, get_stashdb_client, vr_job, _fix_wrong_download_for,
                         upgrade_search=run_upgrade_search, cutoff_resolution=_cutoff_resolution,
                         get_provider_client=get_provider_client, to_local=_stash_path_to_local,
-                        organizer_factory=_organizer, importer_factory=_importer, movies_factory=_movies)
+                        organizer_factory=_organizer, importer_factory=_importer, movies_factory=_movies,
+                        duration_job=duration_job, readd=readd_library_scene)
 init_compare_router(db, lambda: scene_compare.SceneCompare(db, get_stash_client, get_provider_client, settings.data_dir,
                                                               get_importer=_importer, to_local=_stash_path_to_local))
 init_file_import_router(
@@ -1516,7 +1543,7 @@ init_file_import_router(
     on_download_complete=on_download_complete,
 )
 init_search_router(db, get_stashdb_client, get_theporndb_client, get_stash_client, get_whisparr_client,
-                    get_search_source, settings, get_provider_client=get_provider_client)
+                    get_search_source, settings, get_provider_client=get_provider_client, readd=readd_library_scene)
 init_quality_profiles_router(db)
 init_download_clients_router(db, get_prowlarr_client_if_configured)
 init_indexers_router(db)

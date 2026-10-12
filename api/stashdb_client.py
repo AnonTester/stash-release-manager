@@ -833,6 +833,24 @@ class StashDBClient:
             s["performers"] = [p["performer"] for p in (s.get("performers") or [])]
         return results
 
+    def scene_durations(self, scene_ids):
+        """{scene id: seconds or None} -- the length the provider has for each scene, many per request (aliased findScene; v0.209.0).
+        None when the scene is unknown or has no length maintained."""
+        ids = [str(i) for i in scene_ids]
+        if not ids:
+            return {}
+        query = "query{" + " ".join(f's{n}: findScene(id: "{i}") {{ id duration }}' for n, i in enumerate(ids)) + "}"
+        resp = self._post({"query": query})
+        resp.raise_for_status()
+        data = resp.json()
+        if data.get("errors") and not data.get("data"):
+            raise RuntimeError(str(data["errors"]))
+        out = {i: None for i in ids}
+        for n, i in enumerate(ids):
+            scene = (data.get("data") or {}).get(f"s{n}") or {}
+            out[i] = scene.get("duration") or None
+        return out
+
     def search_tags(self, term, limit=30):
         """Tag search for the Search page's "Tags" tab: `{"total", "results": [{id, name, description}]}`. Tags are looked up by name
         (queryTags), the scenes of one tag come from search_scenes_by_tag()."""
@@ -847,18 +865,38 @@ class StashDBClient:
         wrapper = data["data"]["queryTags"]
         return {"total": wrapper["count"], "results": wrapper["tags"]}
 
-    def search_scenes_by_tag(self, tag_id, limit=100):
-        """The newest scenes carrying one tag, same normalized shape as search_scenes() (so Add / Add + search work on them)."""
-        resp = self._post({
-            "query": "query($input: SceneQueryInput!) { queryScenes(input: $input) "
-                      "{ count scenes { id title date created details duration studio { id name } "
-                      "performers { performer { id name } } images { url } tags { name } } } }",
-            "variables": {"input": {"tags": {"value": [tag_id], "modifier": "INCLUDES"}, "page": 1, "per_page": limit,
-                                    "sort": "DATE", "direction": "DESC"}},
-        })
-        resp.raise_for_status()
-        data = resp.json()
-        if data.get("errors"):
-            raise RuntimeError(str(data["errors"]))
-        wrapper = data["data"]["queryScenes"]
-        return {"total": wrapper["count"], "results": self._normalize_search_scenes(wrapper["scenes"])}
+    EXCLUDE_MAX_PAGES = 10  # with excluded tags: at most this many pages of 100 are read to fill the list
+
+    def search_scenes_by_tag(self, tag_ids, limit=100, exclude_ids=()):
+        """The newest scenes carrying ALL the given tags and none of `exclude_ids` (v0.210.0 / v0.211.0), same normalized shape as
+        search_scenes() (so Add / Add + search work on them).
+
+        StashDB's queryScenes takes ONE tags criterion, so "has A and B but not C" cannot be asked in one query: the include tags are asked
+        for, the excluded ones are filtered out here, reading further pages (EXCLUDE_MAX_PAGES) until `limit` scenes are left. `total` is the
+        provider's count without excludes; with excludes it is the number of kept scenes when every page was read, else None (unknown)."""
+        tag_ids = [tag_ids] if isinstance(tag_ids, str) else list(tag_ids)
+        exclude = {str(i) for i in (exclude_ids or ())}
+        kept, page, count = [], 1, 0
+        while True:
+            resp = self._post({
+                "query": "query($input: SceneQueryInput!) { queryScenes(input: $input) "
+                          "{ count scenes { id title date created details duration studio { id name } "
+                          "performers { performer { id name } } images { url } tags { id name } } } }",
+                "variables": {"input": {"tags": {"value": tag_ids, "modifier": "INCLUDES_ALL" if len(tag_ids) > 1 else "INCLUDES"},
+                                        "page": page, "per_page": 100, "sort": "DATE", "direction": "DESC"}},
+            })
+            resp.raise_for_status()
+            data = resp.json()
+            if data.get("errors"):
+                raise RuntimeError(str(data["errors"]))
+            wrapper = data["data"]["queryScenes"]
+            count = wrapper["count"]
+            scenes = wrapper["scenes"]
+            kept += [sc for sc in scenes if not exclude or not exclude & {str(t.get("id")) for t in (sc.get("tags") or [])}]
+            exhausted = page * 100 >= count or not scenes
+            if not exclude or exhausted or len(kept) >= limit or page >= self.EXCLUDE_MAX_PAGES:
+                break
+            page += 1
+        kept = kept[:limit]
+        total = count if not exclude else (len(kept) if exhausted and len(kept) <= limit else None)
+        return {"total": total, "results": self._normalize_search_scenes(kept)}

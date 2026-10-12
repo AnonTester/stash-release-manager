@@ -492,6 +492,21 @@
             render(container);
           } }));
       }
+      // Own query + Grab (v0.211.1), the same panel as on the Movies page and for scenes; prefill "Title Year".
+      let li = null;
+      if (['wanted', 'import_failed'].includes(f.status)) {
+        const searchSlot = el('span', { className: 'srw-search-actions' });
+        window.SRW.getSearchCapabilities().then((caps) => {
+          const sources = (caps && caps.manual_sources) || [];
+          if (!sources.length) return;
+          const asRelease = { provider: 'theporndb', scene_stashdb_id: f.tpdb_id || `film-${f.id}`, title: `${f.title}${f.year ? ` ${f.year}` : ''}` };
+          searchSlot.appendChild(window.SRW.buildManualSearch(asRelease, sources, caps.backend, () => render(container), {
+            host: () => li,
+            grab: (candidate) => window.SRW.runOp('films_grab', { id: f.id, candidate }),
+          }));
+        });
+        children.push(searchSlot);
+      }
       if (f.status === 'imported' && f.imported_at) children.push(el('span', { className: 'srw-release-date', textContent: `imported ${f.imported_at.slice(0, 16)}` }));
       if (f.import_error) children.push(el('span', { className: 'srw-hint', textContent: f.import_error }));
       if ((f.scenes || []).length) {
@@ -532,7 +547,7 @@
           onClick: (e) => confirmInline(e.currentTarget, `Delete the downloaded file(s) of "${f.title}" (recycle bin) and dismiss the movie?`, discard(true), { danger: true }) }));
       }
       // Same row layout as the scenes (cover | title + pill + meta | buttons); the opened scene list goes below the row.
-      const li = window.SRW.arrangeReleaseRow(el('li', { className: 'srw-release-item' }, children), { scene_date: (f.release_date || '').slice(0, 10) });
+      li = window.SRW.arrangeReleaseRow(el('li', { className: 'srw-release-item' }, children), { scene_date: (f.release_date || '').slice(0, 10) });
       li.appendChild(slot);
       li._film = f;
       return li;

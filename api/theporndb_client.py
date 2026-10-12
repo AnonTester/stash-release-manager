@@ -343,6 +343,18 @@ class ThePornDBClient:
         scene = data.get("data", data)
         return scene.get("image") if scene else None
 
+    def scene_durations(self, scene_ids):
+        """{scene id: seconds or None}, one request per scene (ThePornDB has no lookup by many ids; v0.209.0)."""
+        out = {}
+        for i in scene_ids:
+            resp = self._get(f"/scenes/{i}")
+            if resp.status_code == 404:
+                out[str(i)] = None
+                continue
+            resp.raise_for_status()
+            out[str(i)] = ((resp.json().get("data") or {}).get("duration")) or None
+        return out
+
     def search_performers(self, term, limit=100):
         """Free-text performer search (2026-09-19, backs the plugin's
         own Search page -- see PROGRESS.md/roadmap memory). `?q=` is

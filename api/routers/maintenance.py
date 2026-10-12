@@ -27,6 +27,7 @@ import release_repo
 import library_rename
 import upgrades
 import vr_check
+import duration_check
 
 router = APIRouter(prefix="/maintenance", tags=["maintenance"])
 
@@ -52,9 +53,11 @@ _cutoff_resolution = None
 
 def init_maintenance_router(db, get_stash_client, get_stashdb_client, vr_job=None, fix_wrong_download=None,
                             upgrade_search=None, cutoff_resolution=None, get_provider_client=None, to_local=None,
-                            organizer_factory=None, importer_factory=None, movies_factory=None):
+                            organizer_factory=None, importer_factory=None, movies_factory=None, duration_job=None, readd=None):
     global _db, _get_stash_client, _get_stashdb_client, _vr_job, _fix_wrong_download
     global _upgrade_search, _cutoff_resolution, _get_provider_client, _to_local, _organizer, _importer, _movies
+    global _duration_job, _readd
+    _duration_job, _readd = duration_job, readd
     _importer = importer_factory
     _movies = movies_factory
     _get_provider_client = get_provider_client
@@ -100,6 +103,48 @@ def upgrades_refresh():
 @router.post("/upgrades/{cand_id}/search")
 def upgrades_search(cand_id: int, dry_run: bool = True):
     return _upgrade_search(cand_id, dry_run=dry_run)
+
+
+# --- Duration mismatch (v0.209.0, duration_check.py) ---
+
+@router.post("/duration-check/run")
+def duration_check_run(force: bool = False):
+    return _duration_job.start(force)
+
+
+@router.get("/duration-check/status")
+def duration_check_status():
+    return {"job": _duration_job.status, **duration_check.summary(_db)}
+
+
+@router.get("/duration-check/findings")
+def duration_check_findings(threshold: float = 5.0, direction: str = "", ignored: bool = False):
+    if direction not in ("", "shorter", "longer"):
+        raise HTTPException(400, "direction must be '', 'shorter' or 'longer'")
+    rows = duration_check.list_findings(_db, threshold, direction, include_ignored=ignored)
+    # Which of them are already on the way (an upgrade candidate of this file is wanted / grabbed).
+    with _db.connect() as conn:
+        busy = {(r["scene_id"]): r["status"] for r in conn.execute(
+            "SELECT scene_id, status FROM upgrade_candidate WHERE reason IN ('duration', 'readd') AND status IN ('wanted', 'grabbed', 'review')")}
+    for r in rows:
+        r["upgrade_status"] = busy.get(r["scene_id"])
+    return {"findings": rows, "threshold": threshold}
+
+
+@router.post("/duration-check/{scene_id}/ignore")
+def duration_check_ignore(scene_id: str, restore: bool = False):
+    if not duration_check.get_row(_db, scene_id):
+        raise HTTPException(404, "scene not in the duration check")
+    duration_check.set_status(_db, scene_id, "checked" if restore else "ignored")
+    return {"ok": True}
+
+
+@router.post("/duration-check/{scene_id}/readd")
+def duration_check_readd(scene_id: str, search: bool = True):
+    row = duration_check.get_row(_db, scene_id)
+    if not row:
+        raise HTTPException(404, "scene not in the duration check")
+    return _readd(scene_id, "duration", row.get("provider_sec"), search)
 
 
 # --- Organize the library: rename / move (2026-09-28, library_organize.py) ---

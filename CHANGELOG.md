@@ -6,6 +6,29 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.211.1
+- Activity: movies that are wanted or failed get the "Search…" button (own search term + Grab), like scenes and the Movies page.
+
+## 0.211.0
+- Search page, By tag: tags can be excluded. Click a tag once = scenes must have it, twice = scenes must not have it, three times = off. Presets keep the exclusions.
+
+## 0.210.0
+- Search page, By tag: select several tags at once, a scene must carry all of them. The selection stays while you search for more tags.
+- Tag combinations can be saved as presets (per provider).
+
+## 0.209.3
+- Dismiss (Calendar, List, late additions): a failed request now shows "Dismiss failed" instead of failing silently.
+
+## 0.209.2
+- Inline questions ("Add to wishlist? Yes / Cancel"): when the question does not fit on one line the text wraps and the two buttons stay together.
+
+## 0.209.1
+- Search page: on a scene marked "In library" the cover and the title open the scene in Stash; the separate button is gone.
+
+## 0.209.0
+- Search page: scenes that are already in Stash get "Re-add" and "Re-add + search". The scene goes back on the wishlist; after a verified download the new file replaces the old one (the old file goes to the recycle bin).
+- Maintenance > Duration mismatch: lists library scenes whose file length differs from the provider's length by more than a threshold (default 5 %, shorter or longer), with Re-add per scene. Scenes without a provider length are not checked.
+
 ## 0.208.1
 - Releases list: a release that came in through a watched studio but belongs to one of its sub-studios now shows the scene's own studio next to the watched one, so "Hide studio" is clearly about the sub-studio.
 

@@ -47,6 +47,9 @@ from indexer_search import candidate_url, search_and_grab, vr_height
 logger = logging.getLogger(__name__)
 
 REASONS = ("vr_2d", "vr_mono", "vr_low_quality", "below_cutoff")
+# Candidates the USER creates (never found by refresh_candidates, never removed by it): "readd" = Search page "Re-add" (fetch the scene again
+# although a file exists), "duration" = Maintenance > Duration mismatch (the file is clearly shorter / longer than the provider's length).
+MANUAL_REASONS = ("readd", "duration")
 _MONO_RE = re.compile(r"(?i)(?:\bmono\b|_mono_|mono360|\bmono[._-])")
 # Stash's ResolutionEnum for "files below the cutoff" queries.
 _RESOLUTION_ENUM = {720: "STANDARD_HD", 1080: "FULL_HD", 1440: "QUAD_HD", 2160: "FOUR_K"}
@@ -118,7 +121,7 @@ def set_candidate(db, cand_id, **fields):
         conn.execute(f"UPDATE upgrade_candidate SET {cols} WHERE id = ?", (*fields.values(), int(cand_id)))
 
 
-def _upsert(db, scene, file, reason, provider, provider_scene_id):
+def _upsert(db, scene, file, reason, provider, provider_scene_id, provider_duration=None, is_vr=None):
     mbps = (file["size"] * 8 / file["duration"] / 1e6) if file.get("size") and file.get("duration") else None
     with db.connect() as conn:
         existing = conn.execute("SELECT id, status FROM upgrade_candidate WHERE scene_id = ? AND file_path = ?",
@@ -127,16 +130,19 @@ def _upsert(db, scene, file, reason, provider, provider_scene_id):
             # A decision (dismissed) or an upgrade in flight/finished is kept.
             conn.execute(
                 """UPDATE upgrade_candidate SET reason = ?, scene_title = ?, provider = ?, provider_scene_id = ?,
-                   cur_width = ?, cur_height = ?, cur_size = ?, cur_mbps = ?, updated_at = ? WHERE id = ?""",
+                   cur_width = ?, cur_height = ?, cur_size = ?, cur_mbps = ?, cur_duration = ?, provider_duration = ?, is_vr = ?,
+                   updated_at = ? WHERE id = ?""",
                 (reason, scene.get("title") or "", provider, provider_scene_id, file.get("width"), file.get("height"),
-                 file.get("size"), mbps, _now(), existing["id"]))
+                 file.get("size"), mbps, file.get("duration"), provider_duration, None if is_vr is None else int(bool(is_vr)),
+                 _now(), existing["id"]))
             return existing["id"]
         cur = conn.execute(
             """INSERT INTO upgrade_candidate (scene_id, file_path, scene_title, provider, provider_scene_id, reason,
-                                             cur_width, cur_height, cur_size, cur_mbps)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                             cur_width, cur_height, cur_size, cur_mbps, cur_duration, provider_duration, is_vr)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (str(scene["id"]), file["path"], scene.get("title") or "", provider, provider_scene_id, reason,
-             file.get("width"), file.get("height"), file.get("size"), mbps))
+             file.get("width"), file.get("height"), file.get("size"), mbps, file.get("duration"), provider_duration,
+             None if is_vr is None else int(bool(is_vr))))
         return cur.lastrowid
 
 
@@ -187,11 +193,31 @@ def refresh_candidates(db, stash_client, get_setting, cutoff_resolution=None):
                     counts["below_cutoff"] += 1
     # 'wanted' rows that no longer qualify (file replaced, now fine, ...).
     with db.connect() as conn:
-        for r in conn.execute("SELECT id, scene_id, file_path FROM upgrade_candidate WHERE status = 'wanted'").fetchall():
+        for r in conn.execute("SELECT id, scene_id, file_path FROM upgrade_candidate WHERE status = 'wanted' "
+                              "AND reason NOT IN ('readd', 'duration')").fetchall():
             if (r["scene_id"], r["file_path"]) not in found:
                 conn.execute("DELETE FROM upgrade_candidate WHERE id = ?", (r["id"],))
     logger.info("upgrade candidates refreshed: %s", counts)
     return counts
+
+
+def add_manual_candidate(db, stash_client, stash_scene_id, reason, provider_duration=None):
+    """The user wants this library scene fetched again (reason 'readd' or 'duration'). The scene's primary file is the one a verified
+    download replaces (old file -> recycle bin, see on_upgrade_imported()). Returns the candidate id, or {"error"}."""
+    if reason not in MANUAL_REASONS:
+        return {"error": f"unknown reason {reason}"}
+    data = stash_client._graphql(
+        "query($ids: [Int!]) { findScenes(scene_ids: $ids) { scenes { id title tags { name } "
+        "files { path width height size duration } stash_ids { endpoint stash_id } } } }", {"ids": [int(stash_scene_id)]})
+    scenes = data["findScenes"]["scenes"]
+    if not scenes or not scenes[0].get("files"):
+        return {"error": "Stash has no file for this scene (any more)"}
+    scene = scenes[0]
+    provider, pid = _provider_ref(scene, stash_client)
+    if not pid:
+        return {"error": "the scene has no StashDB / ThePornDB id -- nothing to search by"}
+    is_vr = any(t.get("name") == vr_check.VR_TAG_NAME for t in scene.get("tags") or [])
+    return {"id": _upsert(db, scene, scene["files"][0], reason, provider, pid, provider_duration, is_vr)}
 
 
 # --- searching ------------------------------------------------------------------
@@ -203,8 +229,23 @@ def _rejected_titles(cand):
         return []
 
 
+def duration_size_ok(cand, size):
+    """Maintenance > Duration mismatch: is a release of this size plausibly the scene at the length the provider has? The file is
+    shorter than the scene (sample, cut): the release must be clearly bigger than the file and not wildly bigger than the file scaled
+    to the provider's length. File longer than the scene: the mirror image. No size / length known -> no (cannot be proven)."""
+    cur_size, cur_d, prov_d = cand.get("cur_size"), cand.get("cur_duration"), cand.get("provider_duration")
+    if not (size and cur_size and cur_d and prov_d):
+        return False
+    expected = cur_size * prov_d / cur_d
+    if prov_d > cur_d:
+        return size >= cur_size * 1.3 and size <= expected * 2.5
+    return size <= cur_size * 0.8 and size >= expected * 0.4
+
+
 def _better_filter(cand):
     reason, cur_h = cand["reason"], cand.get("cur_height") or 0
+    if reason == "readd":
+        return None  # the user asked for this scene again: whatever the normal search accepts (quality profile, blocklist, ...)
     from indexer_search import _review_identity
     rejected = {_review_identity(t) for t in _rejected_titles(cand)}
 
@@ -212,6 +253,8 @@ def _better_filter(cand):
         title = r.get("title") or ""
         if _review_identity(title) in rejected:
             return False  # the user rejected it for this file (Activity > Needs review)
+        if reason == "duration":
+            return duration_size_ok(cand, r.get("size"))
         if reason.startswith("vr_"):
             if _MONO_RE.search(title):
                 return False  # never "upgrade" to another monoscopic file
@@ -277,7 +320,7 @@ def search_one(db, cand_id, get_provider_client, search_source, quality_profile,
     detail = client.get_scene_detail(cand["provider_scene_id"]) if client else None
     if not detail:
         return {"error": f"{cand['provider']} doesn't know this scene (any more)"}
-    is_vr = cand["reason"].startswith("vr_")
+    is_vr = cand["reason"].startswith("vr_") or bool(cand.get("is_vr"))
     performers = [p["performer"]["name"] for p in detail.get("performers") or [] if (p.get("performer") or {}).get("name")]
     previous = None if dry_run else _prepare_release_rows(db, cand, detail, is_vr)
     try:
@@ -343,7 +386,7 @@ def _grab_picked(db, cand, get_provider_client, picked, category, message):
     detail = client.get_scene_detail(cand["provider_scene_id"]) if client else None
     if not detail:
         return {"error": f"{cand['provider']} doesn't know this scene (any more)"}
-    previous = _prepare_release_rows(db, cand, detail, cand["reason"].startswith("vr_"))
+    previous = _prepare_release_rows(db, cand, detail, cand["reason"].startswith("vr_") or bool(cand.get("is_vr")))
     history.scene("info", category, f"{message}: {picked.get('title')}",
                   cand["provider"], cand["provider_scene_id"], scene_title=cand["scene_title"])
     result = grab_candidate(db, cand["provider"], cand["provider_scene_id"], picked)
@@ -375,7 +418,8 @@ def due_candidates(db, limit, min_hours=24):
         rows = conn.execute(
             """SELECT id FROM upgrade_candidate WHERE status = 'wanted' AND provider_scene_id IS NOT NULL
                AND (last_search_at IS NULL OR last_search_at < ?)
-               ORDER BY CASE reason WHEN 'vr_2d' THEN 0 WHEN 'vr_mono' THEN 1 WHEN 'vr_low_quality' THEN 2 ELSE 3 END,
+               ORDER BY CASE reason WHEN 'readd' THEN -1 WHEN 'duration' THEN -1 WHEN 'vr_2d' THEN 0 WHEN 'vr_mono' THEN 1
+                                    WHEN 'vr_low_quality' THEN 2 ELSE 3 END,
                         last_search_at IS NOT NULL, last_search_at LIMIT ?""", (cutoff, int(limit))).fetchall()
     return [r["id"] for r in rows]
 

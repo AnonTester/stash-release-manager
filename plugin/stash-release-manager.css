@@ -2077,3 +2077,10 @@ a.srw-cal-pill-open { text-decoration: none; color: inherit; cursor: pointer; }
 .srw-search-card-link:hover .srw-search-card-title { text-decoration: underline; }
 .srw-search-tag-scenes { margin-top: 0.75rem; }
 a.srw-btn { text-decoration: none; display: inline-block; text-align: center; }
+
+/* Duration mismatch: a file shorter than the scene is the usual sample / cut case */
+.srw-duration-short { background: rgba(214, 158, 46, 0.25); }
+
+/* Yes / Cancel of an inline question stay together on one line; only the text wraps (v0.209.2) */
+.srw-inline-confirm-buttons { display: inline-flex; flex: 0 0 auto; flex-wrap: nowrap; align-items: center; gap: 0.4rem; white-space: nowrap; }
+.srw-cal-pill .srw-inline-confirm, .srw-search-card .srw-inline-confirm { row-gap: 0.3rem; }

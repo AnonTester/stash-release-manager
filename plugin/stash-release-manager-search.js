@@ -74,6 +74,7 @@
       onClick: () => { type = t.key === 'scenes' && type === 'tags' ? 'tags' : t.key; updateToggles(); },
     }));
 
+    const tagSelection = { provider: 'stashdb' }; // tag ids belong to one provider: switching it empties the selection
     function updateToggles() {
       providerButtons.forEach((btn, i) => btn.classList.toggle('srw-btn-primary', PROVIDERS[i].key === provider));
       typeButtons.forEach((btn, i) => {
@@ -85,6 +86,10 @@
       scenesModeBar.hidden = !(sceneMode && hasTagSearch(provider));
       byTitleBtn.classList.toggle('srw-btn-primary', type === 'scenes');
       byTagBtn.classList.toggle('srw-btn-primary', type === 'tags');
+      tagPanel.hidden = type !== 'tags';
+      tagSceneArea.hidden = type !== 'tags';
+      if (tagSelection.provider !== provider) { tagSelection.provider = provider; selectedTags = []; renderSelectedTags(); tagSceneArea.innerHTML = ''; resultsArea.innerHTML = ''; }
+      fillTagPresets('');
       termInput.placeholder = type === 'tags' ? 'Search for a tag…' : type === 'movies' ? 'Search movies by title…' : 'Search by name or title…';
     }
     const byTitleBtn = el('button', { className: 'srw-btn srw-btn-sm', textContent: 'By title', onClick: () => { type = 'scenes'; updateToggles(); } });
@@ -94,7 +99,6 @@
       type: 'search', placeholder: 'Search by name or title…', className: 'srw-search-input',
     });
     const resultsArea = el('div', { className: 'srw-search-results' });
-    updateToggles(); // after the term input exists (it sets the placeholder)
 
     // Paginated client-side over whatever this search already fetched
     // (up to 100 per search_${type}, see the client's own docstrings)
@@ -104,17 +108,19 @@
     let watchMode = 'favorites';
     let catalogOnWatch = 'off'; // Settings: off / ask / auto -- load the catalog of a newly watched StashDB entity
     window.SRW.runOp('settings_get_all')
-      .then((settings) => { if (settings && settings.watchlist_source) watchMode = settings.watchlist_source; if (settings && settings.catalog_on_watch) catalogOnWatch = settings.catalog_on_watch; })
+      .then((settings) => {
+        try { const parsed = JSON.parse((settings && settings.search_tag_presets) || '[]'); tagPresets = Array.isArray(parsed) ? parsed : []; } catch (e) { tagPresets = []; }
+        fillTagPresets('');
+        if (settings && settings.watchlist_source) watchMode = settings.watchlist_source; if (settings && settings.catalog_on_watch) catalogOnWatch = settings.catalog_on_watch;
+      })
       .catch(() => {});
     let currentResults = [];
     let currentTotal = null;
     let resultsPage = 1;
-    let tagScenesArea = null; // where renderResultsPage draws while a tag is open
 
     async function runSearch() {
       const term = termInput.value.trim();
       if (!term) { resultsArea.innerHTML = ''; return; }
-      tagScenesArea = null;
       resultsArea.innerHTML = '';
       resultsArea.appendChild(el('p', { className: 'srw-hint', textContent: 'Searching…' }));
       try {
@@ -139,7 +145,124 @@
         resultsArea.appendChild(el('p', { className: 'srw-hint', textContent: `Error: ${e.message}` }));
       }
     }
-    // "Tags": the term finds tags (buttons); a click on one lists its newest scenes below, as ordinary scene cards.
+    // "By tag" (v0.207.0, several tags at once + presets v0.210.0): the term finds tags (buttons); a click selects or deselects one. The
+    // scenes below carry ALL selected tags (newest first) and are reloaded on every change. A selection stays while searching further tags.
+    let selectedTags = []; // [{id, name, exclude}] of the current provider (exclude: scenes WITH this tag are left out; v0.211.0)
+    const included = () => selectedTags.filter((t) => !t.exclude);
+    const tagState = (id) => { const t = selectedTags.find((x) => x.id === id); return t ? (t.exclude ? 'exclude' : 'include') : ''; };
+    function styleTagPick(b) {
+      const st = tagState(b.dataset.tagId);
+      b.classList.toggle('srw-btn-primary', st === 'include');
+      b.classList.toggle('srw-btn-danger', st === 'exclude');
+      b.textContent = (st === 'exclude' ? '− ' : '') + b.dataset.tagName;
+    }
+    const restyleTagPicks = () => document.querySelectorAll('.srw-search-tag-pick').forEach(styleTagPick);
+    let tagPresets = []; // [{name, provider, tags: [{id, name}]}]
+    const tagSceneArea = el('div', { className: 'srw-search-tag-scenes' });
+    const selectedBar = el('span', { className: 'srw-filter-bar' });
+    const presetSelect = el('select', { className: 'srw-filter-preset-select' });
+    const presetDelete = el('button', { className: 'srw-btn srw-btn-sm', textContent: '×', title: 'Delete selected preset' });
+    const presetSave = el('button', { className: 'srw-btn srw-btn-sm', textContent: 'Save preset', title: 'Save the selected tags under a name' });
+    const tagPanel = el('div', { className: 'srw-search-tag-panel' }, [
+      el('div', { className: 'srw-filter-bar' }, [selectedBar, el('span', { className: 'srw-filter-presets' }, [presetSelect, presetDelete, presetSave])]),
+    ]);
+    const providerPresets = () => tagPresets.filter((p) => p.provider === provider);
+
+    function fillTagPresets(selectedName) {
+      const list = providerPresets();
+      presetSelect.innerHTML = '';
+      presetSelect.appendChild(el('option', { value: '', textContent: list.length ? 'Presets…' : 'No presets' }));
+      list.forEach((p) => presetSelect.appendChild(el('option', { value: p.name, textContent: p.name })));
+      presetSelect.value = selectedName || '';
+      presetDelete.disabled = !presetSelect.value;
+      presetSave.disabled = !selectedTags.length;
+    }
+    async function persistTagPresets(next, selectedName) {
+      const result = await window.SRW.runOp('settings_set', { key: 'search_tag_presets', value: JSON.stringify(next) });
+      if (result && result.error) { window.SRW.notify('Presets', `Saving presets failed: ${result.error}`, 'error'); return; }
+      tagPresets = next;
+      fillTagPresets(selectedName);
+    }
+    function renderSelectedTags() {
+      selectedBar.innerHTML = '';
+      if (!selectedTags.length) {
+        selectedBar.appendChild(el('span', { className: 'srw-hint', textContent: 'No tag selected — search for tags and click them: once = must have it, twice = must not have it.' }));
+      } else {
+        selectedTags.forEach((t) => selectedBar.appendChild(el('span', { className: 'srw-view-toggle' }, [
+          el('button', {
+            className: `srw-btn srw-btn-sm ${t.exclude ? 'srw-btn-danger' : 'srw-btn-primary'}`, textContent: `${t.exclude ? '− ' : ''}${t.name}`,
+            title: t.exclude ? 'Scenes with this tag are left out — click to require it instead' : 'Scenes must have this tag — click to leave out scenes with it instead',
+            onClick: () => { t.exclude = !t.exclude; tagSelectionChanged(); },
+          }),
+          el('button', { className: 'srw-btn srw-btn-sm', textContent: '×', title: 'Remove this tag',
+            onClick: () => { selectedTags = selectedTags.filter((x) => x.id !== t.id); tagSelectionChanged(); } }),
+        ])));
+        selectedBar.appendChild(el('button', { className: 'srw-btn srw-btn-sm', textContent: 'Clear', onClick: () => { selectedTags = []; tagSelectionChanged(); } }));
+      }
+      presetSave.disabled = !selectedTags.length;
+    }
+    let tagLoadSeq = 0;
+    async function loadTagScenes() {
+      const seq = ++tagLoadSeq; // a slow answer of an earlier selection must not overwrite a newer one
+      tagSceneArea.innerHTML = '';
+      if (!included().length) {
+        currentResults = [];
+        if (selectedTags.length) tagSceneArea.appendChild(el('p', { className: 'srw-hint', textContent: 'Select at least one tag a scene must have — excluded tags alone cannot be searched.' }));
+        return;
+      }
+      const without = selectedTags.filter((t) => t.exclude);
+      tagSceneArea.appendChild(el('p', { className: 'srw-hint', textContent: `Loading scenes tagged ${included().map((t) => `"${t.name}"`).join(' + ')}${without.length ? ` without ${without.map((t) => `"${t.name}"`).join(', ')}` : ''}…` }));
+      try {
+        const r = await window.SRW.runOp('search_scenes_by_tag', { provider, tag_ids: included().map((t) => t.id), exclude_ids: selectedTags.filter((t) => t.exclude).map((t) => t.id) });
+        if (seq !== tagLoadSeq) return;
+        if (r && r.error) { tagSceneArea.innerHTML = ''; tagSceneArea.appendChild(el('p', { className: 'srw-hint', textContent: `Error: ${r.error}` })); return; }
+        renderResults(Array.isArray(r.results) ? r.results : [], r.total); // the shared result state and paging, drawn into tagSceneArea
+      } catch (e) {
+        if (seq !== tagLoadSeq) return;
+        tagSceneArea.innerHTML = ''; tagSceneArea.appendChild(el('p', { className: 'srw-hint', textContent: `Error: ${e.message}` }));
+      }
+    }
+    function tagSelectionChanged() {
+      renderSelectedTags();
+    updateToggles(); // after the term input and the tag panel exist (it sets the placeholder and shows/hides the panel)
+      restyleTagPicks();
+      fillTagPresets('');
+      loadTagScenes();
+    }
+    presetSelect.addEventListener('change', () => {
+      presetDelete.disabled = !presetSelect.value;
+      const preset = providerPresets().find((p) => p.name === presetSelect.value);
+      if (preset) { selectedTags = preset.tags.map((t) => ({ id: t.id, name: t.name, exclude: !!t.exclude })); renderSelectedTags(); restyleTagPicks(); loadTagScenes(); }
+    });
+    presetDelete.addEventListener('click', () => {
+      const name = presetSelect.value;
+      if (!name) return;
+      window.SRW.confirmInline(presetDelete, `Delete preset "${name}"?`,
+        () => persistTagPresets(tagPresets.filter((p) => !(p.provider === provider && p.name === name)), ''), { danger: true });
+    });
+    presetSave.addEventListener('click', () => {
+      presetSave.style.display = 'none';
+      const nameInput = el('input', { type: 'text', placeholder: 'Preset name', value: presetSelect.value, className: 'srw-filter-preset-name' });
+      const close = () => { form.remove(); presetSave.style.display = ''; };
+      const doSave = async () => {
+        const name = nameInput.value.trim();
+        if (!name || !selectedTags.length) return;
+        const next = tagPresets.filter((p) => !(p.provider === provider && p.name === name));
+        next.push({ name, provider, tags: selectedTags.map((t) => ({ id: t.id, name: t.name, exclude: !!t.exclude })) });
+        next.sort((a, b) => a.name.localeCompare(b.name));
+        await persistTagPresets(next, name);
+        close();
+      };
+      nameInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') doSave(); if (e.key === 'Escape') close(); });
+      const form = el('span', { className: 'srw-inline-confirm' }, [
+        nameInput,
+        el('button', { className: 'srw-btn srw-btn-sm srw-btn-primary', textContent: 'Save', onClick: doSave }),
+        el('button', { className: 'srw-btn srw-btn-sm', textContent: 'Cancel', onClick: close }),
+      ]);
+      presetSave.after(form);
+      nameInput.focus();
+    });
+
     async function runTagSearch(term) {
       const response = await window.SRW.runOp('search_tags', { provider, term });
       resultsArea.innerHTML = '';
@@ -149,25 +272,21 @@
       }
       const tags = Array.isArray(response.results) ? response.results : [];
       if (!tags.length) { resultsArea.appendChild(el('p', { className: 'srw-hint', textContent: 'No tags found.' })); return; }
-      const sceneArea = el('div', { className: 'srw-search-tag-scenes' });
       const tagButtons = tags.map((t) => el('button', {
-        className: 'srw-btn srw-btn-sm', textContent: t.name, title: t.description || '',
-        onClick: async () => {
-          tagButtons.forEach((b) => b.classList.toggle('srw-btn-primary', b === tagButtons[tags.indexOf(t)]));
-          sceneArea.innerHTML = '';
-          sceneArea.appendChild(el('p', { className: 'srw-hint', textContent: `Loading scenes tagged "${t.name}"…` }));
-          try {
-            const r = await window.SRW.runOp('search_scenes_by_tag', { provider, tag_id: t.id });
-            if (r && r.error) { sceneArea.innerHTML = ''; sceneArea.appendChild(el('p', { className: 'srw-hint', textContent: `Error: ${r.error}` })); return; }
-            // Same paging and cards as a scene search: the shared result state, drawn into the area below the tags.
-            tagScenesArea = sceneArea;
-            renderResults(Array.isArray(r.results) ? r.results : [], r.total);
-          } catch (e) { sceneArea.innerHTML = ''; sceneArea.appendChild(el('p', { className: 'srw-hint', textContent: `Error: ${e.message}` })); }
+        className: 'srw-btn srw-btn-sm srw-search-tag-pick',
+        textContent: t.name, title: t.description || '', 'data-tag-id': t.id, 'data-tag-name': t.name,
+        onClick: () => {
+          // off -> must have -> must not have -> off
+          const st = tagState(t.id);
+          if (!st) selectedTags = [...selectedTags, { id: t.id, name: t.name, exclude: false }];
+          else if (st === 'include') selectedTags.find((x) => x.id === t.id).exclude = true;
+          else selectedTags = selectedTags.filter((x) => x.id !== t.id);
+          tagSelectionChanged();
         },
       }));
-      resultsArea.appendChild(el('p', { className: 'srw-hint', textContent: `${tags.length}${response.total > tags.length ? ` of ${response.total}` : ''} tag(s) — pick one to list its newest scenes.` }));
+      resultsArea.appendChild(el('p', { className: 'srw-hint', textContent: `${tags.length}${response.total > tags.length ? ` of ${response.total}` : ''} tag(s) — click once = must have the tag, twice = must not have it, three times = off.` }));
+      tagButtons.forEach(styleTagPick);
       resultsArea.appendChild(el('div', { className: 'srw-filter-bar' }, tagButtons));
-      resultsArea.appendChild(sceneArea);
     }
     termInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') runSearch(); });
 
@@ -180,7 +299,10 @@
       termInput,
       el('button', { className: 'srw-btn srw-btn-primary', textContent: 'Search', onClick: runSearch }),
     ]));
+    container.appendChild(tagPanel);
     container.appendChild(resultsArea);
+    container.appendChild(tagSceneArea);
+    renderSelectedTags();
 
     function renderResults(results, total) {
       currentResults = results;
@@ -199,7 +321,7 @@
     }
 
     function renderResultsPage() {
-      const out = type === 'tags' && tagScenesArea ? tagScenesArea : resultsArea; // under the tag buttons while a tag is open
+      const out = type === 'tags' ? tagSceneArea : resultsArea; // below the tag selection in tag mode
       out.innerHTML = '';
       if (!currentResults.length) {
         out.appendChild(el('p', { className: 'srw-hint', textContent: 'No results.' }));
@@ -214,7 +336,7 @@
         out.appendChild(el('p', {
           className: 'srw-callout',
           textContent: type === 'tags'
-            ? `Showing the newest ${currentResults.length} of ${currentTotal} scenes with this tag.`
+            ? `Showing the newest ${currentResults.length} of ${currentTotal} scenes with ${included().length > 1 ? 'these tags' : 'this tag'}.`
             : `Showing ${currentResults.length} of ${currentTotal} matches — try a more specific `
               + 'search term to find one further down the list (this provider doesn’t rank results by '
               + 'relevance to your search).',
@@ -352,9 +474,11 @@
 
     function buildSceneCard(scene) {
       const card = el('div', { className: 'srw-search-card' });
-      card.appendChild(linked(cardImage(scene.image_url, true), scene.source_url)); // scenes are landscape (3/2), people and studios portrait (2/3)
+      const imageLink = linked(cardImage(scene.image_url, true), scene.source_url); // scenes are landscape (3/2), people and studios portrait (2/3)
+      card.appendChild(imageLink);
       const badge = el('span', { className: 'srw-search-card-badge' });
-      card.appendChild(linked(el('div', { className: 'srw-search-card-title', textContent: scene.title || '(untitled)' }), scene.source_url));
+      const titleLink = linked(el('div', { className: 'srw-search-card-title', textContent: scene.title || '(untitled)' }), scene.source_url);
+      card.appendChild(titleLink);
       const meta = [(scene.studio || {}).name, scene.date].filter(Boolean).join(' · ');
       if (meta) card.appendChild(el('p', { className: 'srw-hint', textContent: meta }));
       const performerNames = (scene.performers || []).map((p) => p.name).join(', ');
@@ -394,6 +518,13 @@
       function setState(next) {
         state = next;
         Object.keys(STATE_LABEL).forEach((k) => card.classList.toggle(`srw-search-card-state-${k}`, k === state));
+        // A scene Stash has: image and title open it in your Stash (otherwise the provider's page).
+        [imageLink, titleLink].forEach((a) => {
+          if (!a || a.tagName !== 'A') return;
+          const own = state === 'in_library' && scene.stash_scene_id;
+          a.href = own ? `/scenes/${scene.stash_scene_id}` : (scene.source_url || a.href);
+          a.title = own ? 'Open the scene in your Stash' : 'Open on the provider’s website';
+        });
         badge.textContent = state ? STATE_LABEL[state] : '';
         badge.hidden = !state;
         const buttons = [];
@@ -414,9 +545,21 @@
               setState('dismissed');
             }));
         } else if (state === 'in_library' && scene.stash_scene_id) {
-          // /scenes/<id> is the local Stash (the page has <base href="/">), a new tab like the provider link
-          buttons.push(el('a', { className: 'srw-btn', href: `/scenes/${scene.stash_scene_id}`, target: '_blank', rel: 'noopener noreferrer',
-            textContent: 'Open in Stash', title: 'The scene in your Stash library' }));
+          // Fetch it again although a file exists (a sample, a cut or a wrong file): v0.209.0. The old file is replaced after a verified download.
+          const readd = async (search) => {
+            status.textContent = search ? ' re-adding and searching...' : ' re-adding...';
+            try {
+              const r = await window.SRW.runOp('search_readd_scene', { provider, scene, ...(search ? {} : { search: false }) });
+              if (r.error) { status.textContent = ` error: ${r.error}`; return; }
+              window.SRW.notifyReadd(title, r);
+              status.textContent = r.grabbed ? ' grabbed' : ' on the upgrade list';
+            } catch (err) { status.textContent = ` error: ${err.message}`; }
+          };
+          const readdText = `Fetch “${title}” again although Stash has a file? A verified download replaces that file; the old one goes to the recycle bin.`;
+          buttons.push(
+            confirmed('Re-add', '', 'Put it on the upgrade list although a file exists -- the scheduled search finds a new one',
+              `${readdText} It is searched by the schedule, not right now.`, () => readd(false)),
+            confirmed('Re-add + search', '', 'The same, and search the indexers right now', readdText, () => readd(true)));
         } else if (state === 'dismissed') {
           buttons.push(button('Restore', '', 'Back to the releases list; Add puts it on the wishlist again', async () => {
             status.textContent = ' restoring...';

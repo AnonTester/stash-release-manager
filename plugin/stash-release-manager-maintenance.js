@@ -37,6 +37,7 @@
     { key: 'performers', group: 'check', icon: 'faUserSlash', label: 'Performers without scenes', build: (c) => c.appendChild(buildPerformersArea()) },
     { key: 'unidentified', group: 'check', icon: 'faCircleQuestion', label: 'Unidentified scenes', build: (c) => c.appendChild(buildUnidentifiedArea()) },
     { key: 'vr-check', group: 'check', icon: 'faVrCardboard', label: 'VR: 2D / mono files', build: (c) => c.appendChild(flatten(buildVrCheckSection())) },
+    { key: 'duration', group: 'check', icon: 'faStopwatch', label: 'Duration mismatch', build: (c) => c.appendChild(buildDurationArea()) },
     { key: 'unknown-quality', group: 'check', icon: 'faQuestion', label: 'Unknown quality', build: (c) => { c.appendChild(window.SRW.el('p', { className: 'srw-hint', textContent: unknownQualityReason })); c.appendChild(buildUnknownQualitySection()); } },
     { key: 'review', group: 'resolve', icon: 'faFingerprint', label: 'Review: Identify Scene', build: (c) => buildReviewArea(c) },
     { key: 'compare', group: 'resolve', icon: 'faCodeCompare', label: 'Compare scenes', build: (c) => { c.appendChild(buildSenseNotice()); c.appendChild(flatten(buildCompareSection('compare'))); } },
@@ -919,7 +920,105 @@
     vr_mono: ['mono → stereo', 'monoscopic 360°/180° VR, should become stereoscopic'],
     vr_low_quality: ['VR quality', 'VR below 4K or below the minimum bitrate'],
     below_cutoff: ['below cutoff', 'below the quality profile\'s cutoff resolution'],
+    readd: ['re-added', 'you asked for this scene again (Search page: Re-add)'],
+    duration: ['wrong length', 'the file is clearly shorter or longer than the provider\'s length (Duration mismatch)'],
   };
+
+  // Duration mismatch (v0.209.0, api/duration_check.py): library scenes whose file is clearly shorter / longer than the provider says.
+  function buildDurationArea() {
+    const { el, confirmInline, notify } = window.SRW;
+    let findings = [];
+    let direction = '';
+    let threshold = 5;
+    let showIgnored = false;
+    const status = el('span', { className: 'srw-key-status' });
+    const summary = el('div', { className: 'srw-hint' });
+    const fmt = (sec) => { const m = Math.round(sec / 60 * 10) / 10; return `${m} min`; };
+    const view = window.SRW.buildFilteredPagedList({
+      filters: ['search'], perPage: 50, emptyText: 'No scene deviates from the provider\'s length by more than the threshold.',
+      fetchPage: window.SRW.localPageFetcher(() => findings, { text: (x) => `${x.scene_title} ${x.file_path}` }),
+      renderItems: (page) => el('ul', { className: 'srw-release-list' }, page.map((x) => {
+        const rowStatus = el('span', { className: 'srw-key-status' });
+        const pct = Math.round(Math.abs(x.deviation) * 100);
+        const shorter = x.deviation < 0;
+        const providerUrl = window.SRW.sceneUrl(x.provider, x.provider_scene_id);
+        const busy = x.upgrade_status ? ` (${x.upgrade_status === 'wanted' ? 'queued for a better file' : x.upgrade_status})` : '';
+        const run = async (search) => {
+          rowStatus.textContent = search ? ' re-adding and searching...' : ' re-adding...';
+          const res = await window.SRW.runOp('duration_check_readd', { scene_id: x.scene_id, search });
+          if (res.error) { rowStatus.textContent = ` error: ${res.error}`; return; }
+          window.SRW.notifyReadd(x.scene_title, res);
+          rowStatus.textContent = '';
+          x.upgrade_status = res.grabbed ? 'grabbed' : 'wanted';
+          view.reload();
+        };
+        const ignoreBtn = el('button', { className: 'srw-btn srw-btn-sm', textContent: x.status === 'ignored' ? 'Show again' : 'Ignore',
+          title: x.status === 'ignored' ? 'Put it back on the list' : 'The length is right (or does not matter): take it off the list',
+          onClick: async () => {
+            const res = await window.SRW.runOp('duration_check_ignore', { scene_id: x.scene_id, restore: x.status === 'ignored' });
+            if (res.error) { rowStatus.textContent = ` error: ${res.error}`; return; }
+            findings = findings.filter((f) => f.scene_id !== x.scene_id); view.reset(); updateSummary();
+          } });
+        return el('li', { className: 'srw-release-item' }, [
+          el('span', { className: 'srw-release-title', textContent: x.scene_title || x.file_path }),
+          el('span', { className: `srw-history-category${shorter ? ' srw-duration-short' : ''}`,
+            textContent: `${shorter ? 'file shorter' : 'file longer'} by ${pct} %` }),
+          el('span', { className: 'srw-release-date', textContent: `file ${fmt(x.file_sec)} · ${window.SRW.providerLabel(x.provider)} ${fmt(x.provider_sec)}${busy}` }),
+          el('div', { className: 'srw-hint', textContent: x.file_path }),
+          window.SRW.buildStashLink('scene', x.scene_id, 'Play in Stash'),
+          el('a', { className: 'srw-btn srw-btn-sm', href: providerUrl, target: '_blank', rel: 'noopener noreferrer', textContent: 'Provider page ↗' }),
+          x.upgrade_status === 'wanted' || x.upgrade_status === 'grabbed' ? null : el('button', { className: 'srw-btn srw-btn-sm', textContent: 'Re-add',
+            title: 'Put it on the upgrade list: the scheduled search looks for a release of the right length; a verified download replaces this file (the old one goes to the recycle bin)',
+            onClick: (e) => confirmInline(e.currentTarget, `Re-add “${x.scene_title}”? A release of the right length replaces this file after a verified download; the old file goes to the recycle bin. It is searched by the schedule, not right now.`, () => run(false)) }),
+          x.upgrade_status === 'wanted' || x.upgrade_status === 'grabbed' ? null : el('button', { className: 'srw-btn srw-btn-sm srw-btn-primary', textContent: 'Re-add + search',
+            title: 'The same, and ask the indexers right now',
+            onClick: (e) => confirmInline(e.currentTarget, `Re-add “${x.scene_title}” and search now? A release of the right length replaces this file after a verified download; the old file goes to the recycle bin.`, () => run(true)) }),
+          ignoreBtn, rowStatus,
+        ]);
+      })),
+    });
+    const dirSel = el('select', { onChange: (e) => { direction = e.target.value; load(); } },
+      [['', 'file shorter or longer'], ['shorter', 'file shorter (samples, cut files)'], ['longer', 'file longer']].map(([v, t]) => el('option', { value: v, textContent: t })));
+    const thrInput = el('input', { type: 'number', min: '1', max: '90', value: String(threshold), className: 'srw-input-narrow',
+      title: 'Deviation in percent', onChange: (e) => { threshold = Math.max(1, Math.min(90, Number(e.target.value) || 5)); load(); } });
+    const ignoredBox = el('input', { type: 'checkbox', onChange: (e) => { showIgnored = e.target.checked; load(); } });
+    const runBtn = el('button', { className: 'srw-btn srw-btn-primary', textContent: 'Run check',
+      title: 'Compares the length of every library file with the provider\'s length (StashDB / ThePornDB). The first run asks the providers about every scene and takes a while; later runs only ask about new ones.' });
+    function updateSummary(job, total) {
+      const j = job || {};
+      const running = j.running ? ` — running: ${j.phase || ''} ${j.done || 0}/${j.total || 0}${j.errors ? `, ${j.errors} lookup error(s)` : ''}` : '';
+      summary.textContent = `${findings.length} scene(s) over ${threshold} %${total ? ` — ${total.with_provider_length} of ${total.checked} checked scenes have a provider length` : ''}`
+        + (total && total.last_checked ? ` (last answer ${total.last_checked} UTC)` : '') + running;
+    }
+    async function load() {
+      const [f, st] = await Promise.all([
+        window.SRW.runOp('duration_check_findings', { threshold, direction, ignored: showIgnored }),
+        window.SRW.runOp('duration_check_status'),
+      ]);
+      if (f.error) { status.textContent = ` error: ${f.error}`; return; }
+      findings = f.findings || [];
+      view.reset(); updateSummary(st.job, st.error ? null : st);
+      return st.job && st.job.running;
+    }
+    let timer = null;
+    async function poll() {
+      clearTimeout(timer);
+      const running = await load();
+      runBtn.disabled = Boolean(running);
+      if (running) timer = setTimeout(poll, 4000);
+    }
+    runBtn.addEventListener('click', async () => {
+      const r = await window.SRW.runOp('duration_check_run', {});
+      status.textContent = r.error ? ` error: ${r.error}` : (r.skipped ? ` ${r.reason}` : ' started');
+      poll();
+    });
+    poll();
+    return el('div', {}, [
+      el('p', { className: 'srw-hint', textContent: 'Library scenes whose file is clearly shorter or longer than the length the provider has — samples, cut or broken downloads. Scenes the provider has no length for are not checked. “Re-add” puts the scene on the upgrade list: a release of about the right length replaces the file (the old one goes to the recycle bin).' }),
+      el('div', { className: 'srw-toolbar' }, [runBtn, dirSel, el('label', {}, ['deviation over ', thrInput, ' %']), el('label', {}, [ignoredBox, ' show ignored']), status]),
+      summary, view.node,
+    ]);
+  }
 
   function buildOrganizeSection() {
     const { el, confirmInline } = window.SRW;

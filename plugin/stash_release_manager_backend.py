@@ -414,6 +414,23 @@ def main():
     elif mode == "vr_check_run":
         qs = f"?mode={args.get('mode', 'quick')}" + ("&force=true" if args.get("force") else "")
         result = _post(sidecar_url, f"/maintenance/vr-check/run{qs}", {}, timeout=30)
+    elif mode == "duration_check_run":
+        result = _post(sidecar_url, "/maintenance/duration-check/run" + ("?force=true" if args.get("force") else ""), {}, timeout=30)
+    elif mode == "duration_check_status":
+        result = _get(sidecar_url, "/maintenance/duration-check/status", timeout=15)
+    elif mode == "duration_check_findings":
+        result = _get(sidecar_url, f"/maintenance/duration-check/findings?threshold={float(args.get('threshold') or 5)}"
+                                   f"&direction={quote(str(args.get('direction') or ''))}&ignored={'true' if args.get('ignored') else 'false'}", timeout=60)
+    elif mode == "duration_check_ignore":
+        result = _post(sidecar_url, f"/maintenance/duration-check/{quote(str(args.get('scene_id')), safe='')}/ignore"
+                                    + ("?restore=true" if args.get("restore") else ""), {}, timeout=15)
+    elif mode == "duration_check_readd":
+        # Creates the upgrade candidate and, with search, runs one real indexer search (the sidecar answers after 20 s at the latest).
+        result = _post(sidecar_url, f"/maintenance/duration-check/{quote(str(args.get('scene_id')), safe='')}/readd"
+                                    + ("" if args.get("search", True) else "?search=false"), {}, timeout=90)
+    elif mode == "search_readd_scene":
+        result = _post(sidecar_url, f"/search/{args.get('provider')}/scenes/readd" + ("" if args.get("search", True) else "?search=false"),
+                       args.get("scene") or {}, timeout=90)
     elif mode == "vr_check_status":
         result = _get(sidecar_url, "/maintenance/vr-check/status", timeout=15)
     elif mode == "vr_check_findings":
@@ -630,7 +647,7 @@ def main():
     elif mode == "search_tags":
         result = _get(sidecar_url, f"/search/{args.get('provider')}/tags?term={quote(args.get('term', ''))}", timeout=60)
     elif mode == "search_scenes_by_tag":
-        result = _get(sidecar_url, f"/search/{args.get('provider')}/scenes-by-tag?tag_id={quote(str(args.get('tag_id', '')), safe='')}", timeout=60)
+        result = _get(sidecar_url, f"/search/{args.get('provider')}/scenes-by-tag?tag_ids={quote(','.join(str(t) for t in (args.get('tag_ids') or [args.get('tag_id', '')])), safe=',')}&exclude_ids={quote(','.join(str(t) for t in (args.get('exclude_ids') or [])), safe=',')}", timeout=120)
     elif mode == "search_favorite_performer":
         path = f"/search/{args.get('provider')}/performers/{quote(args.get('stashdb_id'), safe='')}/favorite"
         result = _post(sidecar_url, path, {"name": args.get("name", "")}, timeout=20)

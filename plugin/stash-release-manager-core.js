@@ -467,30 +467,33 @@
         className: `srw-inline-confirm-text${shortenQuoted(message).length > 110 ? ' srw-inline-confirm-long' : ''}`,
         textContent: shortenQuoted(message), title: String(message),
       }),
-      el('button', {
-        className: `srw-btn srw-btn-sm ${danger ? 'srw-btn-danger' : 'srw-btn-primary'}`,
-        textContent: 'Yes',
-        // Always restores triggerButton's visibility once onConfirm()
-        // settles, success or failure -- harmless when the caller's own
-        // success path rebuilds/discards the whole surrounding list
-        // anyway (the usual case here), but matters when it doesn't:
-        // without this, a failed action (network error, a server-side
-        // `result.error`) would leave the trigger permanently hidden
-        // with the prompt already gone and no way to retry.
-        onClick: async () => {
-          prompt.remove();
-          try {
-            await onConfirm();
-          } finally {
-            triggerButton.style.display = '';
-          }
-        },
-      }),
-      el('button', {
-        className: 'srw-btn srw-btn-sm',
-        textContent: 'Cancel',
-        onClick: () => { prompt.remove(); triggerButton.style.display = ''; },
-      }),
+      // Yes and Cancel are one unit: when the question does not fit, the TEXT wraps and the two buttons stay on one line (v0.209.2).
+      el('span', { className: 'srw-inline-confirm-buttons' }, [
+        el('button', {
+          className: `srw-btn srw-btn-sm ${danger ? 'srw-btn-danger' : 'srw-btn-primary'}`,
+          textContent: 'Yes',
+          // Always restores triggerButton's visibility once onConfirm()
+          // settles, success or failure -- harmless when the caller's own
+          // success path rebuilds/discards the whole surrounding list
+          // anyway (the usual case here), but matters when it doesn't:
+          // without this, a failed action (network error, a server-side
+          // `result.error`) would leave the trigger permanently hidden
+          // with the prompt already gone and no way to retry.
+          onClick: async () => {
+            prompt.remove();
+            try {
+              await onConfirm();
+            } finally {
+              triggerButton.style.display = '';
+            }
+          },
+        }),
+        el('button', {
+          className: 'srw-btn srw-btn-sm',
+          textContent: 'Cancel',
+          onClick: () => { prompt.remove(); triggerButton.style.display = ''; },
+        }),
+      ]),
     ]);
     triggerButton.after(prompt);
   }
@@ -961,6 +964,13 @@
     return card;
   }
 
+  // runOp('releases_dismiss') that never throws: a failed request (HTTP/GraphQL error, timeout) comes back as {error}, so the caller
+  // shows "Dismiss failed" instead of an unhandled rejection that leaves the user guessing whether anything was saved.
+  async function dismissRelease(release) {
+    try { return await runOp('releases_dismiss', { provider: release.provider, scene_stashdb_id: release.scene_stashdb_id }); }
+    catch (e) { return { error: e.message || String(e) }; }
+  }
+
   // The Undo card for a release dismiss. `result` is the dismiss op's answer ({previous: rows as they were, or {error}}).
   function releaseDismissedNotice(release, result, onChange) {
     if (result && result.error) { notify('Dismiss', `Dismiss failed: ${result.error}`, 'error'); return false; }
@@ -976,6 +986,22 @@
 
   // Standard notification for an "Add to Wishlist" result (the handoff
   // endpoints' {already_sent, grabbed, search_result} shape).
+  // "Re-add" of a scene Stash already has (Search page, Maintenance > Duration mismatch): the answer of readd_library_scene().
+  function notifyReadd(sceneTitle, result) {
+    const name = sceneTitle || 'Scene';
+    if (result.search_error) {
+      notify(`Re-added: ${name}`, `Queued for the scheduled upgrade search. The search just now failed: ${result.search_error}`, 'warning');
+    } else if (result.grabbed) {
+      notify(`Grabbed: ${name}`, `${result.grabbed.title} (${result.grabbed.indexer || 'indexer'}) -- a verified download replaces the old file.`, 'success');
+    } else if (result.search_running) {
+      notify(`Re-added: ${name}`, 'The search takes a while (slow indexer) and goes on in the background -- see Activity and History.', 'success');
+    } else if (result.search_result) {
+      notify(`Re-added: ${name}`, `Nothing taken yet (${searchStatusLabel(null, result.search_result)}). It stays on the upgrade list and is searched again by the schedule.`, 'info');
+    } else {
+      notify(`Re-added: ${name}`, 'On the upgrade list; the scheduled search looks for it (Maintenance > Upgrade wanted).', 'success');
+    }
+  }
+
   function notifyHandoff(sceneTitle, result) {
     const name = sceneTitle || 'Scene';
     if (result.already_in_library) {
@@ -2135,8 +2161,8 @@
     getRoute, onNavigate, initNavigationWatcher,
     el, waitForElement, entityIcon, buildPageHeader,
     searchStatusLabel, confirmInline, buildManagedList, buildSearchActions, whenNoOpenPanel, buildManualSearch, getSearchCapabilities,
-    rememberOpen, icon, mismatchWarning, buildPagedList, buildPager, releaseTitleNode, notify, dismissedNotice, releaseDismissedNotice, notifyHandoff, buildAddOnlyButton,
-    sceneUrl, loadMetadataProviderUrls, loadProviders, resetProviders, providerInfo, providerLabel, providerKeys, providerOn, providersAllOn, providersSelected, isLateAdditionNew, buildLateAdditionBadge,
+    rememberOpen, icon, mismatchWarning, buildPagedList, buildPager, releaseTitleNode, notify, dismissedNotice, releaseDismissedNotice, dismissRelease, notifyHandoff, buildAddOnlyButton,
+    sceneUrl, notifyReadd, loadMetadataProviderUrls, loadProviders, resetProviders, providerInfo, providerLabel, providerKeys, providerOn, providersAllOn, providersSelected, isLateAdditionNew, buildLateAdditionBadge,
     buildFilteredPagedList, buildSafetyPanel, ignoreRenamers, pairingOptionsFor, castOptionsFor, buildPairingBadge, localPageFetcher, releaseQueryArgs, filterLocally, isFilterActive,
     describeProgress, applyProgress, attachLive, buildLiveHint,
     buildEntityIcons, buildLocalEntityLink, buildReleaseThumb, buildStudioContext, groupByScene,
