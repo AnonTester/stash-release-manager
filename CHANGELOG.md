@@ -6,6 +6,9 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.211.3
+- Requests to Prowlarr wait up to 30 seconds (was 15), so one slow indexer no longer makes every search time out.
+
 ## 0.211.2
 - A scene you already dismissed stays dismissed when another watched entry (performer, studio, parent studio) reports it later; before, it could show up in the Calendar again.
 

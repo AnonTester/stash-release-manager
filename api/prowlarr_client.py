@@ -16,7 +16,7 @@ import requests
 
 
 class ProwlarrClient:
-    def __init__(self, url, api_key, timeout=15):
+    def __init__(self, url, api_key, timeout=30):
         self.base = f"{url.rstrip('/')}/api/v1"
         self.session = requests.Session()
         self.session.headers["X-Api-Key"] = api_key
