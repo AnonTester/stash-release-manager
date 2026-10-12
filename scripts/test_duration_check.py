@@ -21,6 +21,8 @@ def check(name, cond):
 
 check("deviation: 40 % shorter", abs(duration_check.deviation(600, 1000) + 0.4) < 1e-9)
 check("deviation: missing length -> None", duration_check.deviation(None, 1000) is None and duration_check.deviation(600, 0) is None)
+check("deviation: a provider length under 10 s is no length", duration_check.deviation(1782, 1) is None and duration_check.deviation(600, 9.9) is None
+      and duration_check.deviation(600, 10) is not None)
 
 db = Db()
 rows = [("1", 600, 1000), ("2", 1020, 1000), ("3", 1049, 1000), ("4", 1051, 1000), ("5", 1500, 1000), ("6", 900, None), ("7", 949, 1000)]
@@ -31,6 +33,10 @@ check("5 % threshold: 4 (5.1 %), 5, 1, 7 (5.1 % shorter); 3 (4.9 %) and 2 stay o
 check("biggest deviation first (scene 5: 50 %, then scene 1: 40 %)", ids(threshold_pct=5)[:2] == ["5", "1"])
 check("direction shorter", sorted(ids(threshold_pct=5, direction="shorter")) == ["1", "7"])
 check("direction longer", sorted(ids(threshold_pct=5, direction="longer")) == ["4", "5"])
+db.c.execute("INSERT INTO duration_check (scene_id, file_path, provider, provider_scene_id, file_sec, provider_sec) VALUES ('8', 'p', 'stashdb', 'x', 1782, 0.6)")
+db.c.execute("INSERT INTO duration_check (scene_id, file_path, provider, provider_scene_id, file_sec, provider_sec) VALUES ('9', 'p', 'stashdb', 'x', 1782, 9)")
+check("a provider length under 10 s is not listed (file 1782 s vs 0.6 s / 9 s)", "8" not in ids(threshold_pct=5) and "9" not in ids(threshold_pct=5))
+check("... and does not count as 'has a provider length'", duration_check.summary(db)["with_provider_length"] == 6)
 duration_check.set_status(db, "1", "ignored")
 check("ignored rows are left out, unless asked for", "1" not in ids(threshold_pct=5) and "1" in ids(threshold_pct=5, include_ignored=True))
 

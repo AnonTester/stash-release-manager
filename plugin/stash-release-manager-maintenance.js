@@ -933,7 +933,14 @@
     let showIgnored = false;
     const status = el('span', { className: 'srw-key-status' });
     const summary = el('div', { className: 'srw-hint' });
-    const fmt = (sec) => { const m = Math.round(sec / 60 * 10) / 10; return `${m} min`; };
+    // [h:]mm:ss
+    const fmt = (sec) => {
+      const t = Math.round(sec || 0);
+      const h = Math.floor(t / 3600);
+      const mm = String(Math.floor((t % 3600) / 60)).padStart(2, '0');
+      const ss = String(t % 60).padStart(2, '0');
+      return h ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
+    };
     const view = window.SRW.buildFilteredPagedList({
       filters: ['search'], perPage: 50, emptyText: 'No scene deviates from the provider\'s length by more than the threshold.',
       fetchPage: window.SRW.localPageFetcher(() => findings, { text: (x) => `${x.scene_title} ${x.file_path}` }),
@@ -962,7 +969,7 @@
         return el('li', { className: 'srw-release-item' }, [
           el('span', { className: 'srw-release-title', textContent: x.scene_title || x.file_path }),
           el('span', { className: `srw-history-category${shorter ? ' srw-duration-short' : ''}`,
-            textContent: `${shorter ? 'file shorter' : 'file longer'} by ${pct} %` }),
+            textContent: `${shorter ? 'file shorter' : 'file longer'} by ${fmt(Math.abs(x.file_sec - x.provider_sec))} (${pct}%)` }),
           el('span', { className: 'srw-release-date', textContent: `file ${fmt(x.file_sec)} · ${window.SRW.providerLabel(x.provider)} ${fmt(x.provider_sec)}${busy}` }),
           el('div', { className: 'srw-hint', textContent: x.file_path }),
           window.SRW.buildStashLink('scene', x.scene_id, 'Play in Stash'),

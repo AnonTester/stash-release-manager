@@ -6,6 +6,9 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.211.4
+- Maintenance > Duration mismatch: lengths are shown as [h:]mm:ss, the badge shows the difference with the percentage in brackets ("file longer by 26:31 (864%)"), and a provider length under 10 seconds counts as no length: such scenes are no longer listed.
+
 ## 0.211.3
 - Requests to Prowlarr wait up to 30 seconds (was 15), so one slow indexer no longer makes every search time out.
 
