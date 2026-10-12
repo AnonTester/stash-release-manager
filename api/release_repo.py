@@ -101,6 +101,13 @@ def names_text(performers):
     return "|" + "|".join(names) + "|" if names else ""
 
 
+def _scene_fully_dismissed(conn, provider, scene_id):
+    """True when the scene has rows and every one of them is dismissed by the user (not hidden-studio rows: those come back with the studio,
+    so a performer hit of the same scene stays visible)."""
+    rows = conn.execute("SELECT status, muted FROM release WHERE provider = ? AND scene_stashdb_id = ?", (provider, scene_id)).fetchall()
+    return bool(rows) and all(r["status"] == "dismissed" and not r["muted"] for r in rows)
+
+
 def insert_release(db, conn, scene, provider, entity_type, entity_stashdb_id, status="new", late_addition=False):
     """Insert one (provider, scene, entity) release row within an
     already-open connection (called from watcher.run_scan, which batches
@@ -124,6 +131,10 @@ def insert_release(db, conn, scene, provider, entity_type, entity_stashdb_id, st
             and status in ("new", "backlog")
             and conn.execute("SELECT 1 FROM muted_studio WHERE studio_id = ?", (studio_id,)).fetchone()):
         muted, prev_status, status = 1, status, "dismissed"
+    # A scene the user already dismissed stays dismissed when another watched entity reports it later (v0.211.2): Dismiss covers the rows
+    # that exist at that moment, and this new entity key would otherwise bring the scene back as 'new'.
+    elif status == "new" and not str(entity_stashdb_id).startswith(("upgrade:", "film:")) and _scene_fully_dismissed(conn, provider, scene["id"]):
+        status = "dismissed"
     conn.execute(
         """INSERT OR IGNORE INTO release
            (provider, scene_stashdb_id, entity_type, entity_stashdb_id, title, scene_date,
