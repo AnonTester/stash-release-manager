@@ -6,6 +6,9 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.211.5
+- Stash opened over HTTPS (behind a reverse proxy): the live updates socket goes to `wss://<your Stash address>/events/ws` instead of `ws://<sidecar>`, which browsers block as mixed content. INSTALL.md: how to forward that path with Nginx Proxy Manager (with and without Authelia) and plain nginx.
+
 ## 0.211.4
 - Maintenance > Duration mismatch: lengths are shown as [h:]mm:ss, the badge shows the difference with the percentage in brackets ("file longer by 26:31 (864%)"), and a provider length under 10 seconds counts as no length: such scenes are no longer listed.
 
