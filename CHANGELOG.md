@@ -6,6 +6,15 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.212.4
+- Movies & groups > Scrape… > Page address: the confirmation no longer shows the pasted address as the group's name; it says the name and data come from the scraper.
+
+## 0.212.3
+- Movies & groups > Videos without a group: when a group of the same name already exists (it can be another film), the row also offers "Create new group" and "Scrape…" next to "Add to that group".
+
+## 0.212.2
+- Maintenance > Upgrade wanted: a file whose scene has no StashDB / ThePornDB id no longer shows Dry run / Search now / Search…; the row says to identify the scene first and links to Maintenance > Unidentified scenes.
+
 ## 0.212.1
 - Movies & groups: the group created by "Create group" opens in a new tab reliably (the tab is opened inside the click, so the browser does not block it).
 

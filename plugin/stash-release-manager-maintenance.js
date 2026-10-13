@@ -1711,20 +1711,21 @@
     // the page and the group is created with that data).
     const resultRow = (url, title, image, type) => el('div', { className: 'srw-manual-search-result' }, [
       image ? el('img', { className: 'srw-film-thumb srw-film-thumb-sm', src: image, alt: '', loading: 'lazy' }) : null,
-      el('span', { className: 'srw-release-title', textContent: title }),
+      el('span', { className: 'srw-release-title', textContent: title || url }),
       type ? el('span', { className: 'srw-review-candidate-meta', textContent: type }) : null,
       el('a', { className: 'srw-btn srw-btn-sm', href: url, target: '_blank', rel: 'noopener noreferrer', textContent: 'Preview', title: 'Open the page in a new tab' }),
       el('button', {
         className: 'srw-btn srw-btn-sm srw-btn-primary', textContent: 'Create group',
         title: "Stash's group scraper reads this page; the group is created with that data and the scene(s) go in it",
-        onClick: (e) => confirmInline(e.currentTarget, `Create the group "${title}" from this page?`, () => onCreate({ scrape_url: url })),
+        onClick: (e) => confirmInline(e.currentTarget, title ? `Create the group "${title}" from this page?` : 'Create the group from this page? Name and data come from the scraper.',
+          () => onCreate({ scrape_url: url })),
       }),
     ]);
     async function run() {
       const q = input.value.trim();
       if (!q) return;
       results.replaceChildren();
-      if (select.value === PAGE) { results.appendChild(resultRow(q, q, null, null)); return; }
+      if (select.value === PAGE) { results.appendChild(resultRow(q, null, null, 'page address')); return; }
       status.textContent = ' searching…';
       const res = await window.SRW.runOp('movies_group_search', { source: select.value, q });
       if (res.error) { status.textContent = ` error: ${res.error}`; return; }
@@ -1791,7 +1792,7 @@
           const open = el('a', { className: 'srw-btn srw-btn-primary', href: `/groups/${r.group_id}`, target: '_blank', rel: 'noopener noreferrer',
             textContent: `Open group "${r.title}"` });
           doneSlot.replaceChildren(open, el('span', { className: 'srw-key-status', textContent: ` ${r.scenes} scene(s) in the group` }));
-          createBtn.remove(); adeBtn.remove(); adePanel.replaceChildren(); // removed, not hidden: confirmInline shows its trigger button again afterwards
+          createBtn.remove(); adeBtn.remove(); if (newBtn) newBtn.remove(); adePanel.replaceChildren(); // removed, not hidden: confirmInline shows its trigger button again afterwards
           if (tab) { try { tab.location.href = `/groups/${r.group_id}`; } catch (e) { /* the link above is the fallback */ } }
           noGroupStatus.textContent = ' group created -- the entry leaves the list on the next refresh';
         };
@@ -1814,6 +1815,13 @@
             : `Create the group "${titleInput.value}" with ${x.videos.length} scene(s)?`,
           () => doCreate({ title: titleInput.value, group_id: x.existing_group ? x.existing_group.id : null })),
         });
+        // A group of the same name can be ANOTHER film (a remake, a reused title): then a new group is created instead of joining it (v0.212.3).
+        const newBtn = x.existing_group ? el('button', {
+          className: 'srw-btn srw-btn-sm', textContent: 'Create new group',
+          title: 'The existing group is another film with the same name: create a separate group for these video(s)',
+          onClick: (e) => confirmInline(e.currentTarget, `Create a NEW group "${titleInput.value}" with ${x.videos.length} scene(s), next to the existing one?`,
+            () => doCreate({ title: titleInput.value, group_id: null })),
+        }) : null;
         const adeBtn = el('button', {
           className: 'srw-btn srw-btn-sm', textContent: 'Scrape…',
           title: 'Find the film at a source (title search or a page address), look at what Stash scrapes from it, and create the group with that data',
@@ -1833,7 +1841,8 @@
             textContent: `existing group "${x.existing_group.name}" (${x.existing_group.date || 'no date'}, ${x.existing_group.scenes} scene(s))`,
           }) : null,
           createBtn,
-          x.existing_group ? null : adeBtn,
+          newBtn,
+          adeBtn,
           doneSlot,
           rowStatus,
           adePanel,
@@ -2173,7 +2182,17 @@
             grab: (candidate) => window.SRW.runOp('upgrades_manual_grab', { id: c.id, candidate }),
           }));
         });
-        actions.push(dryBtn, grabBtn, searchSlot, dismissBtn);
+        if (c.provider_scene_id) {
+          actions.push(dryBtn, grabBtn, searchSlot, dismissBtn);
+        } else {
+          // No StashDB / ThePornDB id: the search works from the provider's scene (title, date, performers) and the replacement is recorded
+          // against it, so there is nothing to search by yet (v0.212.2). Identify the scene first; this row then searches like the others.
+          actions.push(
+            el('span', { className: 'srw-hint', textContent: 'No StashDB / ThePornDB id yet -- identify the scene first.' }),
+            el('a', { className: 'srw-btn srw-btn-sm', href: `${MAINTENANCE_PATH}/unidentified`, textContent: 'Unidentified scenes',
+              title: 'Maintenance > Unidentified scenes: find out what the scene is (fingerprints, name search) and apply it' }),
+            dismissBtn);
+        }
       }
       const mbps = c.cur_mbps ? `, ${Math.round(c.cur_mbps)} Mbit/s` : '';
       const rowLi = el('li', { className: 'srw-release-item' }, [
