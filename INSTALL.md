@@ -88,6 +88,73 @@ Run *Release Manager > Releases > Run scan now* once. The scheduled jobs (scan e
 
 Keys and URLs are stored in the sidecar's database in the `data` folder. They are never part of an export (see below). A value you type yourself is kept; a key that is empty is filled from Stash. *Update keys from Stash* (setup guide, *Settings > Metadata Providers*) replaces the keys set here with the ones Stash holds. `STASH_URL` / `STASH_API_KEY` in the container's environment still work as a fallback.
 
+## Stash behind an HTTPS reverse proxy (optional)
+
+Only needed when you open Stash through an **HTTPS** address (a reverse proxy such as Nginx Proxy Manager, Caddy or Traefik, possibly with a login such as Authelia). Over plain HTTP on your LAN nothing has to be done.
+
+**What goes wrong without it.** The plugin's pages get live updates over a WebSocket that the browser opens to the sidecar. A page loaded over HTTPS may not open a plain `ws://` connection (mixed content), so the browser console shows `WebSocket connection to 'ws://...:6961/events/ws' failed` about every five seconds. Nothing else breaks: the pages fall back to polling every ten seconds, and all other calls go through Stash's server side. The sidecar address in the plugin setting stays the one **Stash** reaches it by (e.g. `http://<sidecar-host>:6961`).
+
+**What the plugin does about it.** When Stash is opened over HTTPS and the *Sidecar API URL* starts with `http://`, the plugin opens the socket on the address you opened Stash with: `wss://stash.example.org/events/ws`. Your proxy only has to forward that one path to the sidecar.
+
+Forward **only `/events/ws`**. The sidecar has no login of its own: do not publish the rest of its API. The stream carries scene ids, statuses and progress numbers, never keys. (Dropping an export file on *Settings > General > Backup & move* uses a second path, `/transfer/upload`; it then works from a page opened over HTTP on your LAN, which is the safer default.)
+
+### Nginx Proxy Manager, no login in front of Stash
+
+On the Stash proxy host: *Websockets Support* on, then *Custom locations > Add location*:
+
+| Field | Value |
+|---|---|
+| Define location | `/events/ws` |
+| Scheme | `http` |
+| Forward Hostname / IP | the sidecar's address, as the proxy reaches it |
+| Forward Port | `6961` (the host port in your `docker-compose.yml`) |
+
+### Nginx Proxy Manager with Authelia (or an Access List)
+
+Do **not** use the *Custom locations* tab. NPM puts the host's *Access List* (HTTP basic authentication) on every custom location it generates; a WebSocket cannot answer that, and the browser console shows `401 Unauthorized` with `WWW-Authenticate: Basic realm="Authorization required"` although you are logged in. Add the location by hand to the host's **Advanced** tab instead, next to the `location /` you already have there, with the same includes:
+
+```
+include /snippets/authelia-location.conf;
+
+location / {
+    include /snippets/proxy.conf;
+    include /snippets/websocket.conf;
+    include /snippets/authelia-authrequest.conf;
+    proxy_pass $forward_scheme://$server:$port;
+}
+
+location /events/ws {
+    include /snippets/proxy.conf;
+    include /snippets/websocket.conf;
+    include /snippets/authelia-authrequest.conf;
+    proxy_pass http://<sidecar-host>:6961;
+}
+```
+
+The `/snippets/...` files are the ones from Authelia's own guide for NPM; if yours are named differently, use the same files your `location /` includes. Do not create a *Custom location* with the same path as well: nginx rejects two blocks for one path and the host shows as broken.
+
+`proxy_pass` has no path part on purpose, so the request path `/events/ws` reaches the sidecar unchanged.
+
+### Plain nginx
+
+```
+location /events/ws {
+    proxy_pass http://<sidecar-host>:6961;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host $host;
+    proxy_read_timeout 3600s;
+    # the same login directive(s) as your location / (auth_request ..., auth_basic ...)
+}
+```
+
+### Check
+
+* Browser: open *Release Manager* with the console open. The reconnect errors stop; a request to `/events/ws` shows status `101`.
+* Command line, without a session: `curl -i https://stash.example.org/events/ws` must answer with your login redirect (`302`) or `401`, not `404` or `502`.
+* The sidecar log shows `"WebSocket /events/ws" [accepted]`.
+
 ## Torrents (optional)
 
 Usenet and torrents use the same search and import pipeline; torrents need two more things: a **torrent indexer** and **qBittorrent** as a download client. **Status: the least tested part** -- it follows the conventions of Radarr / Whisparr, but it has had little use against real trackers. Please report what does not work.
@@ -142,6 +209,8 @@ The switch is deliberately an environment variable and not a setting: settings t
 | The plugin pages stay empty or show "sidecar not reachable" | *Sidecar API URL* must be reachable **from your browser**; open it with `/health` appended. |
 | The sidecar log says it waits for the Stash URL or API key | Open the Release Manager page once (the address you use for Stash is taken over), then check the *Stash* step of the setup guide. With a login in Stash: generate an API key under *Stash > Settings > Security*. |
 | The Stash header light stays red although the URL is right | The sidecar reaches Stash under another address than your browser (reverse proxy, Docker network name): enter that one in the *Stash* step of the setup guide. |
+| Console: `WebSocket connection to 'ws://...' failed` every few seconds, Stash opened over HTTPS | Mixed content: forward `/events/ws` through your reverse proxy, see *Stash behind an HTTPS reverse proxy*. |
+| `wss://.../events/ws` answers `401` with `Basic realm="Authorization required"` (Nginx Proxy Manager) | The host's Access List was applied to a custom location: add the location in the host's *Advanced* tab instead, see the same section. |
 | "Source file missing" when importing, or an empty `/media` | The library mount was not ready when the container started: mount it, then `docker compose restart`. |
 | "Stale file handle" on an NFS library after the file server restarted | Stop the container, unmount and remount the share, start the container. |
 | StashDB / ThePornDB are not reachable although the network works | `docker compose restart` (the container keeps an old DNS answer). |

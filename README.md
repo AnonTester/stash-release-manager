@@ -9,7 +9,7 @@ Two parts:
 * **sidecar** (`api/`, Docker): database, provider lookups (StashDB, ThePornDB), indexer search, download client hand-off, import and clean-up.
 * **plugin** (`plugin/`): the pages inside Stash (Releases, Activity, Maintenance, Settings ...).
 
-New here? [FIRST_STEPS.md](FIRST_STEPS.md) walks from an empty installation to the first download, with screenshots. See [INSTALL.md](INSTALL.md) for installation, the first-start setup guide, moving to another machine and updating.
+New here? [FIRST_STEPS.md](FIRST_STEPS.md) walks from an empty installation to the first download, with screenshots. See [INSTALL.md](INSTALL.md) for installation, the first-start setup guide, running Stash behind an HTTPS reverse proxy (Nginx Proxy Manager, Authelia), moving to another machine and updating.
 
 Requirements: Docker with Compose v2, Stash, a StashDB account, a search backend (Prowlarr or Newznab indexers) and a download client (SABnzbd; qBittorrent is supported but less tested). Whisparr is optional.
 

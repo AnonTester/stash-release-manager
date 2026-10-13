@@ -2028,6 +2028,14 @@
   // are blocked, WebSockets aren't. The browser must reach sidecarUrl
   // itself; if it can't (other network; HTTPS Stash needs wss:// = a TLS
   // proxy) pages fall back to their old polling and show a hint.
+  // WebSocket address of a sidecar path. A page opened over https cannot open ws:// (mixed content, Firefox and Chrome refuse it, and a
+  // private address is not reachable from outside anyway): there the socket goes to the page's own origin (wss://<host><path>), which
+  // the reverse proxy in front of Stash forwards to the sidecar -- a location per path (/events/ws, /transfer/upload).
+  function sidecarWsUrl(sidecarUrl, path) {
+    if (window.location.protocol === 'https:' && /^http:/i.test(sidecarUrl)) return `wss://${window.location.host}${path}`;
+    return `${sidecarUrl.replace(/^http/, 'ws')}${path}`;
+  }
+
   const LIVE_RECONNECT_MS = 5000;
   const liveListeners = new Set();
   let liveSocket = null;
@@ -2048,7 +2056,7 @@
     if (liveSocket || !liveListeners.size) return;
     let socket;
     try {
-      socket = new WebSocket(`${sidecarUrl.replace(/^http/, 'ws')}/events/ws`);
+      socket = new WebSocket(sidecarWsUrl(sidecarUrl, '/events/ws'));
     } catch (e) {
       setLiveState(false);
       return;
@@ -2157,7 +2165,7 @@
   window.SRW = {
     PLUGIN_ID, PLUGIN_NAME,
     getContentScope, resetContentScope, scopeAllows,
-    getSettings, runOp,
+    getSettings, runOp, sidecarWsUrl,
     getRoute, onNavigate, initNavigationWatcher,
     el, waitForElement, entityIcon, buildPageHeader,
     searchStatusLabel, confirmInline, buildManagedList, buildSearchActions, whenNoOpenPanel, buildManualSearch, getSearchCapabilities,

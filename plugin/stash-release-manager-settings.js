@@ -2425,7 +2425,7 @@
       dropZone.classList.add('srw-dropzone-busy');
       try {
         const result = await new Promise((resolve, reject) => {
-          const ws = new WebSocket(`${sidecarUrl.replace(/^http/, 'ws')}/transfer/upload`);
+          const ws = new WebSocket(window.SRW.sidecarWsUrl(sidecarUrl, '/transfer/upload'));
           ws.binaryType = 'arraybuffer';
           const CHUNK = 1024 * 1024;
           let offset = 0; let started = false;

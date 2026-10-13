@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 PAGE = 500                 # Stash scenes per request
 STASHDB_BATCH = 10         # scenes per StashDB request (aliased findScene; 25 ran into the 30 s read timeout once)
 RECHECK_AFTER_DAYS = 30    # a stored provider answer (also "no length") is trusted this long
+MIN_PROVIDER_SEC = 10      # a provider length below this is a placeholder (0:00 ... 0:09), not a length: treated as "no length"
 SCENES_QUERY = """
 query($f: FindFilterType) {
   findScenes(filter: $f) {
@@ -42,7 +43,7 @@ def provider_ref(scene, endpoints):
 
 def deviation(file_sec, provider_sec):
     """(file - provider) / provider: -0.4 = the file is 40 % shorter than the provider's length. None when either is missing."""
-    if not file_sec or not provider_sec:
+    if not file_sec or not provider_sec or float(provider_sec) < MIN_PROVIDER_SEC:
         return None
     return (float(file_sec) - float(provider_sec)) / float(provider_sec)
 
@@ -50,8 +51,8 @@ def deviation(file_sec, provider_sec):
 def list_findings(db, threshold_pct=5.0, direction="", include_ignored=False):
     """Rows whose deviation is above the threshold, the biggest first. direction: '' | 'shorter' | 'longer'."""
     t = abs(float(threshold_pct)) / 100.0
-    where = ["file_sec > 0", "provider_sec > 0", "ABS(file_sec - provider_sec) / provider_sec > ?"]
-    params = [t]
+    where = ["file_sec > 0", "provider_sec >= ?", "ABS(file_sec - provider_sec) / provider_sec > ?"]
+    params = [MIN_PROVIDER_SEC, t]
     if direction == "shorter":
         where.append("file_sec < provider_sec")
     elif direction == "longer":
@@ -73,7 +74,8 @@ def list_findings(db, threshold_pct=5.0, direction="", include_ignored=False):
 def summary(db):
     with db.connect() as conn:
         total = conn.execute("SELECT COUNT(*) FROM duration_check").fetchone()[0]
-        with_len = conn.execute("SELECT COUNT(*) FROM duration_check WHERE provider_sec > 0 AND file_sec > 0").fetchone()[0]
+        with_len = conn.execute("SELECT COUNT(*) FROM duration_check WHERE provider_sec >= ? AND file_sec > 0",
+                                (MIN_PROVIDER_SEC,)).fetchone()[0]
         last = conn.execute("SELECT MAX(checked_at) FROM duration_check").fetchone()[0]
     return {"checked": total, "with_provider_length": with_len, "last_checked": last}
 

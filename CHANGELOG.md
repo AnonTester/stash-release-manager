@@ -6,6 +6,15 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.211.5
+- Live updates (and the export upload) also work when Stash is opened over HTTPS behind a reverse proxy: the plugin then opens the socket on the page's own address (wss://<stash host>/events/ws) instead of the blocked ws:// one. INSTALL.md describes the proxy setup for Nginx Proxy Manager (with and without Authelia) and plain nginx. (Contributed in pull request #1.)
+
+## 0.211.4
+- Maintenance > Duration mismatch: lengths are shown as [h:]mm:ss, the badge shows the difference with the percentage in brackets, and a provider length under 10 seconds counts as no length. (Pull request #1.)
+
+## 0.211.3
+- Requests to Prowlarr wait up to 30 seconds (was 15). (Pull request #1.)
+
 ## 0.211.2
 - A scene you already dismissed stays dismissed when another watched entry (performer, studio, parent studio) reports it later; before, it could show up in the Calendar again.
 
