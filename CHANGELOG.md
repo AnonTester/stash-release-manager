@@ -6,6 +6,9 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.212.5
+- Movies & groups > Scrape…: a page the scraper cannot read right away (some sites refuse a request now and then) is tried up to three times, and a final failure is shown as a readable message instead of "HTTP 500".
+
 ## 0.212.4
 - Movies & groups > Scrape… > Page address: the confirmation no longer shows the pasted address as the group's name; it says the name and data come from the scraper.
 

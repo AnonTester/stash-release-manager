@@ -232,9 +232,19 @@ class Movies:
         scraper = self.scraper_for_url(url)
         if not scraper:
             raise ValueError("No installed Stash group scraper handles that address (Stash > Settings > Metadata Providers > Scrapers)")
-        data = self.stash._graphql(
-            "query($u: String!) { scrapeGroupURL(url: $u) { name aliases duration date director urls synopsis studio { stored_id name } "
-            "tags { stored_id name } front_image back_image } }", {"u": url})["scrapeGroupURL"]
+        # A scraper that fetches a page can be refused by the site now and then (seen with themoviedb.org: "http error 401" on every
+        # second or third try of the SAME address): tried up to three times before it counts as failed.
+        data = None
+        for attempt in range(3):
+            try:
+                data = self.stash._graphql(
+                    "query($u: String!) { scrapeGroupURL(url: $u) { name aliases duration date director urls synopsis studio { stored_id name } "
+                    "tags { stored_id name } front_image back_image } }", {"u": url})["scrapeGroupURL"]
+                break
+            except RuntimeError as e:
+                if "http error" not in str(e).lower() or attempt == 2:
+                    raise ValueError(f"The scraper {scraper} failed: {str(e).replace('Stash GraphQL error: ', '')[:200]} (the site refused the request; try again in a moment)")
+                time.sleep(1.5)
         if not data or not (data.get("name") or "").strip():
             raise ValueError(f"The scraper {scraper} found nothing on that page")
         inp = {"name": data["name"].strip(), "urls": data.get("urls") or [url]}
