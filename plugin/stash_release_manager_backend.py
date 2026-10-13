@@ -567,6 +567,11 @@ def main():
     elif mode == "movies_create_group":
         result = _post(sidecar_url, "/maintenance/movies/create-group",
                        {k: args.get(k) for k in ("title", "scene_ids", "group_id", "scrape_url")}, timeout=300)
+    elif mode == "movies_compare_groups":
+        result = _get(sidecar_url, "/maintenance/movies/compare-groups", timeout=300)
+    elif mode == "movies_compare_groups_ignore":
+        result = _post(sidecar_url, "/maintenance/movies/compare-groups/ignore",
+                       {"folder_key": args.get("folder_key"), "group_id": args.get("group_id"), "undo": bool(args.get("undo"))}, timeout=30)
     elif mode == "movies_group_sources":
         result = _get(sidecar_url, "/maintenance/movies/group-sources", timeout=60)
     elif mode == "movies_group_search":

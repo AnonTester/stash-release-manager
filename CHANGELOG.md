@@ -6,6 +6,9 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.213.0
+- New: Maintenance > Movies > Compare groups. Film folders without a group are shown next to the empty groups they may belong to (the same film under a slightly different name: "Vol. 19" / "19", "The Perfectionist" / "Perfectionist, The", "Lesson 20", accents, brackets, roman numerals). The numbers in the names must be the same; the year is only a hint. "Add to that group" puts the video(s) in that group and opens it, "Not this" hides that pair for good (with Undo). A second list shows the empty groups that no folder matches. Nothing changes without a click.
+
 ## 0.212.5
 - Movies & groups > Scrape…: a page the scraper cannot read right away (some sites refuse a request now and then) is tried up to three times, and a final failure is shown as a readable message instead of "HTTP 500".
 

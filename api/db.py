@@ -527,6 +527,7 @@ class Database:
         self._migrate_film_want_whisparr_file(conn)
         self._migrate_film_want_dups(conn)
         self._migrate_duration_check(conn)
+        self._migrate_group_match_ignore(conn)
 
     def _migrate_torrent_support(self, conn):
         """Torrent support (v0.133.0): download_client.type allows 'qbittorrent' (+ an `options` JSON column for the client's *arr-style settings),
@@ -829,6 +830,14 @@ class Database:
             conn.execute("ALTER TABLE upgrade_candidate ADD COLUMN provider_duration REAL")
         if "is_vr" not in cols:
             conn.execute("ALTER TABLE upgrade_candidate ADD COLUMN is_vr INTEGER")
+
+    def _migrate_group_match_ignore(self, conn):
+        """v0.213.0: Maintenance > Movies > Compare groups, "Not this": a suggested (movie folder, group) pair the user rejected."""
+        conn.execute("""CREATE TABLE IF NOT EXISTS group_match_ignore (
+            folder_key TEXT NOT NULL,
+            group_id   TEXT NOT NULL,
+            PRIMARY KEY (folder_key, group_id)
+        )""")
 
     def _migrate_upgrade_review(self, conn):
         """Adds `upgrade_candidate.review_candidate` / `rejected_titles`

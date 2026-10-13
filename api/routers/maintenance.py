@@ -28,6 +28,7 @@ import library_rename
 import upgrades
 import vr_check
 import duration_check
+import group_compare
 
 router = APIRouter(prefix="/maintenance", tags=["maintenance"])
 
@@ -253,6 +254,23 @@ def movies_create_group(body: dict):
                                       scrape_url=body.get("scrape_url"))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/movies/compare-groups")
+def movies_compare_groups():
+    """Film folders without a group next to the empty groups they may belong to (suggestions only, group_compare.py)."""
+    m = _movies()
+    return group_compare.build(_db, m.videos_without_group(), m.groups_without_files())
+
+
+@router.post("/movies/compare-groups/ignore")
+def movies_compare_groups_ignore(body: dict):
+    """"Not this" for one suggested pair (undo=true takes it back)."""
+    key, gid = body.get("folder_key"), body.get("group_id")
+    if not key or not gid:
+        raise HTTPException(status_code=400, detail="folder_key and group_id are required")
+    group_compare.set_ignored(_db, key, gid, not body.get("undo"))
+    return {"ok": True}
 
 
 @router.get("/movies/group-sources")

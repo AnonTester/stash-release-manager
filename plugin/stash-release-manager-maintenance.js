@@ -45,6 +45,7 @@
     { key: 'organize', group: 'files', icon: 'faFolderTree', label: 'Organize library', build: (c) => { c.appendChild(window.SRW.buildSafetyPanel({ compact: true })); c.appendChild(buildOrganizeSection()); } },
     { key: 'upgrades', group: 'files', icon: 'faCircleUp', label: 'Upgrade wanted', build: (c) => c.appendChild(flatten(buildUpgradeSection())) },
     { key: 'movies', group: 'movies', icon: 'faFilm', label: 'Movies & groups', build: (c) => c.appendChild(buildMoviesSection()) },
+    { key: 'compare-groups', group: 'movies', icon: 'faCodeCompare', label: 'Compare groups', build: (c) => c.appendChild(buildCompareGroupsArea()) },
   ];
 
   // A tool that used to be a collapsible <details> panel is shown open and without the fold-away behaviour.
@@ -1690,6 +1691,113 @@
     loader(); // loads itself when the page opens
     return perfPane;
 
+  }
+
+  // ==================== Compare groups (v0.213.0, api/group_compare.py) ====================
+  // Film folders without a group next to the EMPTY groups they may be (the same film under a slightly different name). Only suggestions:
+  // "Add to that group" puts the video(s) in that group, "Not this" hides the pair; nothing happens without a click.
+  function buildCompareGroupsArea() {
+    const { el, confirmInline } = window.SRW;
+    let pairs = [];
+    let unmatched = [];
+    let ignored = 0;
+    const status = el('span', { className: 'srw-key-status' });
+    const summary = el('p', { className: 'srw-hint' });
+    const pairView = window.SRW.buildFilteredPagedList({
+      filters: ['search'], perPage: 25, emptyText: 'No video matches an empty group by name.',
+      fetchPage: window.SRW.localPageFetcher(() => pairs, { text: (p) => `${p.title} ${p.candidates.map((c) => c.group.name).join(' ')}` }),
+      renderItems: (page) => el('ul', { className: 'srw-release-list' }, page.map(buildPairRow)),
+    });
+    const groupView = window.SRW.buildFilteredPagedList({
+      filters: ['search'], perPage: 50, emptyText: 'Every empty group has a suggestion.',
+      fetchPage: window.SRW.localPageFetcher(() => unmatched, { text: (g) => g.name }),
+      renderItems: (page) => el('ul', { className: 'srw-release-list' }, page.map((g) => el('li', { className: 'srw-release-item' }, [
+        el('a', { className: 'srw-release-title', href: `/groups/${g.id}`, target: '_blank', rel: 'noopener noreferrer', textContent: g.name }),
+        el('span', { className: 'srw-release-date', textContent: g.date || 'no date' }),
+        el('span', { className: 'srw-history-category', textContent: g.reason }),
+      ]))),
+    });
+
+    function buildPairRow(p) {
+      const rowStatus = el('span', { className: 'srw-key-status' });
+      const candSlot = el('div');
+      const doneSlot = el('span');
+      const li = el('li', { className: 'srw-release-item' }, [
+        el('span', { className: 'srw-release-title', textContent: p.title }),
+        el('span', { className: 'srw-release-date', textContent: `${p.year || 'no year'} · ${p.videos.length} video(s) · ${p.minutes} min` }),
+        el('div', { className: 'srw-review-box' }, [
+          el('span', { className: 'srw-history-message', textContent: `${p.root}/${p.folder}\n${p.videos.map((v) => v.file).join('\n')}` }),
+        ]),
+        ...p.videos.filter((v) => v.scene_id).map((v, i) => window.SRW.buildStashLink('scene', v.scene_id, p.videos.length > 1 ? `Play part ${i + 1}` : 'Play in Stash')),
+        candSlot, doneSlot, rowStatus,
+      ]);
+      function drawCandidates() {
+        candSlot.replaceChildren(...p.candidates.map((c) => {
+          const add = el('button', {
+            className: 'srw-btn srw-btn-sm srw-btn-primary', textContent: 'Add to that group',
+            onClick: (e) => confirmInline(e.currentTarget, `Add ${p.videos.length} scene(s) to the group "${c.group.name}"?`, async () => {
+              let tab = null;
+              try { tab = window.open('', '_blank'); } catch (err) { /* the link below appears anyway */ }
+              rowStatus.textContent = ' working…';
+              let r;
+              try { r = await window.SRW.runOp('movies_create_group', { scene_ids: p.videos.map((v) => v.scene_id), group_id: c.group.id }); } catch (err) { r = { error: err.message }; }
+              if (r.error) { rowStatus.textContent = ` error: ${r.error}`; if (tab) tab.close(); return; }
+              rowStatus.textContent = '';
+              candSlot.replaceChildren();
+              doneSlot.replaceChildren(el('a', { className: 'srw-btn srw-btn-primary', href: `/groups/${r.group_id}`, target: '_blank', rel: 'noopener noreferrer',
+                textContent: `Open group "${r.title}"` }), el('span', { className: 'srw-key-status', textContent: ` ${r.scenes} scene(s) in the group` }));
+              if (tab) { try { tab.location.href = `/groups/${r.group_id}`; } catch (err) { /* the link is the fallback */ } }
+              status.textContent = ' added -- the entry leaves the list on the next refresh';
+            }),
+          });
+          const no = el('button', {
+            className: 'srw-btn srw-btn-sm', textContent: 'Not this', title: 'This is another film: do not suggest this group for this folder again',
+            onClick: async () => {
+              const r = await window.SRW.runOp('movies_compare_groups_ignore', { folder_key: p.key, group_id: c.group.id });
+              if (r.error) { rowStatus.textContent = ` error: ${r.error}`; return; }
+              const at = p.candidates.indexOf(c);
+              p.candidates.splice(at, 1);
+              if (!p.candidates.length) { pairs = pairs.filter((x) => x !== p); pairView.reset(); } else drawCandidates();
+              window.SRW.dismissedNotice(`Not this: ${c.group.name}`, `Not suggested again for "${p.title}".`,
+                () => window.SRW.runOp('movies_compare_groups_ignore', { folder_key: p.key, group_id: c.group.id, undo: true }),
+                () => { p.candidates.splice(at, 0, c); if (!pairs.includes(p)) pairs.push(p); pairView.reset(); drawCandidates(); });
+            },
+          });
+          const notes = [`${Math.round(c.score * 100)} % alike`, c.note, c.year_note, c.group.date ? `group date ${c.group.date}` : 'group has no date'].filter(Boolean).join(' · ');
+          return el('div', { className: 'srw-manual-search-result' }, [
+            el('a', { className: 'srw-release-title', href: `/groups/${c.group.id}`, target: '_blank', rel: 'noopener noreferrer', textContent: c.group.name }),
+            el('span', { className: 'srw-review-candidate-meta', textContent: notes }),
+            add, no,
+          ]);
+        }));
+      }
+      drawCandidates();
+      return li;
+    }
+
+    async function load() {
+      status.textContent = ' loading…';
+      const r = await window.SRW.runOp('movies_compare_groups');
+      if (r.error) { status.textContent = ` error: ${r.error}`; return; }
+      pairs = r.pairs || []; unmatched = r.unmatched_groups || []; ignored = r.ignored || 0;
+      status.textContent = '';
+      summary.textContent = `${pairs.length} video folder(s) with a possible group, ${unmatched.length} empty group(s) without a suggestion`
+        + (ignored ? `, ${ignored} suggestion(s) hidden by "Not this"` : '') + '.';
+      pairView.reset(); groupView.reset();
+    }
+    const root = el('div', {}, [
+      el('h3', { textContent: 'Compare groups' }),
+      el('p', { className: 'srw-hint', textContent: 'A film folder without a group next to the empty groups it may belong to (the same film under a slightly different name). '
+        + 'The numbers in the names must be the same, the year is only a hint. Nothing changes until you click.' }),
+      el('div', { className: 'srw-toolbar' }, [el('button', { className: 'srw-btn', textContent: 'Refresh', onClick: load }), status]),
+      summary,
+      el('h4', { textContent: 'Possible matches' }), pairView.node,
+      el('h4', { textContent: 'Empty groups without a suggestion' }),
+      el('p', { className: 'srw-hint', textContent: 'No video of the movie folders has a similar name: these groups probably still wait for their file.' }),
+      groupView.node,
+    ]);
+    load();
+    return root;
   }
 
   // "Scrape…" for a movie without a group (v0.212.0), built like the Edit Group page of Stash: the page is read by whichever installed Stash group
