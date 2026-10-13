@@ -1692,6 +1692,71 @@
 
   }
 
+  // "Scrape…" for a movie without a group (v0.212.0), built like the Edit Group page of Stash: the page is read by whichever installed Stash group
+  // scraper handles its address. Stash's group scrapers read a page only, so the way TO a page is either a title search at a source of the
+  // sidecar's (the select; AdultDVDEmpire today) or a pasted page address. "Preview" opens the page in a new tab; only "Create group"
+  // creates anything. `onCreate({scrape_url})` is the row's create call.
+  let groupSourcesCache = null;
+  function buildGroupScrape(initial, onCreate) {
+    const { el, confirmInline } = window.SRW;
+    const PAGE = '__page';
+    const select = el('select', { className: 'srw-filter-preset-select' });
+    const input = el('input', { type: 'search', className: 'srw-search-input', value: initial || '' });
+    const goBtn = el('button', { className: 'srw-btn srw-btn-sm', textContent: 'Go' });
+    const status = el('span', { className: 'srw-key-status' });
+    const sitesNote = el('div', { className: 'srw-hint' });
+    const results = el('div');
+    let sources = [];
+    // One result = cover, title, "Preview" (the page itself in a new tab: that is where it reads well) and "Create group" (Stash's scraper reads
+    // the page and the group is created with that data).
+    const resultRow = (url, title, image, type) => el('div', { className: 'srw-manual-search-result' }, [
+      image ? el('img', { className: 'srw-film-thumb srw-film-thumb-sm', src: image, alt: '', loading: 'lazy' }) : null,
+      el('span', { className: 'srw-release-title', textContent: title }),
+      type ? el('span', { className: 'srw-review-candidate-meta', textContent: type }) : null,
+      el('a', { className: 'srw-btn srw-btn-sm', href: url, target: '_blank', rel: 'noopener noreferrer', textContent: 'Preview', title: 'Open the page in a new tab' }),
+      el('button', {
+        className: 'srw-btn srw-btn-sm srw-btn-primary', textContent: 'Create group',
+        title: "Stash's group scraper reads this page; the group is created with that data and the scene(s) go in it",
+        onClick: (e) => confirmInline(e.currentTarget, `Create the group "${title}" from this page?`, () => onCreate({ scrape_url: url })),
+      }),
+    ]);
+    async function run() {
+      const q = input.value.trim();
+      if (!q) return;
+      results.replaceChildren();
+      if (select.value === PAGE) { results.appendChild(resultRow(q, q, null, null)); return; }
+      status.textContent = ' searching…';
+      const res = await window.SRW.runOp('movies_group_search', { source: select.value, q });
+      if (res.error) { status.textContent = ` error: ${res.error}`; return; }
+      status.textContent = '';
+      const rows = res.results || [];
+      if (!rows.length) { results.appendChild(el('p', { className: 'srw-hint', textContent: 'Nothing found.' })); return; }
+      rows.forEach((hit) => results.appendChild(resultRow(hit.url, hit.title, hit.image, hit.type || 'video on demand')));
+    }
+    function modeChanged() {
+      const page = select.value === PAGE;
+      input.placeholder = page ? 'Page address (https://…) of a site one of the scrapers below supports' : 'Title';
+      if (page && input.value === (initial || '')) input.value = '';
+      results.replaceChildren();
+    }
+    select.addEventListener('change', modeChanged);
+    goBtn.addEventListener('click', run);
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') run(); });
+    (async () => {
+      groupSourcesCache = groupSourcesCache || await window.SRW.runOp('movies_group_sources');
+      const info = groupSourcesCache;
+      if (info.error) { status.textContent = ` error: ${info.error}`; return; }
+      sources = info.sources || [];
+      sources.forEach((src) => select.appendChild(el('option', { value: src.key, textContent: src.label })));
+      select.appendChild(el('option', { value: PAGE, textContent: 'Page address' }));
+      const names = (info.scrapers || []).map((sc) => sc.name).join(', ');
+      sitesNote.textContent = `Page addresses work for the group scrapers installed in Stash: ${names || 'none'}.`;
+      modeChanged();
+      if (sources.length) run(); // the title is the row's own: search it right away
+    })();
+    return el('div', {}, [el('span', {}, [select, input, goBtn, status]), sitesNote, results]);
+  }
+
   function buildMoviesSection() {
     const { el, confirmInline } = window.SRW;
     const section = el('div', { className: 'srw-settings-section' }, [
@@ -1720,6 +1785,40 @@
       renderItems: (page) => el('ul', { className: 'srw-release-list' }, page.map((x) => {
         const rowStatus = el('span', { className: 'srw-key-status' });
         const titleInput = el('input', { type: 'text', value: x.title, className: 'srw-input' });
+        // After a group exists the row stays and offers it (v0.212.0): the next step (scrape / identify) is done on the group page in Stash.
+        const afterCreate = (r, tab) => {
+          rowStatus.textContent = '';
+          const open = el('a', { className: 'srw-btn srw-btn-primary', href: `/groups/${r.group_id}`, target: '_blank', rel: 'noopener noreferrer',
+            textContent: `Open group "${r.title}"` });
+          doneSlot.replaceChildren(open, el('span', { className: 'srw-key-status', textContent: ` ${r.scenes} scene(s) in the group` }));
+          createBtn.remove(); adeBtn.remove(); adePanel.replaceChildren(); // removed, not hidden: confirmInline shows its trigger button again afterwards
+          if (tab) { try { tab.location.href = `/groups/${r.group_id}`; } catch (e) { /* the link above is the fallback */ } }
+          noGroupStatus.textContent = ' group created -- the entry leaves the list on the next refresh';
+        };
+        const doCreate = async (body) => {
+          // The tab is opened NOW, inside the click (a tab opened after the wait is taken for a pop-up and blocked), and sent to the group when it exists.
+          let tab = null;
+          try { tab = window.open('', '_blank'); } catch (e) { /* the "Open group" link appears anyway */ }
+          rowStatus.textContent = ' working…';
+          let r;
+          try { r = await window.SRW.runOp('movies_create_group', { scene_ids: x.videos.map((v) => v.scene_id), ...body }); } catch (e) { r = { error: e.message }; }
+          if (r.error) { rowStatus.textContent = ` error: ${r.error}`; if (tab) tab.close(); return; }
+          afterCreate(r, tab);
+        };
+        const doneSlot = el('span');
+        const adePanel = el('div', { className: 'srw-manual-search-panel' });
+        const createBtn = el('button', {
+          className: 'srw-btn srw-btn-sm', textContent: x.existing_group ? 'Add to that group' : 'Create group',
+          onClick: (e) => confirmInline(e.currentTarget, x.existing_group
+            ? `Add ${x.videos.length} scene(s) to the existing group "${x.existing_group.name}"?`
+            : `Create the group "${titleInput.value}" with ${x.videos.length} scene(s)?`,
+          () => doCreate({ title: titleInput.value, group_id: x.existing_group ? x.existing_group.id : null })),
+        });
+        const adeBtn = el('button', {
+          className: 'srw-btn srw-btn-sm', textContent: 'Scrape…',
+          title: 'Find the film at a source (title search or a page address), look at what Stash scrapes from it, and create the group with that data',
+          onClick: () => { if (adePanel.childNodes.length) { adePanel.replaceChildren(); return; } adePanel.replaceChildren(buildGroupScrape(titleInput.value, doCreate)); },
+        });
         return el('li', { className: 'srw-release-item' }, [
           titleInput,
           el('span', { className: 'srw-release-date', textContent: `${x.year || 'no year'} · ${x.videos.length} video(s) · ${x.minutes} min` }),
@@ -1733,20 +1832,11 @@
             className: 'srw-history-category',
             textContent: `existing group "${x.existing_group.name}" (${x.existing_group.date || 'no date'}, ${x.existing_group.scenes} scene(s))`,
           }) : null,
-          el('button', {
-            className: 'srw-btn srw-btn-sm', textContent: x.existing_group ? 'Add to that group' : 'Create group',
-            onClick: (e) => confirmInline(e.currentTarget, x.existing_group
-              ? `Add ${x.videos.length} scene(s) to the existing group "${x.existing_group.name}"?`
-              : `Create the group "${titleInput.value}" with ${x.videos.length} scene(s)?`, async () => {
-              rowStatus.textContent = ' working…';
-              const r = await window.SRW.runOp('movies_create_group', {
-                title: titleInput.value, scene_ids: x.videos.map((v) => v.scene_id), group_id: x.existing_group ? x.existing_group.id : null,
-              });
-              rowStatus.textContent = r.error ? ` error: ${r.error}` : ' done';
-              if (!r.error) { folders = folders.filter((f) => f !== x); noGroupStatus.textContent = ` ${folders.length} film folder(s) / video(s) without a group`; noGroupView.reset(); }
-            }),
-          }),
+          createBtn,
+          x.existing_group ? null : adeBtn,
+          doneSlot,
           rowStatus,
+          adePanel,
         ]);
       })),
     });

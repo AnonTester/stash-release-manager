@@ -249,9 +249,27 @@ def movies_no_group():
 @router.post("/movies/create-group")
 def movies_create_group(body: dict):
     try:
-        return _movies().create_group(body.get("title"), body.get("scene_ids") or [], group_id=body.get("group_id"))
+        return _movies().create_group(body.get("title"), body.get("scene_ids") or [], group_id=body.get("group_id"),
+                                      scrape_url=body.get("scrape_url"))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/movies/group-sources")
+def movies_group_sources():
+    """The title-search sources and the installed Stash group scrapers (which page addresses work)."""
+    return _movies().group_sources()
+
+
+@router.get("/movies/group-search")
+def movies_group_search(source: str, q: str):
+    """Title search at one source (Stash's group scrapers only read a page): [{id, title, url, image, type}]."""
+    try:
+        return {"results": _movies().group_search(source, q)}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"search failed: {e}")
 
 
 @router.get("/movies/performers-empty")

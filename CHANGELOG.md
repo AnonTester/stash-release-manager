@@ -6,6 +6,16 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.212.1
+- Movies & groups: the group created by "Create group" opens in a new tab reliably (the tab is opened inside the click, so the browser does not block it).
+
+## 0.212.0
+- Maintenance > Movies & groups > Videos without a group: after "Create group" the row stays and shows "Open group", so scrape or identify can be done right away.
+- New per row: "Scrape…", built like Stash's Edit Group page. The page is read by whichever group scraper installed in Stash handles its address. Way to a page: a title search at a source (AdultDVDEmpire today; Stash's group scrapers only read a page, so the search is done by the sidecar and more sources can be added) or a pasted page address. "Preview" opens the result's page in a new tab; "Create group" lets Stash's scraper read it and creates the group with its data (name, date, length, director, synopsis, studio and tags that exist in Stash, covers) and puts the scene(s) in it.
+
+## 0.211.6
+- Search: a release name that says SD without "480p" (an "SD" segment, or the SD variant of a release group) now counts as 480p, so it no longer lands in Activity > Needs review when the quality profile does not allow SD.
+
 ## 0.211.5
 - Live updates (and the export upload) also work when Stash is opened over HTTPS behind a reverse proxy: the plugin then opens the socket on the page's own address (wss://<stash host>/events/ws) instead of the blocked ws:// one. INSTALL.md describes the proxy setup for Nginx Proxy Manager (with and without Authelia) and plain nginx. (Contributed in pull request #1.)
 

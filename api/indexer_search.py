@@ -419,6 +419,10 @@ def _indexer_priorities(whisparr_client):
 
 
 _RESOLUTION_RE = re.compile(r"\b(2160|1440|1080|720|480)p\b", re.IGNORECASE)
+# Standard definition without a "480p" in the name (v0.211.6): an "SD" segment ("Name.SD.XXX.MP4") or the SD variant of a release group
+# ("...XXX.MP4-GRPX" next to "...-P0RNL0V3R"). Uppercase only, so words and names cannot trip it. Such a release counts as 480p;
+# before, no resolution at all meant "unknown" and let it through to Needs review.
+_SD_RE = re.compile(r"(?:^|[._\s-])SD(?:[._\s-]|$)|-[A-Z0-9]{3,}SD$")
 # NOT \bVR\b -- confirmed live 2026-09-22 against real VR releases this
 # project's own indexers actually carry (e.g.
 # "...Oculus.8K_VR"/"SLROriginals...Oculus.4K_VR"): regex \b treats "_"
@@ -588,6 +592,8 @@ def normalize_prowlarr_release(raw):
     title = raw.get("title") or ""
     m = _RESOLUTION_RE.search(title)
     resolution = int(m.group(1)) if m else None
+    if resolution is None and _SD_RE.search(title):
+        resolution = 480
     source = "vr" if (_VR_RE.search(title) or _VR_MARKER_RE.search(title)) else "web"
     return {
         "title": title,

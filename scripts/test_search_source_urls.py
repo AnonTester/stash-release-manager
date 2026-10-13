@@ -75,5 +75,13 @@ try:
     search.search_scenes_by_tag("stashdb"); check("no tag refused", False)
 except HTTPException as e:
     check("no tag refused", e.status_code == 400)
+# SD releases without "480p" in the name count as 480p (v0.211.6)
+import indexer_search as isr
+def reso(t): return isr.normalize_prowlarr_release({"title": t})["quality"]["quality"]["resolution"]
+check("group SD variant -> 480", reso("Site.26.09.12.Name.XXX.MP4-GRPX") == 480)
+check("SD segment -> 480", reso("Site.26.09.12.Name.SD.XXX.MP4-GRP") == 480)
+check("normal group stays unknown", reso("Nympho.26.10.11.Lily.XXX.MP4-P0RNL0V3R") is None)
+check("explicit 1080p wins over SD marker", reso("Site.26.09.12.Name.1080p.MP4-GRPX") == 1080)
+check("lowercase 'sd' in a word is no marker", reso("Site.Madison.sd.Name.XXX.MP4-GRP") is None)
 print("\nALL OK" if all(res) else "\nFAILED")
 sys.exit(0 if all(res) else 1)

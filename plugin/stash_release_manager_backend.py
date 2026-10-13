@@ -566,7 +566,11 @@ def main():
         result = _get(sidecar_url, "/maintenance/movies/no-group", timeout=300)
     elif mode == "movies_create_group":
         result = _post(sidecar_url, "/maintenance/movies/create-group",
-                       {k: args.get(k) for k in ("title", "scene_ids", "group_id")}, timeout=300)
+                       {k: args.get(k) for k in ("title", "scene_ids", "group_id", "scrape_url")}, timeout=300)
+    elif mode == "movies_group_sources":
+        result = _get(sidecar_url, "/maintenance/movies/group-sources", timeout=60)
+    elif mode == "movies_group_search":
+        result = _get(sidecar_url, f"/maintenance/movies/group-search?source={quote(args.get('source', ''))}&q={quote(args.get('q', ''))}", timeout=60)
     elif mode == "movies_performers_empty":
         result = _get(sidecar_url, "/maintenance/movies/performers-empty", timeout=300)
     elif mode == "movies_groups_empty":

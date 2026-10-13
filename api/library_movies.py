@@ -12,9 +12,11 @@ by design and never show up here.
 """
 import film_names
 import base64
+import html
 import logging
 import os
 import re
+import time
 from collections import defaultdict
 
 logger = logging.getLogger(__name__)
@@ -108,12 +110,18 @@ class Movies:
     def _norm(text):
         return re.sub(r"[^a-z0-9]", "", (text or "").lower())
 
-    def create_group(self, title, scene_ids, group_id=None):
+    def create_group(self, title, scene_ids, group_id=None, scrape_url=None):
         """Puts the scenes in a Group in the given order (scene_index counting on from the group's
         current scenes). Without `group_id` a new Group named `title` is created; with one the scenes
         join that existing group (e.g. an empty one made from the provider's metadata). The scenes'
-        other groups are kept. Refuses an empty title (new group) / no scenes."""
+        other groups are kept. Refuses an empty title (new group) / no scenes. With `scrape_url` (v0.212.0) a NEW group is
+        created with the data of that scraped page (what Stash's own group scraper reads: name, date, length, director,
+        synopsis, studio and tags that exist locally, covers)."""
         title = (title or "").strip()
+        scraped = None
+        if scrape_url and not group_id:
+            scraped = self.scrape_group_input(scrape_url)
+            title = title or scraped["name"]
         # One scene can hold several files of the same film folder: every scene goes in once, in the given order.
         scene_ids = list(dict.fromkeys(str(i) for i in scene_ids or []))
         if not scene_ids or (not group_id and not title):
@@ -127,7 +135,9 @@ class Movies:
             title, start = g["name"], (g["scene_count"] or 0) + 1
         else:
             group_id = self.stash._graphql("mutation($i: GroupCreateInput!) { groupCreate(input: $i) { id } }",
-                                           {"i": {"name": title}})["groupCreate"]["id"]
+                                           {"i": scraped or {"name": title}})["groupCreate"]["id"]
+            if scraped:
+                title = scraped["name"]
         for index, sid in enumerate(scene_ids, start):
             cur = self.stash._graphql("query($id: ID!) { findScene(id: $id) { groups { group { id } scene_index } } }",
                                       {"id": sid})["findScene"]["groups"]
@@ -136,6 +146,112 @@ class Movies:
             self.stash._graphql("mutation($i: SceneUpdateInput!) { sceneUpdate(input: $i) { id } }",
                                 {"i": {"id": sid, "groups": groups}})
         return {"group_id": group_id, "title": title, "scenes": len(scene_ids)}
+
+    # ---------- Groups from a scraped page (v0.212.0) ----------
+    # Like the Edit Group page of Stash: the page is read by whichever of Stash's installed GROUP scrapers handles its address
+    # (`scrapeGroupURL`; studio / tags come back already matched to local ones). Stash's group scrapers read a PAGE only, none
+    # searches by title, so a title search needs a SOURCE of our own: SEARCH_SOURCES below (key -> label, search function), one entry per
+    # shop that can be searched; everything after the search is source-independent. A page address can also be pasted directly.
+    _ADE_CARD = re.compile(r'<div class="product-card" id="card(\d+)">(.*?)<div class="item-info', re.S)
+    _search_cache = {}
+
+    @classmethod
+    def _search_adultempire(cls, query):
+        """[{id, title, url, image, type}] from AdultDVDEmpire's search page (movies only, page order)."""
+        import requests
+        r = requests.get("https://www.adultdvdempire.com/allsearch/search", params={"q": query}, timeout=30,
+                         headers={"User-Agent": "Mozilla/5.0"}, cookies={"ageConfirmed": "true"})
+        r.raise_for_status()
+        out, seen = [], set()
+        for cid, block in cls._ADE_CARD.findall(r.text):
+            link = re.search(r'product-details__item-title">\s*<a href="\s*(/\d+/[^"]+)"[^>]*?title="([^"]*)"', block, re.S)
+            if not link or cid in seen:
+                continue
+            seen.add(cid)
+            kind = re.search(r'product-details__product-type">\s*([^<]*?)\s*<', block)
+            img = re.search(r'<img[^>]*?src="(https://[^"]+/movie/[^"]+)"', block, re.S)
+            out.append({"id": cid, "title": html.unescape(link.group(2)).strip(), "url": "https://www.adultdvdempire.com" + link.group(1),
+                        "image": html.unescape(img.group(1)) if img else None, "type": (kind.group(1) if kind else "").strip()})
+        return out
+
+    SEARCH_SOURCES = {"adultempire": ("AdultDVDEmpire (title search)", "_search_adultempire")}
+
+    def group_sources(self):
+        """What the picker offers: the title-search sources, and the installed Stash group scrapers (which page addresses can be pasted)."""
+        return {"sources": [{"key": k, "label": v[0]} for k, v in self.SEARCH_SOURCES.items()],
+                "scrapers": [{"id": sc["id"], "name": sc["name"], "urls": (sc.get("group") or {}).get("urls") or []}
+                             for sc in self._group_scrapers()]}
+
+    def group_search(self, source, query):
+        query = (query or "").strip()
+        if source not in self.SEARCH_SOURCES:
+            raise ValueError("unknown search source")
+        if not query:
+            raise ValueError("a search term is required")
+        key = (source, query.lower())
+        hit = self._search_cache.get(key)
+        if hit and time.time() - hit[0] < 600:
+            return hit[1]
+        out = getattr(self, self.SEARCH_SOURCES[source][1])(query)
+        self._search_cache[key] = (time.time(), out)
+        return out
+
+    def _group_scrapers(self):
+        hit = getattr(self, "_scrapers_cache", None)
+        if hit and time.time() - hit[0] < 300:
+            return hit[1]
+        rows = self.stash._graphql("{ listScrapers(types: [GROUP]) { id name group { urls supported_scrapes } } }", {})["listScrapers"]
+        rows = [r for r in rows if "URL" in ((r.get("group") or {}).get("supported_scrapes") or [])]
+        self._scrapers_cache = (time.time(), rows)
+        return rows
+
+    def scraper_for_url(self, url):
+        """Name of the installed group scraper that handles this page address, else None (Stash matches by the scraper's url fragments)."""
+        from urllib.parse import urlparse
+        if urlparse(url or "").scheme not in ("http", "https"):
+            return None
+        low = url.lower()
+        for sc in self._group_scrapers():
+            if any(frag.lower() in low for frag in (sc.get("group") or {}).get("urls") or []):
+                return sc["name"]
+        return None
+
+    @staticmethod
+    def _seconds(text):
+        """'2:49:00' / '49:00' -> seconds, None when it is not a length."""
+        parts = [p for p in re.split(r":", str(text or "").strip()) if p != ""]
+        if not parts or not all(p.isdigit() for p in parts) or len(parts) > 3:
+            return None
+        total = 0
+        for p in parts:
+            total = total * 60 + int(p)
+        return total or None
+
+    def scrape_group_input(self, url):
+        """GroupCreateInput from the page: Stash's group scraper does the reading (studio / tags only when they exist locally)."""
+        scraper = self.scraper_for_url(url)
+        if not scraper:
+            raise ValueError("No installed Stash group scraper handles that address (Stash > Settings > Metadata Providers > Scrapers)")
+        data = self.stash._graphql(
+            "query($u: String!) { scrapeGroupURL(url: $u) { name aliases duration date director urls synopsis studio { stored_id name } "
+            "tags { stored_id name } front_image back_image } }", {"u": url})["scrapeGroupURL"]
+        if not data or not (data.get("name") or "").strip():
+            raise ValueError(f"The scraper {scraper} found nothing on that page")
+        inp = {"name": data["name"].strip(), "urls": data.get("urls") or [url]}
+        for key in ("aliases", "date", "director", "synopsis", "front_image", "back_image"):
+            if data.get(key):
+                inp[key] = data[key]
+        seconds = self._seconds(data.get("duration"))
+        if seconds:
+            inp["duration"] = seconds
+        studio = data.get("studio") or {}
+        if studio.get("stored_id"):
+            inp["studio_id"] = studio["stored_id"]
+        tags = data.get("tags") or []
+        known = [t["stored_id"] for t in tags if t.get("stored_id")]
+        if known:
+            inp["tag_ids"] = known
+        return inp
 
     # ---------- Groups from ThePornDB movies (v0.94.0) ----------
 
