@@ -6,6 +6,9 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.213.3
+- New: "Restart sidecar" in Settings > General > Backup & move and after an import, so no command line is needed. The container ends its process and Docker starts it again (compose `restart: unless-stopped`); the page waits until it answers again.
+
 ## 0.213.2
 - Moving to another machine: the import is no longer refused because the new installation's watchlist is not empty (the setup guide fills it from Stash by itself and the import replaces it anyway). Only releases and movies still make an installation "not empty". INSTALL.md says to choose "Later" in the setup guide's last step.
 
