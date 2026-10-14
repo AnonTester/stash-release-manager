@@ -6,6 +6,12 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.213.2
+- Moving to another machine: the import is no longer refused because the new installation's watchlist is not empty (the setup guide fills it from Stash by itself and the import replaces it anyway). Only releases and movies still make an installation "not empty". INSTALL.md says to choose "Later" in the setup guide's last step.
+
+## 0.213.1
+- Settings > Connections (Prowlarr, Whisparr, StashDB, ThePornDB): URL and API key are in one form with one Save; "Check connection" saves what you typed first. The check says "no address saved yet" when no URL is saved.
+
 ## 0.213.0
 - New: Maintenance > Movies > Compare groups. Film folders without a group are shown next to the empty groups they may belong to (the same film under a slightly different name: "Vol. 19" / "19", "The Perfectionist" / "Perfectionist, The", "Lesson 20", accents, brackets, roman numerals). The numbers in the names must be the same; the year is only a hint. "Add to that group" puts the video(s) in that group and opens it, "Not this" hides that pair for good (with Undo). A second list shows the empty groups that no folder matches. Nothing changes without a click.
 
