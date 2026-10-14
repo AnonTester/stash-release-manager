@@ -620,6 +620,8 @@ def main():
         result = _post(sidecar_url, "/transfer/export", {"groups": args.get("groups") or []}, timeout=300)
     elif mode == "transfer_import_check":
         result = _post(sidecar_url, "/transfer/import/check", {"name": args.get("name"), "groups": args.get("groups")}, timeout=300)
+    elif mode == "system_restart":
+        result = _post(sidecar_url, "/system/restart", {}, timeout=15)
     elif mode == "transfer_import_apply":
         result = _post(sidecar_url, "/transfer/import/apply", {"name": args.get("name"), "groups": args.get("groups")}, timeout=600)
     elif mode == "compare_review_add":

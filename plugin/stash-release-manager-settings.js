@@ -2379,6 +2379,36 @@
     return section;
   }
 
+  // "Restart sidecar" (v0.213.3): the container ends its process and Docker starts it again (restart: unless-stopped), so no CLI is needed after an
+  // import or an update of the settings that only a restart picks up. Waits for the sidecar to answer again and says so.
+  function buildRestartControl() {
+    const { el, confirmInline, notify } = window.SRW;
+    const status = el('span', { className: 'srw-key-status' });
+    const btn = el('button', { className: 'srw-btn', textContent: 'Restart sidecar',
+      title: 'Restarts the sidecar container (Docker starts it again); running jobs are interrupted and begin again afterwards' });
+    btn.addEventListener('click', () => confirmInline(btn,
+      'Restart the sidecar now? A download that is being imported at this moment is interrupted and picked up again afterwards; the pages reconnect by themselves.', async () => {
+        status.textContent = ' restarting…';
+        const r = await window.SRW.runOp('system_restart');
+        if (r && r.error) { status.textContent = ` error: ${r.error}`; return; }
+        const began = Date.now();
+        await new Promise((res) => setTimeout(res, 4000)); // it first has to go down
+        for (let i = 0; i < 40; i++) {
+          let back = false;
+          try { const c = await window.SRW.runOp('connections_check', { only: 'stash' }); back = !!(c && !c.error); } catch (e) { back = false; }
+          if (back) {
+            const sec = Math.round((Date.now() - began) / 1000);
+            status.textContent = ` back after ${sec} s`;
+            notify('Sidecar', `Restarted, answering again after ${sec} s.`, 'success');
+            return;
+          }
+          await new Promise((res) => setTimeout(res, 3000));
+        }
+        status.textContent = ' did not answer within two minutes -- check the container (docker compose logs)';
+      }));
+    return el('span', {}, [btn, status]);
+  }
+
   // Backup & move (v0.173.0): export the user's own data to a ZIP and import it into a FRESH installation (a move, a new install, a backup that can
   // be read). No URLs, keys, passwords or paths go into the file; a new installation gets those entered like a new user. The import counts first
   // (dry run) and only then writes, after a backup of the database; see api/data_transfer.py.
@@ -2389,6 +2419,7 @@
       el('p', { className: 'srw-hint', textContent: 'Export packs your own data into one ZIP file (data/exports/ on the machine the sidecar runs on) so it can be imported into a fresh installation. '
         + 'URLs, API keys, passwords and local paths are never exported; a new installation gets them entered like a new user. Running downloads and pending search results are not carried.' }),
     ]);
+    section.appendChild(el('div', {}, [buildRestartControl(), el('span', { className: 'srw-hint', textContent: ' after an import the sidecar has to restart once' })]));
     const groupBox = el('div');
     const exportStatus = el('span', { className: 'srw-key-status' });
     const fileBox = el('div');
@@ -2428,7 +2459,8 @@
           if (r.error) { out.textContent = `error: ${r.error}`; return; }
           out.replaceChildren(el('div', { textContent: `Imported: ${rowsText(r.rows)}. Backup of the database before the import: data/backups/${r.backup}.` }),
             el('div', { textContent: r.note }));
-          notify('Import', 'Done. Restart the container once.', 'success');
+          out.appendChild(buildRestartControl());
+          notify('Import', 'Done. Restart the sidecar once (button below the result).', 'success');
         }, { danger: true }));
       out.appendChild(go);
     }

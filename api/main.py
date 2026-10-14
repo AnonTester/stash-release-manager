@@ -25,6 +25,7 @@ as the process is up:
 """
 import asyncio
 import logging
+import signal
 import json
 import os
 import threading
@@ -2145,6 +2146,23 @@ async def live_events(request: Request):
 def stash_queue():
     """Stash's job queue as mirrored from its jobsSubscribe events (connected = the event channel is up)."""
     return job_watcher.snapshot()
+
+
+@app.post("/system/restart")
+def system_restart():
+    """Restarts this sidecar (v0.213.3): the process ends and Docker brings the container back (compose `restart: unless-stopped`, which
+    restarts after ANY exit that was not a manual stop). Only inside a container: a sidecar started by hand would just stop. The answer goes out
+    first, the signal one second later; uvicorn then shuts down gracefully (--timeout-graceful-shutdown 3)."""
+    if not os.path.exists("/.dockerenv"):
+        return {"error": "this sidecar does not run in a container -- restart it by hand"}
+
+    def _stop():
+        time.sleep(1.0)
+        logger.warning("restart requested from the UI -- stopping, Docker starts the container again")
+        os.kill(os.getpid(), signal.SIGTERM)
+
+    threading.Thread(target=_stop, daemon=True, name="restart").start()
+    return {"ok": True, "restarting": True}
 
 
 @app.get("/health")
