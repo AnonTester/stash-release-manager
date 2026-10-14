@@ -175,7 +175,7 @@ On the **old** installation: *Settings > General > Backup & move > Export*. Pick
 
 Before you import: **stop the old sidecar's jobs** -- `docker compose down` there, or, if you want to keep it as a development copy, start it with `SRM_DEV_MODE=1` (see below) -- once its running downloads have finished and been imported -- a download that is still running is not carried over (its job belongs to the old download client), and two sidecars working on the same Stash would search and grab twice.
 
-On the **new** one (after steps 1 to 5, **before** you scan or search anything -- an import only goes into an empty installation):
+On the **new** one (after steps 1 to 5, **before** you scan or search anything -- an import only goes into an installation that has no releases or movies yet; the watchlist the setup guide fills from Stash by itself does not count. In the setup guide's last step choose **Later**, not *Run the first scan now*):
 
 1. *Settings > General > Backup & move*: drop the ZIP on the dashed area (or **Choose file…**). It is uploaded from your browser into `data/imports/` of the new installation. (You can also just copy the file into that folder yourself.)
 2. *Files > Check import (dry run)* next to the uploaded file -- it only counts and tells you what blocks.

@@ -43,8 +43,9 @@ GROUP_KEYS = [g[0] for g in GROUPS]
 TABLES = {t for g in GROUPS for t in g[2]}
 # Never exported, whatever the user ticks (connection data).
 NEVER = ("indexer", "download_client", "metadata_provider")
-# Core tables that must be empty for an import (a fresh installation).
-FRESH_TABLES = ("watchlist", "release", "film_want")
+# Core tables that must be empty for an import (a fresh installation). NOT the watchlist (v0.213.2): the setup guide fills it from Stash by itself
+# (favorites / watchlist tag, nothing the user made here) and the import replaces it wholesale anyway; real work shows in the releases / movies.
+FRESH_TABLES = ("release", "film_want")
 # Columns that point into the OLD download client; set to NULL on import (a running download does not move).
 RESET_COLUMNS = {"release": ("download_client_id", "download_job_id"), "film_want": ("download_client_id", "download_job_id")}
 # Tables that are emptied before their rows come in (seeded defaults would clash); 'setting' is merged key by key, 'history' is appended.

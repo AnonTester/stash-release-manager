@@ -48,7 +48,10 @@ def check(only: str = None):
             make_client().ping()
             results[name] = {"ok": True, "error": None}
         except Exception as e:
-            results[name] = {"ok": False, "error": str(e)}
+            msg = str(e)
+            if "No scheme supplied" in msg:  # requests' wording for an empty / missing address
+                msg = "no address saved yet -- enter the URL (and the API key) and save first"
+            results[name] = {"ok": False, "error": msg}
     return results
 
 

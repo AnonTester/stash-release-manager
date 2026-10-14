@@ -272,6 +272,71 @@
     section.appendChild(el('br'));
   }
 
+  // URL and API key of one connection in ONE form (v0.214.0): type both, one Save writes both (only what was changed, so a key that comes from
+  // api/.env and shows as a placeholder is never overwritten by an empty field). "Check connection" saves pending changes first and then asks the
+  // sidecar to ping the service, so "type both, click once" works. `check` = {name, key} of the service, or null.
+  function buildConnectionPair(section, { url, apiKey, check, onSaved }) {
+    const { el } = window.SRW;
+    const urlInput = el('input', { type: 'text', autocomplete: 'off', placeholder: url.placeholder || '', value: url.value || '' });
+    const keyInput = el('input', { type: 'password', autocomplete: 'off', placeholder: apiKey.placeholder || '', value: apiKey.value || '' });
+    const initial = { [url.key]: url.value || '', [apiKey.key]: apiKey.value || '' };
+    const status = el('span', { className: 'srw-key-status' });
+    section.appendChild(el('label', {}, [`${url.label || 'URL'}: `, urlInput]));
+    section.appendChild(el('br'));
+    section.appendChild(el('label', {}, [`${apiKey.label || 'API key'}: `, keyInput]));
+    section.appendChild(el('br'));
+    async function savePending() {
+      const changed = [[url.key, urlInput], [apiKey.key, keyInput]].filter(([key, input]) => input.value !== initial[key]);
+      for (const [key, input] of changed) {
+        const r = await window.SRW.runOp('settings_set', { key, value: input.value });
+        if (r && r.error) throw new Error(r.error);
+        initial[key] = input.value;
+      }
+      return changed;
+    }
+    function notify(changed) {
+      if (onSaved) changed.forEach(([key, input]) => onSaved(key, input.value));
+    }
+    const saveBtn = el('button', {
+      className: 'srw-btn', textContent: 'Save',
+      title: 'Saves the URL and the API key together',
+      onClick: async (e) => {
+        e.target.disabled = true;
+        try {
+          const changed = await savePending();
+          status.textContent = changed.length ? ' saved' : ' nothing changed';
+          setTimeout(() => { status.textContent = ''; }, 2000);
+          if (changed.length) window.SRW.notify((check && check.name) || 'Connection', 'Saved.', 'success');
+          notify(changed);
+        } catch (err) { status.textContent = ` error: ${err.message}`; } finally { e.target.disabled = false; }
+      },
+    });
+    section.appendChild(saveBtn);
+    if (check) {
+      section.appendChild(el('button', {
+        className: 'srw-btn', textContent: 'Check connection',
+        title: `Saves what you typed, then checks that ${check.name} answers (nothing else is changed)`,
+        onClick: async (e) => {
+          e.target.disabled = true;
+          try {
+            status.textContent = ' saving…';
+            const changed = await savePending();
+            status.textContent = ' checking…';
+            const result = await window.SRW.runOp('connections_check', { only: check.key });
+            const r = result && (result.error ? { ok: false, error: result.error } : result[check.key]);
+            const text = !r ? 'no result' : (r.ok ? `${changed.length ? 'Saved. ' : ''}${check.name} answers.` : `${changed.length ? 'Saved, but ' : ''}${check.name} does not answer: ${r.error}`);
+            status.textContent = !r ? ' error: no result' : (r.ok ? `${changed.length ? ' saved, ' : ' '}ok` : ` error: ${r.error}`);
+            // a toast as well: saving re-renders the connection list, which would wipe the line above
+            window.SRW.notify(check.name, text, r && r.ok ? 'success' : 'error');
+            notify(changed);
+          } catch (err) { status.textContent = ` error: ${err.message}`; } finally { e.target.disabled = false; }
+        },
+      }));
+    }
+    section.appendChild(status);
+    section.appendChild(el('br'));
+  }
+
   // Each connection's own settings/sync jobs now live inside that
   // connection's own box instead of scattered across separate top-
   // level sections (2026-09-12, user's own reorganization request --
@@ -283,13 +348,10 @@
     const section = el('div', { className: 'srw-settings-section' }, [
       el('h4', { textContent: 'StashDB' }),
     ]);
-    buildConnectionField(section, {
-      label: 'URL', key: 'stashdb_url', value: settings.stashdb_url,
-      placeholder: effective.stashdb_url || 'https://stashdb.org/graphql', onSaved: onFieldSaved,
-    });
-    buildConnectionField(section, {
-      label: 'API key', key: 'stashdb_api_key', value: settings.stashdb_api_key, isSecret: true,
-      placeholder: secretPlaceholder(effective.stashdb_api_key_set), onSaved: onFieldSaved,
+    buildConnectionPair(section, {
+      url: { key: 'stashdb_url', value: settings.stashdb_url, placeholder: effective.stashdb_url || 'https://stashdb.org/graphql' },
+      apiKey: { key: 'stashdb_api_key', value: settings.stashdb_api_key, placeholder: secretPlaceholder(effective.stashdb_api_key_set) },
+      check: { name: 'StashDB', key: 'stashdb' }, onSaved: onFieldSaved,
     });
 
     // No officially published StashDB.org rate limit is known (checked
@@ -372,15 +434,11 @@
     const section = el('div', { className: 'srw-settings-section' }, [
       el('h4', { textContent: 'Whisparr' }),
     ]);
-    buildConnectionField(section, {
-      label: 'URL', key: 'whisparr_url', value: settings.whisparr_url,
-      placeholder: effective.whisparr_url || 'http://localhost:6969', onSaved: onFieldSaved,
+    buildConnectionPair(section, {
+      url: { key: 'whisparr_url', value: settings.whisparr_url, placeholder: effective.whisparr_url || 'http://localhost:6969' },
+      apiKey: { key: 'whisparr_api_key', value: settings.whisparr_api_key, placeholder: secretPlaceholder(effective.whisparr_api_key_set) },
+      check: { name: 'Whisparr', key: 'whisparr' }, onSaved: onFieldSaved,
     });
-    buildConnectionField(section, {
-      label: 'API key', key: 'whisparr_api_key', value: settings.whisparr_api_key, isSecret: true,
-      placeholder: secretPlaceholder(effective.whisparr_api_key_set), onSaved: onFieldSaved,
-    });
-    buildCheckConnection(section, 'Whisparr', 'whisparr');
 
     section.appendChild(el('p', { className: 'srw-subsection-heading', textContent: 'Quality profiles' }));
     section.appendChild(el('p', {
@@ -541,13 +599,10 @@
     const section = el('div', { className: 'srw-settings-section' }, [
       el('h4', { textContent: 'ThePornDB' }),
     ]);
-    buildConnectionField(section, {
-      label: 'URL', key: 'theporndb_url', value: settings.theporndb_url,
-      placeholder: effective.theporndb_url || 'https://api.theporndb.net', onSaved: onFieldSaved,
-    });
-    buildConnectionField(section, {
-      label: 'API key', key: 'theporndb_api_key', value: settings.theporndb_api_key, isSecret: true,
-      placeholder: secretPlaceholder(effective.theporndb_api_key_set), onSaved: onFieldSaved,
+    buildConnectionPair(section, {
+      url: { key: 'theporndb_url', value: settings.theporndb_url, placeholder: effective.theporndb_url || 'https://api.theporndb.net' },
+      apiKey: { key: 'theporndb_api_key', value: settings.theporndb_api_key, placeholder: secretPlaceholder(effective.theporndb_api_key_set) },
+      check: { name: 'ThePornDB', key: 'theporndb' }, onSaved: onFieldSaved,
     });
 
     section.appendChild(el('p', { className: 'srw-subsection-heading', textContent: 'ThePornDB identify' }));
@@ -637,16 +692,11 @@
     const section = el('div', { className: 'srw-settings-section' }, [
       el('h4', { textContent: 'Prowlarr' }),
     ]);
-    buildConnectionField(section, {
-      label: 'URL', key: 'prowlarr_url', value: settings.prowlarr_url,
-      placeholder: effective.prowlarr_url || 'http://localhost:9696', onSaved: onFieldSaved,
+    buildConnectionPair(section, {
+      url: { key: 'prowlarr_url', value: settings.prowlarr_url, placeholder: effective.prowlarr_url || 'http://localhost:9696' },
+      apiKey: { key: 'prowlarr_api_key', value: settings.prowlarr_api_key, placeholder: secretPlaceholder(effective.prowlarr_api_key_set) },
+      check: { name: 'Prowlarr', key: 'prowlarr' }, onSaved: onFieldSaved,
     });
-    buildConnectionField(section, {
-      label: 'API key', key: 'prowlarr_api_key', value: settings.prowlarr_api_key, isSecret: true,
-      placeholder: secretPlaceholder(effective.prowlarr_api_key_set), onSaved: onFieldSaved,
-    });
-
-    buildCheckConnection(section, 'Prowlarr', 'prowlarr');
 
     return section;
   }
