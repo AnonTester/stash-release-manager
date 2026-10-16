@@ -89,12 +89,19 @@ def _norm_name(name):
     return "".join(ch for ch in (name or "").lower() if ch.isalnum())
 
 
+def _cast_links(cast_names, p_name):
+    """[{name, local_id}] of '|A|B|' (local_id = the performer's page in this Stash, by name; None when there is none)."""
+    return [{"name": n, "local_id": p_name.get(_norm_name(n))} for n in (cast_names or "").split("|") if n]
+
+
 def _add_studio_local_ids(result):
     rows = result.get("rows") if isinstance(result, dict) else None
     if not rows:
         return result
     (s_id, s_name), (p_id, p_name) = _local_lookups()
     for r in rows:
+        if r.get("cast_names"):  # the performers, shown next to a studio-matched row (v0.213.8)
+            r["cast"] = _cast_links(r["cast_names"], p_name)
         # The scene's own studio (shown next to a performer-matched row).
         if r.get("entity_type") != "studio" and r.get("studio_name"):
             r["studio_local_id"] = (s_id.get(r.get("studio_id")) if r.get("studio_id") else None) or s_name.get(_norm_name(r["studio_name"]))
@@ -557,6 +564,9 @@ def fill_cast(body: dict):
             code = release_repo.pairing_code(cast) if cast is not None else ""
             release_repo.set_pairing_for_scene(_db, prov, sid, code, names)
             out[f"{prov}:{sid}"] = {"cast_names": names or "", "cast_pairing": code or ""}
+    (_, _), (_, p_name) = _local_lookups()
+    for v in out.values():
+        v["cast"] = _cast_links(v.get("cast_names"), p_name)
     return {"cast": out}
 
 

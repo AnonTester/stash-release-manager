@@ -1096,7 +1096,6 @@
           target: '_blank', rel: 'noopener noreferrer',
           textContent: r.title || '(untitled)',
         }),
-        status === 'sent_to_whisparr' ? window.SRW.buildCastLine(r) : null,
       ].filter(Boolean);
       // Dismissed has no timestamp field of its own (unlike handoff_at/
       // imported_at) and, unlike those two, is meant to be reversible --

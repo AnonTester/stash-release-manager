@@ -251,7 +251,6 @@
           className: 'srw-release-title', href: sceneUrl(r.provider, r.scene_stashdb_id),
           target: '_blank', rel: 'noopener noreferrer', textContent: r.title || '(untitled)',
         }),
-        window.SRW.buildCastLine(r),
         el('span', { className: 'srw-film-class srw-film-class-likely', textContent: 'Scene' }), // like the Movie pill
       ].filter(Boolean);
       if (openScene) { // the scene in Stash: the link is set once the page's local scene ids are known (resolveOpenScenes)

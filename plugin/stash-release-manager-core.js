@@ -287,7 +287,8 @@
     // A studio hit normally IS the scene's studio (the name is already shown). Not for a sub-studio of a watched network studio
     // (Evil Angel -> Transsexual Angel): the row names the watched parent, so the scene's own studio is shown next to it (v0.208.1).
     const compact = (t) => String(t || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
-    if (r.entity_type === 'studio' && (!r.entity_name || compact(r.entity_name) === compact(r.studio_name))) return null;
+    // A row that came in through a STUDIO: the studio is the row's own entity (icon + name), so its context is the cast (v0.213.8).
+    if (r.entity_type === 'studio' && (!r.entity_name || compact(r.entity_name) === compact(r.studio_name))) return buildCastContext(r);
     // Linked to the studio's Stash page when that studio exists locally (r.studio_local_id, resolved by the sidecar, v0.102.8).
     if (r.studio_local_id) {
       return el('a', {
@@ -298,13 +299,21 @@
     return el('span', { className: 'srw-release-studio-context', textContent: r.studio_name });
   }
 
-  // The performers of a scene next to the studio (v0.213.7): a release that came in through a STUDIO shows the studio only, which is little to go on
-  // for an own search. `cast_names` is '|A|B|' (read by fillCast() when missing); at most five names, the rest as "+N", all in the tooltip.
-  function buildCastLine(r) {
-    const names = String((r && r.cast_names) || '').split('|').filter(Boolean);
-    if (!names.length) return null;
-    const shown = names.slice(0, 5).join(', ') + (names.length > 5 ? ` +${names.length - 5}` : '');
-    return el('span', { className: 'srw-release-cast', title: names.join(', '), textContent: `with ${shown}` });
+  // The performers of a scene, linked to their pages in this Stash and WITHOUT an icon (v0.213.8) -- the mirror of a performer row, which shows
+  // the performer with its icon and the scene's studio beside it: a studio row shows the studio with its icon and the performers beside it.
+  // r.cast = [{name, local_id}] (sidecar), else the plain '|A|B|' names; at most five, the rest as "+N" with all names in the tooltip.
+  function buildCastContext(r) {
+    const people = Array.isArray(r && r.cast) ? r.cast : String((r && r.cast_names) || '').split('|').filter(Boolean).map((name) => ({ name, local_id: null }));
+    if (!people.length) return null;
+    const wrap = el('span', { className: 'srw-release-cast', title: people.map((x) => x.name).join(', ') });
+    people.slice(0, 5).forEach((x, i) => {
+      if (i) wrap.appendChild(document.createTextNode(', '));
+      wrap.appendChild(x.local_id
+        ? el('a', { className: 'srw-release-performer-link', href: `/performers/${x.local_id}`, title: `Open ${x.name} in Stash`, textContent: x.name })
+        : el('span', { textContent: x.name }));
+    });
+    if (people.length > 5) wrap.appendChild(document.createTextNode(` +${people.length - 5}`));
+    return wrap;
   }
 
   // Reads the cast of the rows that have none stored yet (only wishlist lists use this; one sidecar call per 100 scenes) and fills it in.
@@ -323,7 +332,7 @@
         if (!res || !res.cast) continue;
         todo.forEach((r) => {
           const x = res.cast[`${r.provider}:${r.scene_stashdb_id}`];
-          if (x) { r.cast_names = x.cast_names; r.cast_pairing = x.cast_pairing; }
+          if (x) { r.cast_names = x.cast_names; r.cast_pairing = x.cast_pairing; r.cast = x.cast; }
         });
       }
     } catch (e) { /* the cast is a nicety: rows are drawn without it */ }
@@ -2220,7 +2229,7 @@
     sceneUrl, notifyReadd, loadMetadataProviderUrls, loadProviders, resetProviders, providerInfo, providerLabel, providerKeys, providerOn, providersAllOn, providersSelected, isLateAdditionNew, buildLateAdditionBadge,
     buildFilteredPagedList, buildSafetyPanel, ignoreRenamers, pairingOptionsFor, castOptionsFor, buildPairingBadge, localPageFetcher, releaseQueryArgs, filterLocally, isFilterActive,
     describeProgress, applyProgress, attachLive, buildLiveHint,
-    buildEntityIcons, buildLocalEntityLink, buildReleaseThumb, buildStudioContext, buildCastLine, fillCast, groupByScene,
+    buildEntityIcons, buildLocalEntityLink, buildReleaseThumb, buildStudioContext, fillCast, groupByScene,
     SENT_STATUS_LABEL, SENT_STATUS_LABEL_LONG,
     buildStashLink, createScopeStateRegistry, buildSideNav, setActivityCount, acknowledgeUrl, buildPaneTabs, sectionTabLabel, arrangeReleaseRow, rowMeta, addOpenSceneLink, resolveSceneLinks,
   };
