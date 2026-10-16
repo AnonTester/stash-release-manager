@@ -10,6 +10,8 @@
   // manifest -- see stash-sense2's stash-sense-core.js for the exact same
   // rule and the bug it caused when this drifted). Change this if you
   // install under a different folder name.
+  // Must equal `version:` in stash-release-manager.yml (scripts/test_plugin_version.py checks it).
+  const PLUGIN_VERSION = '0.213.11';
   const PLUGIN_ID = 'stash-release-manager';
   const PLUGIN_NAME = 'StashReleaseManager';
 
@@ -718,6 +720,7 @@
     };
     const stash = mk('Stash');
     const sidecar = mk('Sidecar');
+    const sidecarLabel = sidecar.node.querySelector('.srw-status-label');
     const dev = mk('Development mode: no background jobs');
     dev.node.hidden = true;
     const pill = el('div', { className: 'srw-health-pill', title: 'Click to check again' }, [stash.node, sidecar.node, dev.node]);
@@ -737,6 +740,13 @@
         } else {
           set(sidecar, true, 'Sidecar reachable');
           runOp('sidecar_health').then((h) => {
+            if (h && h.version) {
+              sidecarLabel.textContent = `Sidecar v${h.version}`;
+              const same = h.version === PLUGIN_VERSION;
+              sidecar.node.title = same ? `Sidecar reachable, version ${h.version} (matches the plugin)`
+                : `Sidecar v${h.version} but the plugin is v${PLUGIN_VERSION}: rebuild the sidecar container (docker compose up -d --build) or update the plugin so both match.`;
+              if (!same) sidecar.dot.className = 'srw-status-dot warn';
+            }
             dev.node.hidden = !(h && h.dev_mode);
             dev.dot.className = 'srw-status-dot warn';
             dev.node.title = 'This sidecar was started with SRM_DEV_MODE: it runs no scan, search, import or sync job (manual actions still work).';
@@ -1015,7 +1025,7 @@
   // wanted after all. Same Undo card as everywhere; a Whisparr entry that is monitored is unmonitored by the sidecar.
   function buildWishlistDismiss(release, onChanged) {
     return el('button', {
-      className: 'srw-btn', textContent: 'Dismiss',
+      className: 'srw-btn srw-btn-dismiss', textContent: 'Dismiss',
       title: 'Not wanted after all: off the wishlist, no more searching (with Undo)',
       onClick: async (e) => {
         e.currentTarget.disabled = true;

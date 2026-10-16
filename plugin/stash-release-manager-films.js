@@ -233,7 +233,7 @@
           } }));
       }
       if (['suggested', 'wanted'].includes(f.status)) {
-        act.push(el('button', { className: 'srw-btn', textContent: 'Dismiss', onClick: () => setStatus('dismissed') }));
+        act.push(el('button', { className: 'srw-btn srw-btn-dismiss', textContent: 'Dismiss', onClick: () => setStatus('dismissed') }));
       }
       // "Dismiss & delete group" (v0.168.0): a movie that came from an EMPTY Stash group -- dismiss it and delete that group too. Asks first (a
       // look into the group now); if it holds files after all, a stronger question names them. Only the group goes, never scenes or files.

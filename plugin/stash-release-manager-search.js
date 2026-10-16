@@ -537,7 +537,7 @@
         } else if (state === 'sent_to_whisparr') {
           buttons.push(
             button('Search now', 'srw-btn-whisparr', 'Ask the indexers for it right now', () => handoff(true)),
-            button('Dismiss', '', 'Take it off the wishlist (Restore brings it back)', async () => {
+            button('Dismiss', 'srw-btn-dismiss', 'Take it off the wishlist (Restore brings it back)', async () => {
               status.textContent = ' dismissing...';
               const r = await sceneOp('releases_dismiss');
               if (r.error) { status.textContent = ` error: ${r.error}`; return; }

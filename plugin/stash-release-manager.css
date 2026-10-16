@@ -550,6 +550,18 @@
   border-color: #c53030;
 }
 
+/* The plain "Dismiss" buttons (v0.213.11): a muted red so they are not mistaken for their neighbours, but quieter than
+   .srw-btn-danger -- readable on light and dark themes without glaring. */
+.srw-btn.srw-btn-dismiss {
+  background: #8c4040;
+  color: #f6e9e9;
+  border-color: #a15555;
+}
+.srw-btn.srw-btn-dismiss:hover:not(:disabled) {
+  background: #9d4a4a;
+  border-color: #b36464;
+}
+
 /* Backlog panel's year picker (2026-09-13) -- one checkbox per year
    with its scene count, so several (possibly non-contiguous) years can
    be selected before the actual fetch, instead of a from/until date

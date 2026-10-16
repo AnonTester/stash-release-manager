@@ -2178,4 +2178,4 @@ def system_restart():
 @app.get("/health")
 def health():
     # `dev_mode`: this instance runs no background job (SRM_DEV_MODE); `background_jobs`: how many loops are running.
-    return {"status": "ok", "dev_mode": settings.dev_mode, "background_jobs": len(getattr(app.state, "job_tasks", []))}
+    return {"status": "ok", "version": SIDECAR_VERSION, "dev_mode": settings.dev_mode, "background_jobs": len(getattr(app.state, "job_tasks", []))}

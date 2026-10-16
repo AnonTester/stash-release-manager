@@ -346,7 +346,7 @@
           }));
         }
         li.push(el('button', {
-          className: 'srw-btn', textContent: 'Dismiss',
+          className: 'srw-btn srw-btn-dismiss', textContent: 'Dismiss',
           onClick: async () => {
             const result = await window.SRW.runOp('releases_dismiss', {
               provider: r.provider, scene_stashdb_id: r.scene_stashdb_id,
