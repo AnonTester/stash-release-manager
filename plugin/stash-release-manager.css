@@ -924,6 +924,12 @@
   font-size: 0.93em;
 }
 
+/* The performers of a scene next to the studio on wishlist rows (v0.213.7, buildCastLine()). */
+.srw-release-cast {
+  opacity: 0.7;
+  font-size: 0.93em;
+}
+
 /* Wraps .srw-release-thumb in a link to the scene page (2026-09-20) --
    the image itself keeps its existing sizing, this just removes the
    default link underline/focus outline from the image's own layout. */

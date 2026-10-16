@@ -518,6 +518,48 @@ def imported_file(provider: str, scene_stashdb_id: str):
     return {"scene_id": scene["id"], "path": paths[0]}
 
 
+@router.post("/fill-cast")
+def fill_cast(body: dict):
+    """The performers of wishlist scenes whose cast was never read (v0.213.7): a studio hit shows the studio only, so the Stuck / On Wishlist
+    rows get the cast next to it. {"scenes": [{provider, scene_stashdb_id}]} (at most 100) -> {"cast": {"provider:id": {cast_names, cast_pairing}}}
+    for every asked scene. StashDB reads in batches, other providers one scene at a time (at most 30 per call). Only a cache of public provider
+    data in our own table; a scene the provider no longer knows is stored as '' (not asked again)."""
+    asked = [(x.get("provider"), x.get("scene_stashdb_id")) for x in (body.get("scenes") or [])[:100] if x.get("provider") and x.get("scene_stashdb_id")]
+    out, missing = {}, {}
+    with _db.connect() as conn:
+        for prov, sid in asked:
+            row = conn.execute("SELECT cast_names, cast_pairing FROM release WHERE provider = ? AND scene_stashdb_id = ? LIMIT 1", (prov, sid)).fetchone()
+            if row is None:
+                continue
+            if row["cast_names"] is None:
+                missing.setdefault(prov, []).append(sid)
+            else:
+                out[f"{prov}:{sid}"] = {"cast_names": row["cast_names"], "cast_pairing": row["cast_pairing"]}
+    for prov, ids in missing.items():
+        try:
+            if prov == "stashdb":
+                found = _get_stashdb_client().get_scenes_cast_batch(ids)
+            else:
+                client = _get_provider_client(prov) if _get_provider_client else None
+                found = {}
+                for sid in ids[:30]:
+                    detail = client.get_scene_detail(sid) if client else None
+                    if detail:
+                        found[sid] = detail.get("performers") or []
+        except Exception:
+            logger.exception("fill-cast: reading the cast from %s failed", prov)
+            continue
+        for sid in ids:
+            if prov != "stashdb" and sid not in found and ids.index(sid) >= 30:
+                continue  # beyond this call's limit: asked again next time
+            cast = found.get(sid)
+            names = release_repo.names_text(cast) if cast is not None else ""
+            code = release_repo.pairing_code(cast) if cast is not None else ""
+            release_repo.set_pairing_for_scene(_db, prov, sid, code, names)
+            out[f"{prov}:{sid}"] = {"cast_names": names or "", "cast_pairing": code or ""}
+    return {"cast": out}
+
+
 @router.post("/{provider}/{scene_stashdb_id}/dismiss")
 def dismiss(provider: str, scene_stashdb_id: str):
     """Scene-scoped, not entity-scoped -- a scene surfaced via more than

@@ -96,6 +96,7 @@
     const [sent, failed] = responses.map((r) => r.rows);
 
     const sentGrouped = window.SRW.groupByScene(sent);
+    await window.SRW.fillCast(sentGrouped); // the cast next to the studio on the Stuck / wishlist rows
     // Only releases with an actual download job -- the rest of
     // 'sent_to_whisparr' is either still searching (nothing to show yet)
     // or "stuck" below (see the Releases page's own "On Wishlist"
@@ -250,8 +251,9 @@
           className: 'srw-release-title', href: sceneUrl(r.provider, r.scene_stashdb_id),
           target: '_blank', rel: 'noopener noreferrer', textContent: r.title || '(untitled)',
         }),
+        window.SRW.buildCastLine(r),
         el('span', { className: 'srw-film-class srw-film-class-likely', textContent: 'Scene' }), // like the Movie pill
-      ];
+      ].filter(Boolean);
       if (openScene) { // the scene in Stash: the link is set once the page's local scene ids are known (resolveOpenScenes)
         li.push(el('a', { className: 'srw-btn srw-open-scene', textContent: 'Open scene', target: '_blank', rel: 'noopener noreferrer', hidden: true,
           'data-provider': r.provider, 'data-scene': r.scene_stashdb_id, title: 'Open this scene in Stash (new tab)' }));

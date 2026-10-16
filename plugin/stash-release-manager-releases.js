@@ -1064,6 +1064,7 @@
         });
         if (response.error) return response;
         let items = groupByScene(response.rows);
+        if (status === 'sent_to_whisparr') await window.SRW.fillCast(items); // the cast next to the studio on wishlist rows
         if (sortKey) items = items.sort((a, b) => String(b[sortKey] || '').localeCompare(String(a[sortKey] || '')));
         return { total: response.total, items };
       },
@@ -1095,7 +1096,8 @@
           target: '_blank', rel: 'noopener noreferrer',
           textContent: r.title || '(untitled)',
         }),
-      ];
+        status === 'sent_to_whisparr' ? window.SRW.buildCastLine(r) : null,
+      ].filter(Boolean);
       // Dismissed has no timestamp field of its own (unlike handoff_at/
       // imported_at) and, unlike those two, is meant to be reversible --
       // added 2026-09-12 after the user asked what Dismiss actually

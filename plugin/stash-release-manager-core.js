@@ -298,6 +298,37 @@
     return el('span', { className: 'srw-release-studio-context', textContent: r.studio_name });
   }
 
+  // The performers of a scene next to the studio (v0.213.7): a release that came in through a STUDIO shows the studio only, which is little to go on
+  // for an own search. `cast_names` is '|A|B|' (read by fillCast() when missing); at most five names, the rest as "+N", all in the tooltip.
+  function buildCastLine(r) {
+    const names = String((r && r.cast_names) || '').split('|').filter(Boolean);
+    if (!names.length) return null;
+    const shown = names.slice(0, 5).join(', ') + (names.length > 5 ? ` +${names.length - 5}` : '');
+    return el('span', { className: 'srw-release-cast', title: names.join(', '), textContent: `with ${shown}` });
+  }
+
+  // Reads the cast of the rows that have none stored yet (only wishlist lists use this; one sidecar call per 100 scenes) and fills it in.
+  async function fillCast(items) {
+    const todo = items.filter((r) => r && r.cast_names == null && r.provider && r.scene_stashdb_id);
+    if (!todo.length) return;
+    const scenes = [];
+    const seen = new Set();
+    todo.forEach((r) => {
+      const key = `${r.provider}:${r.scene_stashdb_id}`;
+      if (!seen.has(key)) { seen.add(key); scenes.push({ provider: r.provider, scene_stashdb_id: r.scene_stashdb_id }); }
+    });
+    try {
+      for (let i = 0; i < scenes.length; i += 100) {
+        const res = await runOp('releases_fill_cast', { scenes: scenes.slice(i, i + 100) });
+        if (!res || !res.cast) continue;
+        todo.forEach((r) => {
+          const x = res.cast[`${r.provider}:${r.scene_stashdb_id}`];
+          if (x) { r.cast_names = x.cast_names; r.cast_pairing = x.cast_pairing; }
+        });
+      }
+    } catch (e) { /* the cast is a nicety: rows are drawn without it */ }
+  }
+
   // A scene can be new-relative-to more than one watched entity at once
   // (e.g. a watched Studio AND a watched Performer both surface it) --
   // the backend stores one release row per (provider, scene, entity)
@@ -2189,7 +2220,7 @@
     sceneUrl, notifyReadd, loadMetadataProviderUrls, loadProviders, resetProviders, providerInfo, providerLabel, providerKeys, providerOn, providersAllOn, providersSelected, isLateAdditionNew, buildLateAdditionBadge,
     buildFilteredPagedList, buildSafetyPanel, ignoreRenamers, pairingOptionsFor, castOptionsFor, buildPairingBadge, localPageFetcher, releaseQueryArgs, filterLocally, isFilterActive,
     describeProgress, applyProgress, attachLive, buildLiveHint,
-    buildEntityIcons, buildLocalEntityLink, buildReleaseThumb, buildStudioContext, groupByScene,
+    buildEntityIcons, buildLocalEntityLink, buildReleaseThumb, buildStudioContext, buildCastLine, fillCast, groupByScene,
     SENT_STATUS_LABEL, SENT_STATUS_LABEL_LONG,
     buildStashLink, createScopeStateRegistry, buildSideNav, setActivityCount, acknowledgeUrl, buildPaneTabs, sectionTabLabel, arrangeReleaseRow, rowMeta, addOpenSceneLink, resolveSceneLinks,
   };
