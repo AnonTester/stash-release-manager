@@ -232,35 +232,8 @@
             panel.run();
           } }));
       }
-      if (['suggested', 'wanted'].includes(f.status)) {
-        act.push(el('button', { className: 'srw-btn srw-btn-dismiss', textContent: 'Dismiss', onClick: () => setStatus('dismissed') }));
-      }
-      // "Dismiss & delete group" (v0.168.0): a movie that came from an EMPTY Stash group -- dismiss it and delete that group too. Asks first (a
-      // look into the group now); if it holds files after all, a stronger question names them. Only the group goes, never scenes or files.
-      if (['suggested', 'wanted'].includes(f.status) && f.source === 'empty-group' && f.stash_group_id) {
-        const delBtn = el('button', { className: 'srw-btn srw-btn-danger', textContent: 'Dismiss & delete group',
-          title: 'Dismiss this movie and delete its empty group in Stash (scenes and files are never deleted)' });
-        delBtn.addEventListener('click', async () => {
-          delBtn.disabled = true;
-          const probe = await window.SRW.runOp('films_dismiss_delete_group', { id: f.id, dry_run: true });
-          delBtn.disabled = false;
-          if (probe.error) { notify('Delete group', probe.error, 'error'); return; }
-          if (!probe.exists) { notify('Delete group', 'The group does not exist in Stash any more -- use Dismiss.', 'info'); return; }
-          const hasFiles = probe.files > 0;
-          const names = (probe.file_list || []).map((x) => x.split('/').pop()).join(', ');
-          const msg = hasFiles
-            ? `The group "${probe.name}" is NOT empty: ${probe.files} file(s) in ${probe.scenes} scene(s) (${names}${probe.files > probe.file_list.length ? ', …' : ''}). Delete only the group (scenes and files stay in Stash) and dismiss "${f.title}"?`
-            : `Dismiss "${f.title}" and delete the empty group "${probe.name}" in Stash?`;
-          confirmInline(delBtn, msg, async () => {
-            const res = await window.SRW.runOp('films_dismiss_delete_group', { id: f.id, dry_run: false, force: hasFiles });
-            if (res.error) { notify('Delete group', res.error, 'error'); return; }
-            window.SRW.dismissedNotice(`Dismissed: ${f.title} -- group ${f.stash_group_id} deleted`, `Backup of the group: data/${res.backup}. Undo brings the movie back, not the group.`,
-              () => window.SRW.runOp('films_set_status', { id: f.id, status: res.previous }), () => load());
-            await load();
-          }, { danger: true });
-        });
-        act.push(delBtn);
-      }
+      // Dismiss, and "Dismiss & delete group" for a movie of an empty Stash group (shared with Activity > Stuck, v0.214.1).
+      act.push(...window.SRW.buildFilmDismissButtons(f, () => load()));
       // Import (v0.110.0): files already in the library but not grouped -- retry, or build the Group although the length did not fit.
       if (['grabbed', 'import_failed'].includes(f.status) && f.pending_import_path) {
         const force = f.status === 'import_failed';

@@ -11,7 +11,7 @@
   // rule and the bug it caused when this drifted). Change this if you
   // install under a different folder name.
   // Must equal `version:` in stash-release-manager.yml (scripts/test_plugin_version.py checks it).
-  const PLUGIN_VERSION = '0.213.11';
+  const PLUGIN_VERSION = '0.214.2';
   const PLUGIN_ID = 'stash-release-manager';
   const PLUGIN_NAME = 'StashReleaseManager';
 
@@ -1023,6 +1023,49 @@
 
   // "Dismiss" for a release on the wishlist that nothing was grabbed for (Activity > Stuck, Releases > On Wishlist; v0.213.5): the scene is not
   // wanted after all. Same Undo card as everywhere; a Whisparr entry that is monitored is unmonitored by the sidecar.
+  // Dismiss (and, for a movie that came from an empty Stash group, "Dismiss & delete group") for a wanted/suggested movie -- one function for the
+  // Movies page and Activity > Stuck (v0.214.1). The group delete asks first (a look into the group now); a group that holds files after all gets a
+  // stronger question. Only the group goes, never scenes or files; Undo brings the movie back, not the group. `onChanged()` redraws the list.
+  function buildFilmDismissButtons(f, onChanged) {
+    const out = [];
+    if (!['suggested', 'wanted'].includes(f.status)) return out;
+    const done = async () => { if (onChanged) await onChanged(); };
+    out.push(el('button', { className: 'srw-btn srw-btn-dismiss', textContent: 'Dismiss',
+      title: 'Not wanted after all: off the wishlist (with Undo)',
+      onClick: async (e) => {
+        e.currentTarget.disabled = true;
+        const res = await runOp('films_set_status', { id: f.id, status: 'dismissed' });
+        if (res.error) { notify('Movie', res.error, 'error'); e.currentTarget.disabled = false; return; }
+        dismissedNotice(`Dismissed: ${f.title}`, '', () => runOp('films_set_status', { id: f.id, status: res.previous }), () => { if (onChanged) onChanged(); });
+        await done();
+      } }));
+    if (f.source === 'empty-group' && f.stash_group_id) {
+      const delBtn = el('button', { className: 'srw-btn srw-btn-dismiss', textContent: 'Dismiss & Delete',
+        title: 'Dismiss this movie and delete its empty group in Stash (scenes and files are never deleted)' });
+      delBtn.addEventListener('click', async () => {
+        delBtn.disabled = true;
+        const probe = await runOp('films_dismiss_delete_group', { id: f.id, dry_run: true });
+        delBtn.disabled = false;
+        if (probe.error) { notify('Delete group', probe.error, 'error'); return; }
+        if (!probe.exists) { notify('Delete group', 'The group does not exist in Stash any more -- use Dismiss.', 'info'); return; }
+        const hasFiles = probe.files > 0;
+        const names = (probe.file_list || []).map((x) => x.split('/').pop()).join(', ');
+        const msg = hasFiles
+          ? `The group "${probe.name}" is NOT empty: ${probe.files} file(s) in ${probe.scenes} scene(s) (${names}${probe.files > probe.file_list.length ? ', …' : ''}). Delete only the group (scenes and files stay in Stash) and dismiss "${f.title}"?`
+          : `Dismiss "${f.title}" and delete the empty group "${probe.name}" in Stash?`;
+        confirmInline(delBtn, msg, async () => {
+          const res = await runOp('films_dismiss_delete_group', { id: f.id, dry_run: false, force: hasFiles });
+          if (res.error) { notify('Delete group', res.error, 'error'); return; }
+          dismissedNotice(`Dismissed: ${f.title} -- group ${f.stash_group_id} deleted`, `Backup of the group: data/${res.backup}. Undo brings the movie back, not the group.`,
+            () => runOp('films_set_status', { id: f.id, status: res.previous }), () => { if (onChanged) onChanged(); });
+          await done();
+        }, { danger: true });
+      });
+      out.push(delBtn);
+    }
+    return out;
+  }
+
   function buildWishlistDismiss(release, onChanged) {
     return el('button', {
       className: 'srw-btn srw-btn-dismiss', textContent: 'Dismiss',
@@ -1076,7 +1119,8 @@
       notify(`Grabbed: ${name}`, `${result.grabbed.title} (${result.grabbed.indexer || 'indexer'}) -- sent to the download client.`, 'success');
     } else if (result.already_sent) {
       notify(`Already on the wishlist: ${name}`, result.search_result
-        ? `Searched again: ${searchStatusLabel(null, result.search_result)}.` : '', 'info');
+        ? `Searched again: ${searchStatusLabel(null, result.search_result)}.`
+        : (result.search_running ? 'The search takes a while (slow indexer) and goes on in the background -- the result shows under Activity and History.' : ''), 'info');
     } else if (result.search_running) {
       notify(`Added to wishlist: ${name}`, 'The search takes a while (slow indexer) and goes on in the background -- the result shows under Activity and History.', 'success');
     } else if (result.search_skipped) {
@@ -1299,23 +1343,63 @@
     const wrap = el('span', { className: 'srw-search-actions' });
     getSearchCapabilities().then((caps) => {
       if (!caps || caps.error) return;
-      if (r.last_search_result) wrap.appendChild(buildLastSearch(r));
+      // One joined group (v0.214.0): Now | Whisparr | Last | Manual. Dismiss sits outside of it, apart.
+      const group = el('span', { className: 'srw-btn-group' });
+      const status = [];
+      const sources = caps.manual_sources || [];
+      if (sources.length && r.entity_type && r.entity_stashdb_id) group.appendChild(buildSearchNowButton(r, onGrabbed, status));
       // Only for releases Whisparr actually tracks (2026-09-25): StashDB
       // ones, and not under the 'no_whisparr' preset -- mirrors
       // handoff.uses_whisparr().
       const whisparrTracked = r.provider === 'stashdb' && caps.scope_preset !== 'no_whisparr';
-      if (caps.available && caps.available.whisparr && whisparrTracked) wrap.append(...buildWhisparrFallback(r));
-      const sources = caps.manual_sources || [];
-      if (sources.length) wrap.appendChild(buildManualSearch(r, sources, caps.backend, onGrabbed));
+      if (caps.available && caps.available.whisparr && whisparrTracked) {
+        const [btn, st] = buildWhisparrFallback(r);
+        group.appendChild(btn);
+        status.push(st);
+      }
+      if (r.last_search_result) group.appendChild(buildLastSearch(r));
+      if (sources.length) group.appendChild(buildManualSearch(r, sources, caps.backend, onGrabbed));
+      wrap.append(group, ...status);
     });
     return wrap;
+  }
+
+  // "Now" (v0.214.0): the same automatic search the schedule runs, started for this one release right away -- whatever the back-off says,
+  // because the user asked. Goes through the hand-off like the Search page's "Search now" (the release is on the wishlist already).
+  function buildSearchNowButton(r, onDone, statusNodes) {
+    const status = el('span', { className: 'srw-key-status' });
+    statusNodes.push(status);
+    return el('button', {
+      className: 'srw-btn', textContent: 'Now',
+      title: 'Run the automatic search for this release again right now (all the usual rules: date, performers, quality)',
+      onClick: async (e) => {
+        const button = e.currentTarget;
+        button.disabled = true;
+        status.textContent = ' searching...';
+        try {
+          const result = await runOp('releases_handoff', {
+            provider: r.provider, entity_type: r.entity_type,
+            entity_stashdb_id: r.entity_stashdb_id, scene_stashdb_id: r.scene_stashdb_id,
+          });
+          if (result.error) { status.textContent = ` error: ${result.error}`; notify(`Search failed: ${r.title || ''}`, result.error, 'error'); return; }
+          status.textContent = result.grabbed ? ' grabbed' : (result.search_running ? ' still running' : (result.search_result ? ` ${searchStatusLabel(null, result.search_result)}` : ' done'));
+          notifyHandoff(r.title, result);
+          if (result.grabbed && onDone) await onDone();
+        } catch (err) {
+          status.textContent = ` error: ${err.message}`;
+          notify(`Search failed: ${r.title || ''}`, err.message, 'error');
+        } finally {
+          button.disabled = false;
+        }
+      },
+    });
   }
 
   function buildWhisparrFallback(r) {
     const fallbackStatus = el('span', { className: 'srw-key-status' });
     const btn = el('button', {
       className: 'srw-btn',
-      textContent: 'Search via Whisparr',
+      textContent: 'Whisparr',
       title: 'Fall back to Whisparr\'s own automatic search+grab for this release',
       onClick: async (e) => {
         const button = e.currentTarget;
@@ -1517,7 +1601,7 @@
   // row itself, where they take a full-width line below the three columns -- the buttons' column must stay one line. Elsewhere
   // (entity panel lists) they stay inside their wrapper as before.
   function attachPanel(wrap, panel) {
-    (wrap.closest('li.srw-release-row') || wrap).appendChild(panel);
+    (wrap.closest('li.srw-release-row') || wrap.closest('.srw-search-actions') || wrap).appendChild(panel);
   }
 
   // Open / close of a result panel (Last search, manual search) -- v0.175.1/2: while its panel is open the button is highlighted and reads
@@ -1541,7 +1625,7 @@
 
   function buildLastSearch(r) {
     const wrap = el('span', { className: 'srw-prowlarr-search' });
-    const toggleBtn = el('button', { className: 'srw-btn', textContent: 'Last search' });
+    const toggleBtn = el('button', { className: 'srw-btn', textContent: 'Last', title: 'What the last automatic search asked for, and why nothing was taken' });
     const toggle = panelToggle(toggleBtn, (node) => attachPanel(wrap, node));
     let panel = null;
     toggleBtn.addEventListener('click', async () => {
@@ -1616,8 +1700,8 @@
     const wrap = el('span', { className: 'srw-prowlarr-search' });
     const toggleBtn = el('button', {
       className: 'srw-btn',
-      textContent: 'Search…',
-      title: 'Search indexers directly with your own query',
+      textContent: 'Manual',
+      title: 'Search the indexers yourself with your own query and grab a result',
     });
     const toggle = panelToggle(toggleBtn, (node) => { if (opts && opts.host) opts.host().appendChild(node); else attachPanel(wrap, node); });
     let panel = null;
@@ -2235,7 +2319,7 @@
     getRoute, onNavigate, initNavigationWatcher,
     el, waitForElement, entityIcon, buildPageHeader,
     searchStatusLabel, confirmInline, buildManagedList, buildSearchActions, whenNoOpenPanel, buildManualSearch, getSearchCapabilities,
-    rememberOpen, icon, mismatchWarning, buildPagedList, buildPager, releaseTitleNode, notify, dismissedNotice, releaseDismissedNotice, dismissRelease, buildWishlistDismiss, notifyHandoff, buildAddOnlyButton,
+    rememberOpen, icon, mismatchWarning, buildPagedList, buildPager, releaseTitleNode, notify, dismissedNotice, releaseDismissedNotice, dismissRelease, buildWishlistDismiss, buildFilmDismissButtons, notifyHandoff, buildAddOnlyButton,
     sceneUrl, notifyReadd, loadMetadataProviderUrls, loadProviders, resetProviders, providerInfo, providerLabel, providerKeys, providerOn, providersAllOn, providersSelected, isLateAdditionNew, buildLateAdditionBadge,
     buildFilteredPagedList, buildSafetyPanel, ignoreRenamers, pairingOptionsFor, castOptionsFor, buildPairingBadge, localPageFetcher, releaseQueryArgs, filterLocally, isFilterActive,
     describeProgress, applyProgress, attachLive, buildLiveHint,

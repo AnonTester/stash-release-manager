@@ -85,7 +85,7 @@ def activity():
     for f in rows:
         mode = f.get("mode") or "file"
         item = {"id": f["id"], "title": f["title"], "year": f.get("year"), "status": f["status"], "mode": mode,
-                "import_error": f.get("import_error"), "stash_group_id": f.get("stash_group_id"), "key": f"film:{f['id']}",
+                "import_error": f.get("import_error"), "stash_group_id": f.get("stash_group_id"), "source": f.get("source"), "key": f"film:{f['id']}",
                 "image_url": f.get("image_url"), "studio_name": f.get("studio_name"), "release_date": f.get("release_date"),
                 "review_candidate": f.get("review_candidate"), "last_search_at": f.get("last_search_at"),
                 "last_search_result": f.get("last_search_result")}

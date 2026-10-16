@@ -6,6 +6,15 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.214.2
+- The movie button "Dismiss & delete group" is called "Dismiss & Delete" and has the same muted red as Dismiss.
+
+## 0.214.1
+- Activity > Stuck: movie rows (wanted, nothing found) have Dismiss, and "Dismiss & Delete" when the movie came from an empty Stash group -- the same buttons as on the Movies page, now one shared function.
+
+## 0.214.0
+- Stuck / On Wishlist rows: the search buttons are one joined group -- Now (new: the automatic search for this one release, right away, whatever the back-off says), Whisparr, Last, Manual -- and Dismiss sits apart from it. The same button names appear wherever the manual search is offered.
+
 ## 0.213.11
 - The plain Dismiss buttons are a muted red, so they are not mistaken for the neighbouring buttons (calm on the dark theme too).
 

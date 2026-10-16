@@ -523,6 +523,7 @@
       if (f.stash_group_id) {
         children.push(el('a', { className: 'srw-btn', href: `/groups/${f.stash_group_id}`, target: '_blank', rel: 'noopener noreferrer', textContent: 'Open group' }));
       }
+      if (f.status === 'wanted') children.push(...window.SRW.buildFilmDismissButtons(f, () => render(container))); // Stuck: get rid of a movie / group nobody wants
       if (f.status === 'import_failed') {
         children.push(el('button', { className: 'srw-btn', textContent: 'Group anyway',
           title: 'Build the Group from the files as they are, although the length does not fit',
