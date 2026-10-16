@@ -93,5 +93,14 @@ check("scene 6 days old, feed reaches 7 days -> not older", not ss.older_than_fe
 check("no / bad date -> False", not ss.older_than_feed(None, 1, today) and not ss.older_than_feed("x", 1, today))
 check("feed window = age of the oldest item, at least 1", ss.FeedSource([{"title": "a", "age": 3}, {"title": "b", "age": 0}], {}).window_days() == 3
       and ss.FeedSource([], {}).window_days() == 1)
+# compilation rule (v0.213.5): exact date + 2 title words + nothing foreign
+import indexer_search as _ix
+T = "FeetishPOV Compilation - Your Tight & Slender Favorites"
+P = ["Ada Lapiedra", "Peach Lollypop", "Lia Lin", "Elena Lux", "Sybil A", "Matty Mila Perez"]
+check("compilation: studio.date.Compilation release accepted", _ix._candidate_plausible(T, "2026-08-13", P, "FeetishPOV.26.08.13.Compilation.XXX.1080p.MP4-GRP"))
+check("compilation: another scene of the studio and day (names a performer) refused", not _ix._candidate_plausible(T, "2026-08-13", P, "FeetishPOV.26.08.13.Jane.Doe.XXX.1080p.MP4-GRP"))
+check("compilation: same words, other date refused", not _ix._candidate_plausible(T, "2026-08-13", P, "FeetishPOV.26.07.02.Compilation.XXX.1080p.MP4-GRP"))
+check("compilation: studio and date only (one title word) refused", not _ix._candidate_plausible(T, "2026-08-13", P, "FeetishPOV.26.08.13.XXX.1080p.MP4-GRP"))
+check("compilation: an extra foreign name in the release refused", not _ix._candidate_plausible(T, "2026-08-13", P, "FeetishPOV.26.08.13.Compilation.Jane.Doe.Anna.Smith.XXX.1080p.MP4-GRP"))
 print("\nALL OK" if all(res) else "\nFAILED")
 sys.exit(0 if all(res) else 1)

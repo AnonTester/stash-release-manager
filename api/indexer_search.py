@@ -379,7 +379,8 @@ def _candidate_plausible(scene_title, scene_date, performer_names, candidate_tit
     """The single combined gate `_select_best()`/`search_and_grab()`
     both use: a candidate is accepted if EITHER its own title plausibly
     matches the scene's StashDB title, OR its filename embeds both the
-    scene's release date AND at least one credited performer's name --
+    scene's release date AND at least one credited performer's name, OR
+    (v0.213.5, _date_title_plausible()) the exact date plus two title words --
     date alone is deliberately NOT sufficient (see `_performer_plausible()`'s
     docstring for the real wrong-grab this combination was added to
     prevent, 2026-09-19)."""
@@ -388,6 +389,8 @@ def _candidate_plausible(scene_title, scene_date, performer_names, candidate_tit
     date_and_performer = (_date_plausible(scene_date, candidate_title)
                           and _performer_plausible(performer_names, candidate_title))
     if date_and_performer:
+        return True
+    if _date_title_plausible(scene_title, scene_date, performer_names, candidate_title):
         return True
     # Title match only counts when the release name doesn't ALSO name
     # something else (another performer, a different subtitle) -- see
@@ -404,7 +407,7 @@ def _candidate_plausible(scene_title, scene_date, performer_names, candidate_tit
 
 
 def _date_title_plausible(scene_title, scene_date, performer_names, candidate_title):
-    """Third way in (v0.213.5, tested offline first): the release name carries the scene's date AND at least two of the title's significant
+    """Third way in (v0.213.5, tested offline first on 23 stuck scenes / 516 stored candidates: only the compilation below was newly accepted): the release name carries the scene's date AND at least two of the title's significant
     words (the studio name counts as one), and names nothing else that is foreign to the scene. For a studio compilation ("FeetishPOV
     Compilation - Your Tight & Slender Favorites", six performers) the release is only "FeetishPOV.26.08.13.Compilation.XXX...": it names no
     performer (date + performer cannot pass) and carries 2 of the 5 title words (the usual half is 3). Another scene of the same studio and day
