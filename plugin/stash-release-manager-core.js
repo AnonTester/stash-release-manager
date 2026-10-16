@@ -1457,7 +1457,7 @@
     const has = (c, ...names) => names.some((n) => c.classList.contains(n));
     const kids = [...li.children];
     const thumb = kids.filter((c) => has(c, 'srw-release-thumb-link', 'srw-release-thumb'));
-    const entity = kids.filter((c) => has(c, 'srw-entity-icon-group', 'srw-local-entity-link', 'srw-local-entity-name-plain', 'srw-release-studio-context'));
+    const entity = kids.filter((c) => has(c, 'srw-entity-icon-group', 'srw-local-entity-link', 'srw-local-entity-name-plain', 'srw-release-studio-context', 'srw-release-cast'));
     const title = kids.filter((c) => c.classList.contains('srw-release-title'));
     // Buttons AND link-buttons ("Open scene", "Open group", "Open file in Stash") are actions; the Scene / Movie pill sits next to the title (v0.128.5).
     const actions = kids.filter((c) => c.tagName === 'BUTTON' || (c.tagName === 'A' && c.classList.contains('srw-btn'))
