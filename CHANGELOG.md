@@ -6,6 +6,9 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.213.8
+- Wishlist rows that came in through a studio now show the studio with its icon and the performers beside it without an icon, each linked to Stash (mirror of a performer row: performer with icon, studio beside it).
+
 ## 0.213.7
 - Activity > Stuck and Releases > On Wishlist: the performers of a scene are shown next to the studio ("with A, B, ... +N"); read once per scene from the provider and stored.
 
