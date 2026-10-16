@@ -6,6 +6,9 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.213.4
+- RSS search mode: a wishlist scene dated further back than the RSS feed reaches (the provider added it days after the release) now gets one targeted indexer search in the next run instead of after a full day (at most 10 per run).
+
 ## 0.213.3
 - New: "Restart sidecar" in Settings > General > Backup & move and after an import, so no command line is needed. The container ends its process and Docker starts it again (compose `restart: unless-stopped`); the page waits until it answers again.
 
