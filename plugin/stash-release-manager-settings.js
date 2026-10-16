@@ -1272,6 +1272,25 @@
             }
           },
         }),
+        client.type === 'sabnzbd' ? el('button', {
+          className: 'srw-btn', textContent: 'Clean history',
+          title: 'Remove the finished, fully imported downloads of this program from the client\'s history (asks first, counts before)',
+          onClick: async (e) => {
+            const btn = e.currentTarget;
+            btn.disabled = true;
+            status.textContent = ' counting...';
+            const probe = await window.SRW.runOp('download_clients_clean_history', { id: client.id, dry_run: true });
+            btn.disabled = false;
+            if (probe.error) { status.textContent = ` error: ${probe.error}`; return; }
+            status.textContent = '';
+            if (!probe.found) { status.textContent = ' nothing to clean up'; return; }
+            window.SRW.confirmInline(btn, `Remove ${probe.found} finished download(s) of this program from the history of "${client.name}"? (e.g. ${probe.sample.slice(0, 2).join(', ')}) The files are not touched.`, async () => {
+              status.textContent = ' cleaning...';
+              const res = await window.SRW.runOp('download_clients_clean_history', { id: client.id, dry_run: false });
+              status.textContent = res.error ? ` error: ${res.error}` : ` ${res.removed} removed${res.errors && res.errors.length ? `, ${res.errors.length} failed (${res.errors[0]})` : ''}`;
+            });
+          },
+        }) : null,
         el('button', {
           className: 'srw-btn', textContent: client.enabled ? 'Disable' : 'Enable',
           onClick: async () => {
@@ -1338,7 +1357,10 @@
       const remotePath = el('input', { type: 'text', placeholder: '/downloads', value: opts.remote_path || '' });
       const localPath = el('input', { type: 'text', placeholder: '/downloads', value: opts.local_path || '' });
       const formStatus = el('span', { className: 'srw-key-status' });
-      const usenetPart = el('div', {}, [el('label', {}, ['API key: ', apiKeyInput]), el('br')]);
+      const removeBox = el('input', { type: 'checkbox' }); removeBox.checked = opts.remove_completed !== false;
+      const usenetPart = el('div', {}, [el('label', {}, ['API key: ', apiKeyInput]), el('br'),
+        el('label', {}, [removeBox, ' Remove completed downloads from the history']),
+        el('p', { className: 'srw-hint', textContent: 'Like the *arr applications: once a download is imported for good, its entry is removed from SABnzbd\'s history (only ones this program downloaded; the files are not touched). The release name is kept here, so the same release is never fetched twice.' })]);
       const torrentPart = el('div', {}, [
         el('label', {}, ['User name: ', userInput]), el('br'),
         el('label', {}, ['Password: ', passInput]), el('br'),
@@ -1370,7 +1392,7 @@
           category: categoryInput.value || (torrent ? 'srm' : ''),
           options: torrent ? { initial_state: stateSel.value, recent_priority: recentSel.value, older_priority: olderSel.value,
             content_layout: layoutSel.value, sequential: seqBox.checked, first_last: flBox.checked, post_import_category: postCat.value,
-            remote_path: remotePath.value.trim(), local_path: localPath.value.trim() } : {},
+            remote_path: remotePath.value.trim(), local_path: localPath.value.trim() } : { remove_completed: removeBox.checked },
           enabled: existing ? existing.enabled : true,
         };
       };

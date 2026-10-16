@@ -29,7 +29,7 @@ SEED_IMAGES = "movie_groups_deleted_20261004_images"  # saved covers of deleted 
 GROUPS = [
     ("watchlist", "Watchlist and scan state", ["watchlist", "watchlist_activity", "watermark", "backlog_loaded_year", "backlog_overview",
                                                "muted_studio", "pending_favorite_decision"], True),
-    ("releases", "Releases (new, dismissed, imported, on the wishlist)", ["release"], True),
+    ("releases", "Releases (new, dismissed, imported, on the wishlist)", ["release", "downloaded_release"], True),
     ("movies", "Movies wishlist (with the saved covers of deleted groups)", ["film_want"], True),
     ("decisions", "Your decisions (Review marks, aliases, compare pairs)", ["review_mark", "scene_alias", "compare_pair", "inactive_review"], True),
     ("settings", "Settings that are preferences (intervals, filters, scope; no URLs, keys, passwords or paths) and quality profiles",

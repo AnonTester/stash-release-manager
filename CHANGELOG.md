@@ -6,6 +6,13 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.215.0
+- Like Sonarr / Radarr / Whisparr ("Remove Completed"): once a download is imported for good, its entry is removed from SABnzbd's history -- only entries this program downloaded, never other programs' downloads, files untouched. Runs after every file-import check; per client switch "Remove completed downloads from the history" (default on) in Settings > Download Clients; "Clean history" per SABnzbd client does the same for everything already there (counts first, asks before).
+- The release name of every removed entry is kept in the program's own records (part of the export), and the duplicate guard and the "Wrong download" blocklist read it, so a release is never fetched twice because the history was cleaned.
+
+## 0.214.3
+- The search button group (Now, Whisparr, Last, Manual) starts with a magnifier, so it is clear that all four buttons are searches.
+
 ## 0.214.2
 - The movie button "Dismiss & delete group" is called "Dismiss & Delete" and has the same muted red as Dismiss.
 

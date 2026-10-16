@@ -71,6 +71,7 @@ import logging
 import re
 
 import download_client_repo
+import download_history_cleanup
 import history
 import release_repo
 from qbittorrent_client import AlreadyAdded, QbittorrentClient, QbittorrentError
@@ -1223,7 +1224,7 @@ def _norm_release(name):
     return re.sub(r"[^a-z0-9]+", "", (name or "").lower())
 
 
-def _duplicate_guard(client, title):
+def _duplicate_guard(client, title, db=None):
     """Why this release must NOT be sent to SABnzbd again (or None). 2026-09-29: an error made the same five
     releases be fetched ~21 times each (97 NZB downloads, the indexer complained). SABnzbd's own duplicate
     detection only sees the NZB AFTER the indexer served it, so the check has to happen before the call.
@@ -1248,6 +1249,8 @@ def _duplicate_guard(client, title):
                 return f"the same release is already in SABnzbd's history ({s.get('status')})"
     if failed >= 2:
         return f"the same release already failed {failed} times"
+    if db is not None and download_history_cleanup.ledger_has(db, title):
+        return "the same release was downloaded before (its entry was removed from the client's history after the import)"
     return None
 
 
@@ -1318,7 +1321,7 @@ def send_to_download_client(db, candidate, warn):
         return {"result": RESULT_CLIENT_NOT_IMPLEMENTED}
 
     client = SabnzbdClient(client_row["url"], client_row["api_key"])
-    reason = _duplicate_guard(client, candidate.get("title"))
+    reason = _duplicate_guard(client, candidate.get("title"), db)
     if reason:
         logger.warning("indexer_search: not grabbing %r -- %s", candidate.get("title"), reason)
         warn(f"Grab skipped: {reason}")

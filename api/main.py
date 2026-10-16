@@ -75,6 +75,7 @@ from handoff import hand_off, uses_whisparr, attempt_sidecar_search, link_import
 import indexer_search
 from indexer_search import search_and_grab
 import download_client_repo
+import download_history_cleanup
 import metadata_provider_repo
 import release_repo
 from download_sources import WhisparrQueueSource, SabnzbdSource
@@ -1960,6 +1961,9 @@ async def _file_import_loop():
             result = await asyncio.to_thread(run_file_import)
             if result.get("imported"):
                 logger.info("file import: %d download(s) imported", len(result["imported"]))
+            removed = await asyncio.to_thread(download_history_cleanup.clean_all, db)  # "Remove completed" (v0.215.0)
+            if removed:
+                logger.info("file import: %d finished download(s) removed from the client's history", removed)
         except Exception:
             logger.exception("file import failed")
         await asyncio.sleep(max(interval_hours, 0.1) * 3600)

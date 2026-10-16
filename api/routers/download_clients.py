@@ -4,6 +4,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 import download_client_repo
+import download_history_cleanup
 from qbittorrent_client import QbittorrentClient
 from sabnzbd_client import SabnzbdClient
 
@@ -140,6 +141,21 @@ def check_entered(body: DownloadClientCheckBody):
         return _ping(body.type, body.url.strip(), body.api_key, body.username, body.password)
     except Exception as e:
         return {"ok": False, "error": str(e)}
+
+
+@router.post("/{client_id}/clean-history")
+def clean_history(client_id: int, dry_run: bool = True):
+    """Removes the finished, fully imported downloads of this program from the client's history (v0.215.0, like the *arr "Remove Completed").
+    Dry run (default): only counts what would go. Never touches an entry that does not belong to an imported release of ours."""
+    client_row = download_client_repo.get_one(_db, client_id)
+    if client_row is None:
+        raise HTTPException(404, "download client not found")
+    if client_row["type"] != "sabnzbd":
+        raise HTTPException(400, "only SABnzbd clients keep a history to clean up")
+    try:
+        return download_history_cleanup.clean_client(_db, client_row, dry_run=dry_run)
+    except Exception as e:
+        return {"error": str(e)}
 
 
 @router.post("/{client_id}/check")

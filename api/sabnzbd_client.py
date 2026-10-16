@@ -89,6 +89,11 @@ class SabnzbdClient:
         result = self._call("addurl", **params)
         return result.get("nzo_ids", [])
 
+    def delete_history(self, nzo_id, del_files=False):
+        """Removes one finished job from SABnzbd's history (what the *arr applications do after an import: "Remove Completed"). The files
+        stay unless `del_files` -- after an import this program has moved or removed them itself."""
+        self._call("history", name="delete", value=nzo_id, del_files=1 if del_files else 0)
+
     def find_history_by_nzo_id(self, nzo_id):
         """One specific job by SABnzbd's own id -- what
         download_sources.SabnzbdSource matches against Whisparr's

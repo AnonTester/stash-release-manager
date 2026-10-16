@@ -32,6 +32,7 @@ import threading
 import time
 
 import download_client_repo
+import download_history_cleanup
 import file_naming
 import library_check
 import quality_detect
@@ -990,6 +991,8 @@ def blocklist_download(db, release):
                 title = release.get("grabbed_title")  # the torrent's own name can differ from the release title the indexer showed
         except Exception:
             logger.exception("blocklist_download: couldn't look up the download job for scene %s", scene_stashdb_id)
+    if not title:  # the entry may be gone from the client's history (removed after the import): our own records still know the name
+        title = release.get("grabbed_title") or download_history_cleanup.ledger_title_for_job(db, release.get("download_job_id"))
     if title:
         release_repo.add_review_rejected_title(db, provider, scene_stashdb_id, title)
         logger.info("blocklisted %r for scene %s (this sidecar's own list)", title, scene_stashdb_id)

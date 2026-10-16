@@ -759,6 +759,8 @@ def main():
         result = _delete(sidecar_url, f"/indexers/{args.get('id')}", timeout=15)
     elif mode == "indexers_check":
         result = _post(sidecar_url, f"/indexers/{args.get('id')}/check", {}, timeout=30)
+    elif mode == "download_clients_clean_history":
+        result = _post(sidecar_url, f"/download-clients/{args.get('id')}/clean-history?dry_run={'false' if args.get('dry_run') is False else 'true'}", {}, timeout=300)
     elif mode == "download_clients_check":
         result = _post(sidecar_url, f"/download-clients/{args.get('id')}/check", {}, timeout=15)
     elif mode == "download_clients_test":

@@ -11,7 +11,7 @@
   // rule and the bug it caused when this drifted). Change this if you
   // install under a different folder name.
   // Must equal `version:` in stash-release-manager.yml (scripts/test_plugin_version.py checks it).
-  const PLUGIN_VERSION = '0.214.2';
+  const PLUGIN_VERSION = '0.215.0';
   const PLUGIN_ID = 'stash-release-manager';
   const PLUGIN_NAME = 'StashReleaseManager';
 
@@ -1345,6 +1345,8 @@
       if (!caps || caps.error) return;
       // One joined group (v0.214.0): Now | Whisparr | Last | Manual. Dismiss sits outside of it, apart.
       const group = el('span', { className: 'srw-btn-group' });
+      // First segment: a magnifier (not a button) -- says that the four buttons after it are all searches.
+      group.appendChild(el('span', { className: 'srw-btn-group-label', title: 'Search: Now · Whisparr · Last · Manual' }, [icon('faMagnifyingGlass') || document.createTextNode('🔍')]));
       const status = [];
       const sources = caps.manual_sources || [];
       if (sources.length && r.entity_type && r.entity_stashdb_id) group.appendChild(buildSearchNowButton(r, onGrabbed, status));
@@ -1359,7 +1361,7 @@
       }
       if (r.last_search_result) group.appendChild(buildLastSearch(r));
       if (sources.length) group.appendChild(buildManualSearch(r, sources, caps.backend, onGrabbed));
-      wrap.append(group, ...status);
+      wrap.append(...(group.children.length > 1 ? [group] : []), ...status); // the magnifier alone is no group
     });
     return wrap;
   }
