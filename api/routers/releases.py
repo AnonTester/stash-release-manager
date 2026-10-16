@@ -10,7 +10,7 @@ import download_client_repo
 import import_progress
 import file_importer
 import release_repo
-from handoff import hand_off, fix_mismatched_download, fallback_to_whisparr
+from handoff import hand_off, fix_mismatched_download, fallback_to_whisparr, uses_whisparr
 import indexer_search
 import qbittorrent_client
 from qbittorrent_client import QbittorrentClient
@@ -532,7 +532,19 @@ def dismiss(provider: str, scene_stashdb_id: str):
     previous = release_repo.snapshot_scene_rows(_db, provider, scene_stashdb_id)
     release_repo.set_status_for_scene(_db, provider, scene_stashdb_id, "dismissed")
     history.scene("info", "dismiss", "Dismissed", provider, scene_stashdb_id)
-    return {"ok": True, "previous": previous}
+    out = {"ok": True, "previous": previous}
+    # A scene that was on the wishlist is registered in Whisparr (no file): when it is MONITORED there (only after "Search via Whisparr"),
+    # Whisparr would keep searching for what the user just dismissed -- unmonitor it (v0.213.5). Best effort, never blocks the dismiss.
+    if any(r.get("status") == "sent_to_whisparr" for r in previous) and uses_whisparr(_db, provider):
+        try:
+            movie = _get_whisparr_client().find_by_stash_id(scene_stashdb_id)
+            if movie and movie.get("monitored") and not movie.get("hasFile"):
+                _get_whisparr_client().set_movie_monitored(movie["id"], False)
+                out["whisparr_unmonitored"] = True
+                history.scene("info", "dismiss", "Unmonitored in Whisparr", provider, scene_stashdb_id)
+        except Exception:
+            logger.exception("dismiss: could not unmonitor %s in Whisparr (the dismiss itself is done)", scene_stashdb_id)
+    return out
 
 
 class RestoreRow(BaseModel):

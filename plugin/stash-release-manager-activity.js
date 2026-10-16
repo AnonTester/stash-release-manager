@@ -271,6 +271,7 @@
       // The same search actions as on the Releases page's On Wishlist rows (v0.106.9): Last search (what was searched and why
       // nothing was taken), Search via Whisparr, and Search… (own query + Grab).
       if (showSearchActions) li.push(window.SRW.buildSearchActions(r, () => (onChanged ? onChanged() : null)));
+      if (showSearchActions && r.status === 'sent_to_whisparr' && !r.download_job_id) li.push(window.SRW.buildWishlistDismiss(r, () => (onChanged ? onChanged() : null)));
       if (showProgress && r.download_job_id) {
         const fill = el('div', { className: 'srw-download-progress-fill' });
         const text = el('span', { className: 'srw-download-progress-text' });

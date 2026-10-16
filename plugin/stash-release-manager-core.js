@@ -971,6 +971,22 @@
     catch (e) { return { error: e.message || String(e) }; }
   }
 
+  // "Dismiss" for a release on the wishlist that nothing was grabbed for (Activity > Stuck, Releases > On Wishlist; v0.213.5): the scene is not
+  // wanted after all. Same Undo card as everywhere; a Whisparr entry that is monitored is unmonitored by the sidecar.
+  function buildWishlistDismiss(release, onChanged) {
+    return el('button', {
+      className: 'srw-btn', textContent: 'Dismiss',
+      title: 'Not wanted after all: off the wishlist, no more searching (with Undo)',
+      onClick: async (e) => {
+        e.currentTarget.disabled = true;
+        const res = await dismissRelease(release);
+        if (res && res.error) { notify('Dismiss', `Dismiss failed: ${res.error}`, 'error'); e.currentTarget.disabled = false; return; }
+        releaseDismissedNotice(release, res, () => { if (onChanged) onChanged(); });
+        if (onChanged) await onChanged();
+      },
+    });
+  }
+
   // The Undo card for a release dismiss. `result` is the dismiss op's answer ({previous: rows as they were, or {error}}).
   function releaseDismissedNotice(release, result, onChange) {
     if (result && result.error) { notify('Dismiss', `Dismiss failed: ${result.error}`, 'error'); return false; }
@@ -2169,7 +2185,7 @@
     getRoute, onNavigate, initNavigationWatcher,
     el, waitForElement, entityIcon, buildPageHeader,
     searchStatusLabel, confirmInline, buildManagedList, buildSearchActions, whenNoOpenPanel, buildManualSearch, getSearchCapabilities,
-    rememberOpen, icon, mismatchWarning, buildPagedList, buildPager, releaseTitleNode, notify, dismissedNotice, releaseDismissedNotice, dismissRelease, notifyHandoff, buildAddOnlyButton,
+    rememberOpen, icon, mismatchWarning, buildPagedList, buildPager, releaseTitleNode, notify, dismissedNotice, releaseDismissedNotice, dismissRelease, buildWishlistDismiss, notifyHandoff, buildAddOnlyButton,
     sceneUrl, notifyReadd, loadMetadataProviderUrls, loadProviders, resetProviders, providerInfo, providerLabel, providerKeys, providerOn, providersAllOn, providersSelected, isLateAdditionNew, buildLateAdditionBadge,
     buildFilteredPagedList, buildSafetyPanel, ignoreRenamers, pairingOptionsFor, castOptionsFor, buildPairingBadge, localPageFetcher, releaseQueryArgs, filterLocally, isFilterActive,
     describeProgress, applyProgress, attachLive, buildLiveHint,

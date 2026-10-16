@@ -403,6 +403,23 @@ def _candidate_plausible(scene_title, scene_date, performer_names, candidate_tit
     return not (foreign == 1 and _date_contradicts(scene_date, candidate_title))
 
 
+def _date_title_plausible(scene_title, scene_date, performer_names, candidate_title):
+    """Third way in (v0.213.5, tested offline first): the release name carries the scene's date AND at least two of the title's significant
+    words (the studio name counts as one), and names nothing else that is foreign to the scene. For a studio compilation ("FeetishPOV
+    Compilation - Your Tight & Slender Favorites", six performers) the release is only "FeetishPOV.26.08.13.Compilation.XXX...": it names no
+    performer (date + performer cannot pass) and carries 2 of the 5 title words (the usual half is 3). Another scene of the same studio and day
+    names its own performers / words, which `_foreign_words()` turns down."""
+    if not _date_plausible(scene_date, candidate_title):
+        return False
+    words = _significant_words(scene_title)
+    if len(words) < 2:
+        return False
+    normalized = re.sub(r"[^a-z0-9]+", " ", (candidate_title or "").lower())
+    if sum(1 for w in words if w in normalized) < 2:
+        return False
+    return len(_foreign_words(scene_title, performer_names, candidate_title)) <= _MAX_FOREIGN_WORDS
+
+
 def _indexer_priorities(whisparr_client):
     """{indexerId: priority}, lower number = preferred -- same
     convention Whisparr's own CompareIndexerPriority sorts on (confirmed

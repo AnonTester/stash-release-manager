@@ -1169,6 +1169,7 @@
         // buildSearchActions(): Whisparr fallback only with Whisparr
         // configured, own-query search over Prowlarr/direct indexers.
         li.push(window.SRW.buildSearchActions(r, () => renderCurrentView(container)));
+        if (!r.download_job_id) li.push(window.SRW.buildWishlistDismiss(r, () => renderCurrentView(container)));
         // Live download progress (2026-09-20, "Activity display"
         // request) -- only meaningful once something's actually been
         // grabbed (`download_job_id` set); a release still searching
