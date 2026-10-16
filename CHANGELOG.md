@@ -6,6 +6,9 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.215.1
+- Cleaning the client's history also removes the entries of downloads this program rejected itself (blocklisted release names, quality-rejected downloads, other encodes of a blocked release) and of imported movies whose stored title ends in the NZB's first file name (".par2"). An entry marked as someone else's download by the post-processing script is never removed.
+
 ## 0.215.0
 - Like Sonarr / Radarr / Whisparr ("Remove Completed"): once a download is imported for good, its entry is removed from SABnzbd's history -- only entries this program downloaded, never other programs' downloads, files untouched. Runs after every file-import check; per client switch "Remove completed downloads from the history" (default on) in Settings > Download Clients; "Clean history" per SABnzbd client does the same for everything already there (counts first, asks before).
 - The release name of every removed entry is kept in the program's own records (part of the export), and the duplicate guard and the "Wrong download" blocklist read it, so a release is never fetched twice because the history was cleaned.

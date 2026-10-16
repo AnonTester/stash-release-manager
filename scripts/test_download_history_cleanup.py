@@ -48,4 +48,33 @@ class Boom(Sab):
     def delete_history(self, nzo, del_files=False): raise RuntimeError("down")
 out = dhc.clean_client(db, row, dry_run=False, client=Boom(slots))
 check("a failing delete is reported, nothing raises", out["removed"] == 0 and len(out["errors"]) == 2)
+
+# --- v0.215.1: movies whose grabbed_title ends in ".par2", and downloads this program blocklisted / rejected
+db2 = Database(os.path.join(tempfile.mkdtemp(), "t2.sqlite3"))
+cid2 = download_client_repo.create(db2, "sab", "sabnzbd", "usenet", 25, True, "http://x", "k", "", "", "", {})
+import json
+with db2.connect() as c:
+    c.execute("INSERT INTO film_want (title, status, grabbed_title, source, source_ref) VALUES ('Stoya', 'imported', 'dp-Stoya .web.whore.1080p.x264 - 001167 dp-stoya.web.whore.1080p.x264.par2', 't', 'r1')")
+    c.execute("INSERT INTO film_want (title, status, grabbed_title, source, source_ref) VALUES ('Open', 'wanted', 'Open.Film.1080p.WEB-GRP.par2', 't', 'r2')")
+    release_repo.insert_release(db2, c, scene, "stashdb", "studio", "e1")
+    c.execute("UPDATE release SET review_rejected_titles = ?", (json.dumps(["Anna.Placeholder.Title.Here.1080p", "exact:SomeStudio.26.10.03.Tomi.XXX.MP4-GRP", "short"]),))
+row2 = download_client_repo.get_one(db2, cid2)
+slots2 = [
+    {"nzo_id": "1", "name": "dp-Stoya_.web.whore.1080p.x264_-_001167_dp-stoya.web.whore.1080p.x264", "status": "Completed"},  # imported movie, ".par2" title
+    {"nzo_id": "2", "name": "Open.Film.1080p.WEB-GRP", "status": "Completed"},                                              # movie not imported -> stays
+    {"nzo_id": "3", "name": "Anna.Placeholder.Title.Here.1080P.x265", "status": "Completed"},                                    # other encode of a blocklisted name
+    {"nzo_id": "4", "name": "SomeStudio.26.10.03.Tomi.XXX.MP4-GRP", "status": "Completed"},                            # exact reject
+    {"nzo_id": "5", "name": "SomeStudio.26.10.03.Tomi.XXX.MP4-GRP.1080p.HEVC", "status": "Completed"},                  # a different encode of an EXACT reject: still caught by prefix (same release family)
+    {"nzo_id": "6", "name": "short", "status": "Completed"},                                                                 # too short to match by prefix
+    {"nzo_id": "7", "name": "Anna.Placeholder.Title.Here.1080p", "status": "Failed"},                                            # failed stays
+    {"nzo_id": "8", "name": "Something.Unrelated.2026", "status": "Completed"},
+    {"nzo_id": "9", "name": "Anna.Placeholder.Title.Here.1080p", "status": "Completed", "script_line": 'srw_notify: sidecar answered {"ours":false}'},  # a manual download of someone else, same name
+]
+found = {c["nzo_id"]: c["matched_by"] for c in dhc.find_candidates(db2, row2, Sab(slots2))}
+check("movie with a .par2 grabbed_title is matched when imported", found.get("1") == "name")
+check("movie that is not imported stays", "2" not in found)
+check("other encode of a blocklisted release is removed", found.get("3") == "blocked")
+check("exact-rejected release is removed", found.get("4") == "blocked")
+check("too-short names are not matched by their start; failed and unrelated stay", "6" not in found and "7" not in found and "8" not in found)
+check("a blocked name downloaded by someone else (script says ours:false) is left alone", "9" not in found)
 sys.exit(0 if all(res) else 1)

@@ -5,6 +5,7 @@ movie of this program that is fully imported. Anything else in the history (othe
 The duplicate guard used to read that history ("this release was downloaded before"). So before an entry is removed, its release name goes
 into the ledger `downloaded_release`; the guard and the blocklist ask the ledger as well.
 """
+import json
 import logging
 import re
 
@@ -14,11 +15,20 @@ from sabnzbd_client import SabnzbdClient
 logger = logging.getLogger(__name__)
 
 HISTORY_LIMIT = 5000
+MIN_BLOCK_LEN = 20  # a shorter name is too unspecific to match by its start
 
 
 def norm(name):
     """Letters and digits only -- an indexer title and SABnzbd's job name differ in punctuation ("," becomes "_")."""
     return re.sub(r"[^a-z0-9]+", "", (name or "").lower())
+
+
+_EXT_RE = re.compile(r"(\.(par2|nfo|nzb|sfv|rar|r\d{2}|mkv|mp4|avi|wmv|m4v|iso))+$", re.I)
+
+
+def norm_title(name):
+    """`norm` of a grabbed title: a movie's grabbed_title is the first FILE name of the NZB ("... .par2"), the client's job name has no extension."""
+    return norm(_EXT_RE.sub("", name or ""))
 
 
 def ledger_has(db, title):
@@ -53,8 +63,30 @@ def _imported_keys(db, client_id):
                 if r["download_job_id"] and r["download_client_id"] in (client_id, None):
                     ids.add(str(r["download_job_id"]))
                 if r["grabbed_title"]:
-                    names.add(norm(r["grabbed_title"]))
+                    names.add(norm_title(r["grabbed_title"]))
     return ids, names
+
+
+def _blocked_names(db):
+    """Release names this program rejected itself (blocklisted or quality-rejected downloads, of scenes and movies): the download is over for good, its
+    file was discarded, the name stays blocked -- the history entry has nothing left to say."""
+    out = set()
+    with db.connect() as conn:
+        for table, col in (("release", "review_rejected_titles"), ("film_want", "rejected_titles")):
+            for r in conn.execute(f"SELECT DISTINCT {col} AS v FROM {table} WHERE {col} IS NOT NULL AND {col} != ''"):
+                try:
+                    for t in json.loads(r["v"]):
+                        k = norm_title(str(t).removeprefix("exact:"))
+                        if len(k) >= MIN_BLOCK_LEN:
+                            out.add(k)
+                except (TypeError, ValueError):
+                    continue
+    return out
+
+
+def _is_blocked(key, blocked):
+    """Same name, or one is the start of the other (a blocked "...1080p" also covers "...1080P.x265", the other encode of that release)."""
+    return key in blocked or any(key.startswith(b) or b.startswith(key) for b in blocked if len(key) >= MIN_BLOCK_LEN)
 
 
 def enabled_for(client_row):
@@ -63,9 +95,10 @@ def enabled_for(client_row):
 
 
 def find_candidates(db, client_row, client=None):
-    """Finished history entries of this client that belong to a fully imported release of ours."""
+    """Finished history entries of this client that belong to a fully imported release of ours, or to a download this program rejected / blocklisted."""
     client = client or SabnzbdClient(client_row["url"], client_row["api_key"])
     ids, names = _imported_keys(db, client_row["id"])
+    blocked = _blocked_names(db)
     out = []
     for slot in client.get_history(limit=HISTORY_LIMIT):
         if (slot.get("status") or "").lower() != "completed":
@@ -73,8 +106,11 @@ def find_candidates(db, client_row, client=None):
         nzo_id, name = slot.get("nzo_id"), slot.get("name")
         if nzo_id and str(nzo_id) in ids:
             out.append({"nzo_id": nzo_id, "name": name, "matched_by": "job"})
-        elif norm(name) and norm(name) in names:
+        elif norm_title(name) and norm_title(name) in names:
             out.append({"nzo_id": nzo_id, "name": name, "matched_by": "name"})
+        elif norm_title(name) and _is_blocked(norm_title(name), blocked) and '"ours":false' not in (slot.get("script_line") or ""):
+            # (the post-processing script's note "ours": false = a download this program did not start: never ours to remove)
+            out.append({"nzo_id": nzo_id, "name": name, "matched_by": "blocked"})
     return out
 
 
