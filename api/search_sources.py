@@ -139,6 +139,11 @@ class FeedSource:
     def indexer_priorities(self):
         return self._priorities
 
+    def window_days(self):
+        """How many days back the feed reaches: the age of its oldest item (at least 1). Unknown ages -> 1."""
+        ages = [it.get("age") for it in self.items if isinstance(it.get("age"), (int, float))]
+        return max([1] + [int(a) for a in ages])
+
     @classmethod
     def fetch(cls, source, categories_hint=None):
         """Blank-query pull through the configured backend (Prowlarr or the direct indexers)."""
@@ -152,3 +157,14 @@ class UnavailableSource:
     def __init__(self, name, reason):
         self.name = name
         self.reason = reason
+
+
+def older_than_feed(scene_date, window_days, today=None):
+    """True when a scene's date lies further back than the RSS feed reaches (+1 day of slack): its release cannot be in the feed any more, only a
+    targeted indexer search can find it (v0.213.4). Unknown / unparsable date -> False (rely on the feed and the back-off)."""
+    from datetime import date, datetime
+    try:
+        d = datetime.strptime(str(scene_date)[:10], "%Y-%m-%d").date()
+    except ValueError:
+        return False
+    return ((today or date.today()) - d).days > int(window_days) + 1

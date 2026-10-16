@@ -45,7 +45,7 @@ from sabnzbd_client import SabnzbdClient
 from theporndb_client import ThePornDBClient
 from prowlarr_client import ProwlarrClient
 import search_sources
-from search_sources import FeedSource, IndexersSource, ProwlarrSource, UnavailableSource
+from search_sources import FeedSource, IndexersSource, ProwlarrSource, UnavailableSource, older_than_feed
 import indexer_repo
 import watcher
 from watcher import run_feed_scan, run_scan
@@ -1298,6 +1298,9 @@ def stuck_releases(pending):
     return [r for r in pending if r.get("last_search_result") and r["last_search_result"] != "duplicate_download"]
 
 
+IMMEDIATE_TARGETED_PER_TICK = 10  # RSS mode: targeted searches for scenes older than the feed window, per run (the rest follows in the next run)
+
+
 def _targeted_due(release):
     """RSS mode back-off: does this release get an indexer query of its own now? The feed covers everything
     that is posted from here on; a targeted search only helps for releases already older than the feed window.
@@ -1358,7 +1361,7 @@ def run_indexer_search(only_stuck=False):
         # RSS mode (2026-09-30): ONE blank-query pull of the newest releases per tick, searched locally;
         # a release only gets its OWN indexer query when its back-off says so (_targeted_due). If the
         # feed can't be pulled the tick is skipped -- never a fallback to hundreds of targeted queries.
-        feed, targeted_used = None, 0
+        feed, targeted_used, immediate_targeted = None, 0, 0
         if only_stuck:
             pending = stuck_releases(pending)
         elif (get_setting_value(db, "search_mode", "polling") == "rss" and search_source is not None
@@ -1412,6 +1415,13 @@ def run_indexer_search(only_stuck=False):
                     targeted = True
                 elif feed is not None:
                     targeted = _targeted_due(release)
+                    # A scene dated further back than the feed reaches (the provider added it late, e.g. a German-titled entry six days after
+                    # the release) cannot be found in the feed: ONE targeted search now instead of after the first day (v0.213.4), at most
+                    # IMMEDIATE_TARGETED_PER_TICK of them per run.
+                    if (not targeted and not release.get("last_targeted_search_at") and immediate_targeted < IMMEDIATE_TARGETED_PER_TICK
+                            and older_than_feed(release.get("scene_date"), feed.window_days())):
+                        targeted = True
+                        immediate_targeted += 1
                     source_for_release = search_source if targeted else feed
                 if movie is None:
                     outcome = attempt_sidecar_search(db, release["provider"], scene_stashdb_id, release,

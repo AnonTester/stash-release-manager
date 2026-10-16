@@ -83,5 +83,15 @@ check("SD segment -> 480", reso("Site.26.09.12.Name.SD.XXX.MP4-GRP") == 480)
 check("normal group stays unknown", reso("Nympho.26.10.11.Lily.XXX.MP4-P0RNL0V3R") is None)
 check("explicit 1080p wins over SD marker", reso("Site.26.09.12.Name.1080p.MP4-GRPX") == 1080)
 check("lowercase 'sd' in a word is no marker", reso("Site.Madison.sd.Name.XXX.MP4-GRP") is None)
+# scenes older than the RSS feed reaches (v0.213.4)
+import datetime as _dt
+import search_sources as ss
+today = _dt.date(2026, 10, 16)
+check("scene 6 days old, feed reaches 1 day -> older than the feed", ss.older_than_feed("2026-10-10", 1, today))
+check("scene 2 days old, feed reaches 1 day -> still within the slack", not ss.older_than_feed("2026-10-14", 1, today))
+check("scene 6 days old, feed reaches 7 days -> not older", not ss.older_than_feed("2026-10-10", 7, today))
+check("no / bad date -> False", not ss.older_than_feed(None, 1, today) and not ss.older_than_feed("x", 1, today))
+check("feed window = age of the oldest item, at least 1", ss.FeedSource([{"title": "a", "age": 3}, {"title": "b", "age": 0}], {}).window_days() == 3
+      and ss.FeedSource([], {}).window_days() == 1)
 print("\nALL OK" if all(res) else "\nFAILED")
 sys.exit(0 if all(res) else 1)
