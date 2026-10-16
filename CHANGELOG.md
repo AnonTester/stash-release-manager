@@ -6,6 +6,9 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.213.6
+- Search: a release is also accepted when its name carries the scene's exact date and at least two of the title's significant words and names nothing foreign to the scene (studio compilations, whose releases name none of the performers).
+
 ## 0.213.5
 - Activity > Stuck and Releases > On Wishlist: a "Dismiss" button on wishlist releases nothing was grabbed for, with Undo; a release that is monitored in Whisparr is unmonitored there too.
 
