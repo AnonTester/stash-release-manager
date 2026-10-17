@@ -19,7 +19,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 
 import release_repo
-from indexer_search import _build_queries, parent_studio_names, search_and_grab, RESULT_PROVIDER_LOOKUP_FAILED
+from indexer_search import _build_queries, alias_variants, parent_studio_names, search_and_grab, RESULT_PROVIDER_LOOKUP_FAILED
 from routers.settings import resolve_whisparr_scope_preset
 from whisparr_client import MovieAlreadyExistsError, WhisparrLookupEmpty
 
@@ -170,8 +170,11 @@ def refresh_scene_from_provider(db, provider, scene_stashdb_id, title, scene_dat
         if client is None:
             return title, scene_date, performer_names, True
         detail = client.get_scene_detail(scene_stashdb_id)
-        performer_names = [p["performer"]["name"] for p in (detail or {}).get("performers") or []
-                           if (p.get("performer") or {}).get("name")]
+        performer_names = []
+        for p in (detail or {}).get("performers") or []:
+            if (p.get("performer") or {}).get("name"):
+                performer_names.append(p["performer"]["name"])
+                performer_names += alias_variants(p)  # the "as" credit / full-name aliases (v0.218.2)
         # The provider's CURRENT title/date (found live: the provider renamed a placeholder title to its real
         # one; searching the stale title grabbed a wrong release twice). Stored too, so lists show it.
         fresh_title, fresh_date = (detail or {}).get("title"), (detail or {}).get("date")

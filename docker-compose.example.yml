@@ -18,6 +18,10 @@ services:
       - ./data:/data                                  # database, backups, exports (a folder next to this file)
       - /path/to/your/library:/media                  # CHANGE: your library (same files Stash has as /data)
       - /path/to/sabnzbd/complete:/downloads          # CHANGE: finished downloads of SABnzbd
+    # Hardware encoding of the 2160p -> 1080p re-encode (last resort for older scenes, see Settings > Quality): hand the render device to the
+    # container. Optional; without it the CPU does the work. Only on a machine with an Intel (or other VAAPI) GPU.
+    # devices:
+    #   - /dev/dri:/dev/dri
     environment:
       - DATA_DIR=/data
       # A copy for trying things out while another sidecar is the productive one: set this and no scan, search, import or sync job runs here.

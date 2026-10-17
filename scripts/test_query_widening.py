@@ -15,7 +15,7 @@ def check(name, cond):
 q = ix._build_queries("She Sucks at Golf", ["Gal Ritchie", "Donnie Rock"], "Some Studio: The Series", "2026-10-16")
 check("full studio name + date first, then the name before the ':'", "FamilyStrokesTheSeries 26.10.16" in q and "FamilyStrokes 26.10.16" in q and q.index("FamilyStrokesTheSeries 26.10.16") < q.index("FamilyStrokes 26.10.16"))
 q = ix._build_queries("T", [], "Plain Studio", "2026-10-16")
-check("no ':' -> no extra variant", q.count("PlainStudio 26.10.16") == 1 and len(q) == 2)
+check("no subtitle -> no extra studio variant (only the neighbour days are added)", q.count("PlainStudio 26.10.16") == 1 and len(q) == 4 and "PlainStudio 26.10.15" in q and "PlainStudio 26.10.17" in q)
 q = ix._build_queries("T", [], "Brand - Sub Line", "2026-10-16")
 check("' - ' subtitle works the same", "Brand 26.10.16" in q)
 

@@ -169,6 +169,17 @@ Usenet and torrents use the same search and import pipeline; torrents need two m
 
 When both a usenet and a torrent result are found for the same release, usenet is preferred (like the *arr default).
 
+## Hardware encoding for 2160p downloads (optional)
+
+For an older scene (default: 10 days after its release date) that exists only in 2160p, the sidecar can take that release and scale it down to 1080p HEVC before the import (Settings > Quality, "Last resort for older scenes"). The encode uses a quality target (variable bitrate). It runs on the CPU; on a machine with an Intel (or other VAAPI) graphics chip it is much faster when the container gets the render device: in `docker-compose.yml` add
+
+```
+    devices:
+      - /dev/dri:/dev/dri
+```
+
+and run `docker compose up -d --build`. The sidecar proves it works with a one-second test encode and falls back to the CPU by itself otherwise. (The re-encoded file has new fingerprints, so such a scene is imported without the fingerprint comparison; the note stays on the release.)
+
 ## Moving to another machine (or a fresh install) with your data
 
 On the **old** installation: *Settings > General > Backup & move > Export*. Pick what to take (watchlist, releases, movies, decisions, settings, check results; the history only if you want it). A ZIP appears in `data/exports/` (and as a download link).

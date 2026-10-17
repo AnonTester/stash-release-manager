@@ -852,6 +852,13 @@ class Database:
             removed_at TEXT NOT NULL DEFAULT (datetime('now'))
         )""")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_downloaded_release_nzo ON downloaded_release (nzo_id)")
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(downloaded_release)")}
+        if "outcome" not in cols:
+            # v0.218.1: 'imported' (the release is in the library: no scene may fetch it again) or 'rejected' (blocklisted / quality-rejected for ITS
+            # scene: only that scene's own blocklist applies, another scene may well be the right one for this release).
+            conn.execute("ALTER TABLE downloaded_release ADD COLUMN outcome TEXT NOT NULL DEFAULT 'imported'")
+            import download_history_cleanup
+            download_history_cleanup.backfill_outcome(conn)
 
     def _migrate_group_match_ignore(self, conn):
         """v0.213.0: Maintenance > Movies > Compare groups, "Not this": a suggested (movie folder, group) pair the user rejected."""

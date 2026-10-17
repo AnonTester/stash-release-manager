@@ -32,11 +32,39 @@ def norm_title(name):
 
 
 def ledger_has(db, title):
+    """True when this release name was downloaded AND imported before (its history entry was removed): no scene may fetch it again. Names that were
+    only rejected / blocklisted do not count -- that is the blocklist of the scene they were rejected for (v0.218.1)."""
     key = norm(title)
     if not key:
         return False
     with db.connect() as conn:
-        return conn.execute("SELECT 1 FROM downloaded_release WHERE name_norm = ?", (key,)).fetchone() is not None
+        return conn.execute("SELECT 1 FROM downloaded_release WHERE name_norm = ? AND outcome = 'imported'", (key,)).fetchone() is not None
+
+
+def rejected_only(db, title):
+    """True when this name is on some scene's blocklist and was never imported for any scene: a SABnzbd history entry of it is no reason to refuse
+    it for ANOTHER scene (v0.218.1)."""
+    key = norm_title(title)
+    if not key or len(key) < MIN_BLOCK_LEN:
+        return False
+    _ids, names = _imported_keys(db, None)
+    with db.connect() as conn:
+        if conn.execute("SELECT 1 FROM downloaded_release WHERE name_norm = ? AND outcome = 'imported'", (norm(title),)).fetchone():
+            return False
+    return key not in names and _is_blocked(key, _blocked_names(db))
+
+
+def backfill_outcome(conn):
+    """One-time: ledger rows written before `outcome` existed -- 'rejected' for names only known from a blocklist, never as imported."""
+    names = set()
+    for table in ("release", "film_want"):
+        for r in conn.execute(f"SELECT grabbed_title FROM {table} WHERE status = 'imported' AND grabbed_title IS NOT NULL"):
+            names.add(norm_title(r[0]))
+    blocked = _blocked_names_conn(conn)
+    for r in conn.execute("SELECT name_norm, title FROM downloaded_release").fetchall():
+        key = norm_title(r[1])
+        if key not in names and _is_blocked(key, blocked):
+            conn.execute("UPDATE downloaded_release SET outcome = 'rejected' WHERE name_norm = ?", (r[0],))
 
 
 def ledger_title_for_job(db, nzo_id):
@@ -47,11 +75,12 @@ def ledger_title_for_job(db, nzo_id):
         return row["title"] if row else None
 
 
-def _remember(db, title, nzo_id, client_id):
+def _remember(db, title, nzo_id, client_id, outcome="imported"):
     with db.connect() as conn:
-        conn.execute("""INSERT INTO downloaded_release (name_norm, title, nzo_id, client_id) VALUES (?, ?, ?, ?)
-                        ON CONFLICT (name_norm) DO UPDATE SET nzo_id = excluded.nzo_id, client_id = excluded.client_id""",
-                     (norm(title), title, str(nzo_id) if nzo_id else None, client_id))
+        conn.execute("""INSERT INTO downloaded_release (name_norm, title, nzo_id, client_id, outcome) VALUES (?, ?, ?, ?, ?)
+                        ON CONFLICT (name_norm) DO UPDATE SET nzo_id = excluded.nzo_id, client_id = excluded.client_id,
+                          outcome = CASE WHEN downloaded_release.outcome = 'imported' THEN 'imported' ELSE excluded.outcome END""",
+                     (norm(title), title, str(nzo_id) if nzo_id else None, client_id, outcome))
 
 
 def _imported_keys(db, client_id):
@@ -70,17 +99,21 @@ def _imported_keys(db, client_id):
 def _blocked_names(db):
     """Release names this program rejected itself (blocklisted or quality-rejected downloads, of scenes and movies): the download is over for good, its
     file was discarded, the name stays blocked -- the history entry has nothing left to say."""
-    out = set()
     with db.connect() as conn:
-        for table, col in (("release", "review_rejected_titles"), ("film_want", "rejected_titles")):
-            for r in conn.execute(f"SELECT DISTINCT {col} AS v FROM {table} WHERE {col} IS NOT NULL AND {col} != ''"):
-                try:
-                    for t in json.loads(r["v"]):
-                        k = norm_title(str(t).removeprefix("exact:"))
-                        if len(k) >= MIN_BLOCK_LEN:
-                            out.add(k)
-                except (TypeError, ValueError):
-                    continue
+        return _blocked_names_conn(conn)
+
+
+def _blocked_names_conn(conn):
+    out = set()
+    for table, col in (("release", "review_rejected_titles"), ("film_want", "rejected_titles")):
+        for r in conn.execute(f"SELECT DISTINCT {col} AS v FROM {table} WHERE {col} IS NOT NULL AND {col} != ''"):
+            try:
+                for t in json.loads(r[0]):
+                    k = norm_title(str(t).removeprefix("exact:"))
+                    if len(k) >= MIN_BLOCK_LEN:
+                        out.add(k)
+            except (TypeError, ValueError):
+                continue
     return out
 
 
@@ -123,7 +156,7 @@ def clean_client(db, client_row, dry_run=True, client=None):
     removed, errors = 0, []
     for c in found:
         try:
-            _remember(db, c["name"], c["nzo_id"], client_row["id"])
+            _remember(db, c["name"], c["nzo_id"], client_row["id"], "rejected" if c["matched_by"] == "blocked" else "imported")
             client.delete_history(c["nzo_id"])
             removed += 1
         except Exception as e:

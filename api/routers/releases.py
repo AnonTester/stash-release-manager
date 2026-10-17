@@ -251,7 +251,7 @@ def download_progress():
 def _import_phase(entry):
     """import_progress entry -> the progress shape the plugin renders."""
     out = {"phase": entry["phase"]}
-    for key in ("percentage", "bytes_done", "bytes_total", "speed_bps", "seconds_left"):
+    for key in ("percentage", "bytes_done", "bytes_total", "speed_bps", "speed_x", "seconds_left"):
         if entry.get(key) is not None:
             out[key] = entry[key]
     return out

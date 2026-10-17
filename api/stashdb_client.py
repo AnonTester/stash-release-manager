@@ -75,7 +75,7 @@ query($id: ID!) {
     details
     date
     studio { id name }
-    performers { performer { name gender } }
+    performers { as performer { name gender aliases } }
   }
 }
 """

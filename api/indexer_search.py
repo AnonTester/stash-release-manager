@@ -121,6 +121,36 @@ def _date_plausible(scene_date, candidate_title):
     return any(f" {y} {month} {day} " in padded_candidate for y in (year, year[2:]))
 
 
+class AliasName(str):
+    """A name a credited performer is also known under (the scene's own "as" credit and full-name aliases from StashDB, v0.218.2): any of them in a
+    release name counts like the performer's own name (case: credited "as Kitty Wild", the performer is "Xenia Blondi"). `.of` = the performer's own
+    name. Kept inside the `performer_names` list so every check that asks "does the release name a credited performer" sees them; the checks that COUNT
+    performers or build queries use primary_names()."""
+    def __new__(cls, text, of):
+        obj = str.__new__(cls, text)
+        obj.of = of
+        return obj
+
+
+def primary_names(performer_names):
+    return [n for n in performer_names or [] if not isinstance(n, AliasName)]
+
+
+def alias_variants(performer):
+    """The extra names of one StashDB scene performer entry ({"as", "performer": {"name", "aliases"}}): the "as" credit and the aliases that are full
+    names (a space, 7+ characters -- a short single word like "Lexi" would match inside "Alexis")."""
+    name = (performer.get("performer") or {}).get("name") or ""
+    extras = [performer.get("as")] + list((performer.get("performer") or {}).get("aliases") or [])
+    out, seen = [], {re.sub(r"[^a-z0-9]+", "", name.lower())}
+    for alt in extras:
+        alt = (alt or "").strip()
+        key = re.sub(r"[^a-z0-9]+", "", alt.lower())
+        if " " in alt and len(alt) >= 7 and key and key not in seen:
+            seen.add(key)
+            out.append(AliasName(alt, name))
+    return out
+
+
 def _performer_plausible(performer_names, candidate_title):
     """True if at least one of Whisparr's own `performerNames` for this
     movie (e.g. `["Zoey DiGiacomo", "Tyler D."]`, read straight off the
@@ -170,10 +200,13 @@ def _all_performers_plausible(performer_names, candidate_title):
     it's worth asking a human rather than filing it next to a genuine
     non-match. Requires at least one performer name (an empty/unknown
     list can't be "all matched", so this is always False then)."""
-    if not performer_names:
+    # The performers' own names only (v0.218.2/.3): an alias can be another person's stage name (case: "Layla Belle" with the alias "Layla Quinn" offered
+    # an unrelated release for review); aliases only count where the date also fits (_candidate_plausible()).
+    primaries = primary_names(performer_names)
+    if not primaries:
         return False
     candidate_compact = re.sub(r"[^a-z0-9]+", "", (candidate_title or "").lower())
-    return all(_performer_name_in(name, candidate_compact) for name in performer_names)
+    return all(_performer_name_in(name, candidate_compact) for name in primaries)
 
 
 def _names_distinguishing_performer(scene_title, performer_names, candidate_title):
@@ -296,6 +329,47 @@ def _date_contradicts(scene_date, candidate_title):
         except ValueError:
             continue
     return bool(found) and all(abs((f - scene_day).days) > 1 for f in found)
+
+
+def _release_date_delta(scene_date, candidate_title):
+    """Days between the scene's date and the closest date the release name carries (None: no usable date in either)."""
+    m = _ISO_DATE_RE.match(scene_date or "")
+    if not m:
+        return None
+    from datetime import date
+    scene_day = date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+    best = None
+    for y, mo, d in _RELEASE_DATE_RE.findall(candidate_title or ""):
+        try:
+            delta = abs((date(int(y) + (2000 if len(y) == 2 else 0), int(mo), int(d)) - scene_day).days)
+        except ValueError:
+            continue
+        best = delta if best is None else min(best, delta)
+    return best
+
+
+def _studio_variants(studio_name):
+    """Compact spellings of the studio ("Some Studio: The Series" -> familystrokesthes... and familystrokes) as release names write them."""
+    names = [studio_name or ""]
+    base = re.split(r"\s*(?::|\s-\s)\s*", studio_name or "", maxsplit=1)[0]
+    if base and base != (studio_name or ""):
+        names.append(base)
+    return [c for c in (re.sub(r"[^a-z0-9]", "", n.lower()) for n in names) if c]
+
+
+def _near_date_studio_match(scene_title, scene_date, performer_names, studio_name, candidate_title):
+    """A release of the scene's own studio dated ONE day off, whose name holds nothing the scene's title / performers do not explain (v0.218.3,
+    case: scene "Layla" 25.09., release "SomeStudio.26.09.26.Layla.XXX.2160p" -- studios date their releases a day apart from the provider). Too
+    uncertain for an automatic grab (and a re-encode skips the fingerprint check) -> only ever offered under "Needs review"."""
+    delta = _release_date_delta(scene_date, candidate_title)
+    if delta is None or delta > 1:
+        return False
+    m = _RELEASE_DATE_RE.search(candidate_title or "")
+    prefix = re.sub(r"[^a-z0-9]", "", (candidate_title or "")[:m.start() + 1].lower()) if m else ""
+    variants = _studio_variants(studio_name)
+    if not prefix or not any(len(v) >= 5 and (prefix == v or prefix.startswith(v) or v.startswith(prefix)) for v in variants):
+        return False
+    return not _foreign_words(scene_title, performer_names, candidate_title)
 
 
 _YEAR_RE = re.compile(r"(?<![0-9])(19[89][0-9]|20[0-3][0-9])(?![0-9])")
@@ -517,6 +591,30 @@ def load_size_limits(db):
         except ValueError:
             return int(default * 10**9)
     return {"default": gb("max_file_gb", 8), 2160: gb("max_file_gb_2160", 12)}
+
+
+def fallback_resolutions(db, scene_date, today=None):
+    """Resolutions outside the quality profile that are accepted as a last resort (v0.218.0): once a scene is `fallback_resolution_days` old (0 = never)
+    and nothing in the profile turned up -- 2160p (the importer scales it down to 1080p, see transcode.py) and, with `fallback_accept_sd`, SD (480).
+    Best first. Empty list: not old enough / switched off."""
+    from routers.settings import get_setting_value
+    from datetime import date, datetime
+    try:
+        days = int(float(get_setting_value(db, "fallback_resolution_days", "10") or 0))
+    except ValueError:
+        days = 0
+    if days <= 0 or not scene_date:
+        return []
+    try:
+        released = datetime.strptime(str(scene_date)[:10], "%Y-%m-%d").date()
+    except ValueError:
+        return []
+    if ((today or date.today()) - released).days < days:
+        return []
+    out = [2160]
+    if str(get_setting_value(db, "fallback_accept_sd", "true")).lower() == "true":
+        out.append(480)
+    return out
 
 
 def too_large(release, is_vr, size_limits=None, vr_rules=None):
@@ -828,7 +926,8 @@ def _review_identity(candidate_title):
 
 
 def _select_review_candidate(releases, scene_title, scene_date, performer_names, rejected_titles,
-                             is_vr=False, size_limits=None, vr_rules=None, allowed_resolutions=None, allow_unknown_resolution=False):
+                             is_vr=False, size_limits=None, vr_rules=None, allowed_resolutions=None, allow_unknown_resolution=False,
+                             studio_name=None):
     """Finds the single best "needs review" candidate among `releases`
     -- one that names EVERY one of the movie's credited performers (see
     `_all_performers_plausible()`) but doesn't clear `_candidate_plausible()`'s
@@ -853,7 +952,8 @@ def _select_review_candidate(releases, scene_title, scene_date, performer_names,
             continue
         if _candidate_plausible(scene_title, scene_date, performer_names, title):
             continue  # already auto-acceptable, not a "review" case
-        if not _all_performers_plausible(performer_names, title):
+        near_date = _near_date_studio_match(scene_title, scene_date, performer_names, studio_name, title)
+        if not near_date and not _all_performers_plausible(performer_names, title):
             continue
         if _year_contradicts(scene_title, scene_date, title):
             continue  # e.g. "Some_Performer_-_2021" for a 2026 scene
@@ -863,7 +963,7 @@ def _select_review_candidate(releases, scene_title, scene_date, performer_names,
         # but with ONE it matches any release of that person (2026-09-28:
         # other Some Performer / Other Performer scenes offered for unrelated ones)
         # -- then it also needs a date within 45 days or a word of the title.
-        if len(performer_names or []) < 2 and not _single_performer_evidence(
+        if not near_date and len(primary_names(performer_names)) < 2 and not _single_performer_evidence(
                 scene_title, scene_date, performer_names, title):
             continue
         if too_large(r, is_vr, size_limits, vr_rules):
@@ -986,7 +1086,7 @@ def _build_queries(scene_title, performer_names, studio_name, scene_date, parent
     queries = []
     if scene_title and scene_title.strip():
         queries.append(scene_title.strip())
-    names = [n for n in (performer_names or []) if n and n.strip()]
+    names = [str(n) for n in primary_names(performer_names) if n and n.strip()]
     if names:
         queries.append(" ".join(names[:2]))
     # The studio's name as release names write it (v0.217.1): "Some Studio: The Series" is released as "FamilyStrokes.26.10.16...", so the part before
@@ -1005,6 +1105,15 @@ def _build_queries(scene_title, performer_names, studio_name, scene_date, parent
             parent_compact = re.sub(r"[^A-Za-z0-9]", "", parent or "")
             if parent_compact:
                 queries.append(f"{parent_compact} {scene_date[2:4]}.{scene_date[5:7]}.{scene_date[8:10]}")
+    # Studios often date a release a day off from the provider (v0.218.3): the day before / after, studio name only, tried last.
+    if scene_date and re.match(r"\d{4}-\d{2}-\d{2}$", scene_date):
+        from datetime import date, timedelta
+        base_day = date(int(scene_date[:4]), int(scene_date[5:7]), int(scene_date[8:10]))
+        first = re.sub(r"[^A-Za-z0-9]", "", studio_name or "")
+        for offset in (-1, 1):
+            neighbour = base_day + timedelta(days=offset)
+            if first:
+                queries.append(f"{first} {neighbour:%y.%m.%d}")
     seen, unique = set(), []
     for q in queries:
         if q.lower() not in seen:
@@ -1187,6 +1296,17 @@ def search_and_grab(db, whisparr_client, movie_id, provider, scene_stashdb_id, s
                          require_vr=is_vr, rejected_titles=rejected_titles, vr_rules=vr_rules,
                          allow_unknown_resolution=allow_unknown_resolution, taken_titles=taken_titles,
                          size_limits=size_limits)
+    if best is None and not is_vr and candidate_filter is None:
+        # Last resort for an older scene (v0.218.0): 2160p (scaled down to 1080p at the import) or SD, after everything in the profile.
+        extra = [r for r in fallback_resolutions(db, scene_date) if r not in allowed_resolutions]
+        if extra:
+            wider = list(allowed_resolutions) + extra
+            best = _select_best(releases, wider, priorities, scene_title, scene_date, performer_names,
+                                 require_vr=is_vr, rejected_titles=rejected_titles, vr_rules=vr_rules,
+                                 allow_unknown_resolution=allow_unknown_resolution, taken_titles=taken_titles,
+                                 size_limits=size_limits)
+            if best is not None:
+                allowed_resolutions = wider
     if best is None:
         # RESULT_NEEDS_REVIEW (2026-09-19): a candidate naming every one
         # of the movie's credited performers exists, but didn't clear
@@ -1195,12 +1315,17 @@ def search_and_grab(db, whisparr_client, movie_id, provider, scene_stashdb_id, s
         # real near-miss this was built from). Surfaced for a human
         # decision instead of either auto-grabbing it (too risky, see
         # v0.41.7) or silently filing it next to a genuine non-match.
+        # An older scene may be offered a 2160p / SD release for review too (the last-resort kinds, see fallback_resolutions()).
+        review_resolutions = list(allowed_resolutions)
+        if not is_vr and candidate_filter is None:
+            review_resolutions += [r for r in fallback_resolutions(db, scene_date) if r not in review_resolutions]
         review_candidate = _select_review_candidate(releases, scene_title, scene_date, performer_names,
                                                       list(rejected_titles) + taken_titles, is_vr=is_vr,
                                                       size_limits=size_limits, vr_rules=vr_rules,
-                                                      allowed_resolutions=allowed_resolutions,
-                                                      allow_unknown_resolution=allow_unknown_resolution)
-        _log(_explain_candidates(releases, allowed_resolutions, scene_title, scene_date, performer_names,
+                                                      allowed_resolutions=review_resolutions,
+                                                      allow_unknown_resolution=allow_unknown_resolution,
+                                                      studio_name=studio_name)
+        _log(_explain_candidates(releases, review_resolutions, scene_title, scene_date, performer_names,
                                  is_vr, rejected_titles, None, review_candidate, vr_rules,
                                  allow_unknown_resolution, taken_titles, size_limits))
         if not dry_run:
@@ -1265,6 +1390,8 @@ def _duplicate_guard(client, title, db=None):
         if _norm_release(s.get("name")) == key:
             if (s.get("status") or "").lower() == "failed":
                 failed += 1
+            elif db is not None and download_history_cleanup.rejected_only(db, title):
+                continue  # rejected for ITS scene (that scene's blocklist applies); another scene may be the right one for it (v0.218.1)
             else:
                 return f"the same release is already in SABnzbd's history ({s.get('status')})"
     if failed >= 2:

@@ -1648,6 +1648,36 @@
         assignWrap.appendChild(status);
         assignWrap.appendChild(el('br'));
       });
+
+      // Last resort for older scenes (v0.218.0): 2160p (scaled down to 1080p before the import) and SD, after everything in the profile.
+      assignWrap.appendChild(el('p', { className: 'srw-subsection-heading', textContent: 'Last resort for older scenes: 2160p and SD' }));
+      assignWrap.appendChild(el('p', {
+        className: 'srw-hint',
+        textContent: 'When nothing in the profile exists for a scene that is at least this many days old, a 2160p release is taken and scaled down to 1080p HEVC before the import '
+          + '(the original is not kept; no fingerprint check afterwards, the file is a new encode), and an SD release is taken as it is. 0 = off. '
+          + 'The re-encode uses a quality target (variable bitrate): lower number = better and larger, 24 is a good start. Hardware encoding (Intel QuickSync via /dev/dri) is used when it works, else the CPU.',
+      }));
+      [['fallback_resolution_days', 'Days after the release date (0 = off)', 'number', '10', { min: '0', max: '365', step: '1' }],
+        ['fallback_accept_sd', 'Accept SD as a last resort', 'select', 'true', { options: [['true', 'Yes'], ['false', 'No']] }],
+        ['transcode_quality', 'Re-encode quality (16-32, lower = better)', 'number', '24', { min: '16', max: '32', step: '1' }],
+        ['transcode_hw', 'Hardware encoding', 'select', 'auto', { options: [['auto', 'Automatic (when it works)'], ['off', 'Off (CPU only)']] }]].forEach(([key, label, kind, def, o]) => {
+        const input = kind === 'select'
+          ? el('select', {}, o.options.map(([v, text]) => el('option', { value: v, textContent: text })))
+          : el('input', { type: 'number', min: o.min, max: o.max, step: o.step });
+        input.value = settings[key] || def;
+        const status = el('span', { className: 'srw-key-status' });
+        assignWrap.appendChild(el('label', {}, [`${label}: `, input]));
+        assignWrap.appendChild(el('button', {
+          className: 'srw-btn', textContent: 'Save',
+          onClick: async () => {
+            const result = await window.SRW.runOp('settings_set', { key, value: input.value });
+            status.textContent = result && result.error ? ` error: ${result.error}` : ' saved';
+            setTimeout(() => { status.textContent = ''; }, 2000);
+          },
+        }));
+        assignWrap.appendChild(status);
+        assignWrap.appendChild(el('br'));
+      });
     }
 
     function buildAssignField(label, key, profiles) {

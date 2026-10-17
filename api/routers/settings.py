@@ -276,6 +276,13 @@ DEFAULTS = {
     # date_until}, shared by the List and Calendar views (Calendar just
     # ignores the date fields). One setting row, no schema change needed.
     "filter_presets": "[]",
+    # Last-resort resolutions (v0.218.0): once a scene is this many days old (0 = never) and nothing in the quality profile exists, a 2160p release
+    # (scaled down to 1080p HEVC at the import, transcode.py) and, with fallback_accept_sd, an SD one is taken. transcode_quality: x265 CRF
+    # (VAAPI: QP+1), lower = better, a quality target (variable bitrate); transcode_hw: 'auto' (VAAPI when a test encode works) or 'off'.
+    "fallback_resolution_days": "10",
+    "fallback_accept_sd": "true",
+    "transcode_quality": "24",
+    "transcode_hw": "auto",
     # Saved tag combinations of the Search page's "By tag" (v0.210.0): JSON list of {name, provider, tags: [{id, name}]}.
     "search_tag_presets": "[]",
     # Permissions (2026-09-19) -- Whisparr's own Media Management >
@@ -656,6 +663,14 @@ def set_one(key: str, body: dict):
         raise HTTPException(400, f"rss_interval_minutes must be a whole number between 5 and 1440, got {value!r}")
     if key == "search_backend" and value not in SEARCH_BACKENDS:
         raise HTTPException(400, f"search_backend must be one of {SEARCH_BACKENDS}, got {value!r}")
+    if key == "fallback_resolution_days" and not (value.isdigit() and 0 <= int(value) <= 365):
+        raise HTTPException(400, f"fallback_resolution_days must be a whole number of days between 0 and 365, got {value!r}")
+    if key == "fallback_accept_sd" and value not in ("true", "false"):
+        raise HTTPException(400, f"fallback_accept_sd must be 'true' or 'false', got {value!r}")
+    if key == "transcode_quality" and not (value.isdigit() and 16 <= int(value) <= 32):
+        raise HTTPException(400, f"transcode_quality must be a whole number between 16 and 32, got {value!r}")
+    if key == "transcode_hw" and value not in ("auto", "off"):
+        raise HTTPException(400, f"transcode_hw must be 'auto' or 'off', got {value!r}")
     if key == "filter_presets":
         try:
             parsed = json.loads(value)

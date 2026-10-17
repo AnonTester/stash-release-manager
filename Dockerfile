@@ -4,7 +4,9 @@ FROM python:3.12-slim
 # resolution/codec directly, needed once this sidecar imports files itself
 # instead of trusting Whisparr's grab-time quality metadata (Milestone 2,
 # 2026-09-17). Not needed before that.
-RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg \
+# intel-media-va-driver: hardware encoding of the 2160p -> 1080p re-encode through /dev/dri (transcode.py); without the device mounted ffmpeg
+# simply uses the CPU.
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg intel-media-va-driver \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

@@ -6,6 +6,19 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.218.3
+- Search, more tolerant about the date: studios often date a release a day off from the provider. When the exact date finds nothing, the queries also try the day before and after (2 more requests for a scene that is not found). A release of the scene's own studio, one day off, whose name holds nothing the title / performers do not explain, is offered under Needs review (never grabbed automatically). For an older scene the review may offer a 2160p / SD release.
+- The review rule "names every credited performer" uses the performers' own names again (an alias can be another person's stage name).
+
+## 0.218.2
+- Search: a release that names the performer by the credit the scene gives them ("as Kitty Wild" for the performer "Xenia Blondi") or by a full-name alias is recognised now (together with the right date). Short single-word aliases are not used.
+
+## 0.218.1
+- A release that was rejected or blocklisted for one scene no longer stays refused for every other scene: the duplicate guard refuses a name that is in the client's history or in the program's own list of downloaded releases only when that release was imported (it is in the library). The list of removed history entries records how each entry ended (imported / rejected).
+
+## 0.218.0
+- Last resort for older scenes: when nothing in the quality profile exists for a scene that is at least 10 days old (setting, 0 = off), a 2160p release is taken and scaled down to 1080p HEVC before the import (ffmpeg, quality target = variable bitrate, default 24; hardware encoding through /dev/dri when it works, else the CPU; progress on Activity). An SD release is taken as it is (switch). A failed encode imports nothing and leaves the download in place. A re-encoded file has new fingerprints, so it is finalized without the fingerprint comparison. Not for VR and not for upgrades. Settings > Quality > "Last resort for older scenes"; the Docker image includes the Intel VAAPI driver (INSTALL.md: add /dev/dri to the compose file).
+
 ## 0.217.1
 - Search: two gaps found by running the wishlist through Whisparr's own search as a dry run: (1) the search stopped widening its queries at the first plausible-looking result even when that one was blocklisted or taken for another scene -- it now only stops at a result that could really be taken; (2) a studio called "Family Strokes: The Series" is released as "FamilyStrokes.26.10.16...", so the studio+date query is also tried with the name before the ":" (or " - ") subtitle.
 - The "Whisparr" search button is gone under the default "bookkeeping only" setting: Whisparr's indexers have search switched off there, so the button found nothing. It stays for the settings in which Whisparr searches.
