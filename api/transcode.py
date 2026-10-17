@@ -20,7 +20,9 @@ logger = logging.getLogger(__name__)
 
 RENDER_DEVICE = "/dev/dri/renderD128"
 _encode_lock = threading.Lock()  # one encode at a time: it uses every core (or the whole GPU)
-_hw_state = {"checked": False, "ok": False, "reason": ""}
+_hw_state = {}  # per codec ("h265"/"h264"): {"checked", "ok", "reason", "low_power"}
+VAAPI_ENCODER = {"h265": "hevc_vaapi", "h264": "h264_vaapi"}
+PRESETS = ("medium", "fast", "veryfast")
 
 
 def probe(path, timeout=60):
@@ -54,24 +56,50 @@ def target_size(width, height, max_w=1920, max_h=1080):
     return max(w, 2), max(h, 2)
 
 
-def hw_available():
-    """True when a one-second VAAPI test encode works here (cached for the life of the process). Never raises."""
-    if _hw_state["checked"]:
-        return _hw_state["ok"]
-    _hw_state["checked"] = True
+def _error_tail(stderr):
+    """The last meaningful line of ffmpeg's stderr, shortened."""
+    lines = [l.strip() for l in (stderr or "").splitlines() if l.strip()]
+    return (lines[-1] if lines else "no output")[-120:]
+
+
+def hw_available(codec="h265"):
+    """True when a one-second VAAPI test encode works here (cached per codec for the life of the process). Never raises.
+    Tries the normal encoder first, then `-low_power 1` (the fixed-function encoder, the only one on some Intel chips); the one that works is
+    kept in _hw_state[codec]["low_power"] for build_command()."""
+    st = _hw_state.setdefault(codec, {"checked": False, "ok": False, "reason": "", "low_power": False})
+    if st["checked"]:
+        return st["ok"]
+    st["checked"] = True
     if not os.path.exists(RENDER_DEVICE):
-        _hw_state["reason"] = f"{RENDER_DEVICE} not present"
+        st["reason"] = f"{RENDER_DEVICE} not present"
         return False
-    try:
-        cmd = ["ffmpeg", "-v", "error", "-vaapi_device", RENDER_DEVICE, "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=25:duration=1",
-               "-vf", "format=nv12,hwupload", "-c:v", "hevc_vaapi", "-qp", "30", "-f", "null", "-"]
-        res = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-        _hw_state["ok"] = res.returncode == 0
-        _hw_state["reason"] = (res.stderr or "").strip()[-200:] if res.returncode else ""
-    except Exception as e:
-        _hw_state["reason"] = f"{type(e).__name__}: {e}"
-    logger.info("transcode: hardware encoding %s%s", "available" if _hw_state["ok"] else "not available", f" ({_hw_state['reason']})" if _hw_state["reason"] else "")
-    return _hw_state["ok"]
+    problems = []
+    for low_power in (False, True):
+        try:
+            cmd = ["ffmpeg", "-v", "error", "-vaapi_device", RENDER_DEVICE, "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=25:duration=1",
+                   "-vf", "format=nv12,hwupload", "-c:v", VAAPI_ENCODER[codec]] + (["-low_power", "1"] if low_power else []) + ["-qp", "30", "-f", "null", "-"]
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        except Exception as e:
+            problems.append(f"{'low_power' if low_power else 'default'}: {type(e).__name__}: {e}")
+            continue
+        if res.returncode == 0:
+            st["ok"], st["low_power"], st["reason"] = True, low_power, ""
+            break
+        problems.append(f"{'low_power' if low_power else 'default'}: {_error_tail(res.stderr)}")
+    else:
+        st["reason"] = "; ".join(problems)
+    logger.info("transcode: %s hardware encoding %s%s", codec, "available" if st["ok"] else "not available",
+                " (low_power)" if st["low_power"] else f" ({st['reason']})" if st["reason"] else "")
+    return st["ok"]
+
+
+def method_label(hw_mode="auto", codec="h265"):
+    """'hardware' or 'CPU (<why>)' -- what transcode() will try first, for the progress line and the history."""
+    if hw_mode == "off":
+        return "CPU (hardware encoding switched off)"
+    if hw_available(codec):
+        return "hardware"
+    return f"CPU (hardware not available: {_hw_state[codec]['reason'] or 'unknown'})"
 
 
 def output_extension(info):
@@ -79,24 +107,34 @@ def output_extension(info):
     return ".mp4" if (info.get("acodec") in (None, "aac", "ac3", "eac3", "mp3", "alac")) else ".mkv"
 
 
-def build_command(src, dst, info, quality, use_hw):
-    """The ffmpeg command line (a list). `quality`: lower = better; x265 CRF as given, VAAPI constant QP = quality + 1."""
+def build_command(src, dst, info, quality, use_hw, codec="h265", preset="fast"):
+    """The ffmpeg command line (a list). `quality`: lower = better; x265 CRF as given (H.265), x264 CRF = quality - 4 (H.264 needs about that
+    much lower for the same look), VAAPI constant QP = CRF + 1. An HDR source is always kept as 10-bit H.265 on the CPU."""
+    if info.get("hdr"):
+        codec, use_hw = "h265", False
+    if preset not in PRESETS:
+        preset = "fast"
     tw, th = target_size(info["width"], info["height"])
+    crf = int(quality) if codec == "h265" else max(int(quality) - 4, 10)
     cmd = ["ffmpeg", "-y", "-v", "error", "-nostdin", "-progress", "pipe:1", "-nostats"]
-    hdr = info.get("hdr")
-    if use_hw and not hdr:
+    if use_hw:
+        low_power = _hw_state.get(codec, {}).get("low_power")
         cmd += ["-vaapi_device", RENDER_DEVICE, "-i", src, "-map", "0:v:0", "-map", "0:a?",
-                "-vf", f"format=nv12,hwupload,scale_vaapi=w={tw}:h={th}", "-c:v", "hevc_vaapi", "-rc_mode", "CQP", "-qp", str(int(quality) + 1)]
+                "-vf", f"format=nv12,hwupload,scale_vaapi=w={tw}:h={th}", "-c:v", VAAPI_ENCODER[codec]] \
+               + (["-low_power", "1"] if low_power else []) + ["-rc_mode", "CQP", "-qp", str(crf + 1)]
     else:
-        cmd += ["-i", src, "-map", "0:v:0", "-map", "0:a?", "-vf", f"scale={tw}:{th}:flags=lanczos", "-c:v", "libx265", "-preset", "medium", "-crf", str(int(quality))]
-        if hdr:  # keep HDR: 10-bit and the colour tags (rare for this kind of release)
+        cmd += ["-i", src, "-map", "0:v:0", "-map", "0:a?", "-vf", f"scale={tw}:{th}:flags=lanczos",
+                "-c:v", "libx265" if codec == "h265" else "libx264", "-preset", preset, "-crf", str(crf)]
+        if info.get("hdr"):  # keep HDR: 10-bit and the colour tags (rare for this kind of release)
             cmd += ["-pix_fmt", "yuv420p10le"]
             for flag, key in (("-color_primaries", "color_primaries"), ("-color_trc", "color_trc"), ("-colorspace", "colorspace")):
                 if (info.get("color") or {}).get(key):
                     cmd += [flag, info["color"][key]]
         else:
             cmd += ["-pix_fmt", "yuv420p"]
-    cmd += ["-tag:v", "hvc1", "-c:a", "copy", "-sn", "-map_metadata", "0", dst]
+    if codec == "h265":
+        cmd += ["-tag:v", "hvc1"]
+    cmd += ["-c:a", "copy", "-sn", "-map_metadata", "0", dst]
     return cmd
 
 
@@ -112,23 +150,27 @@ def verify_output(dst, source_info):
     return None
 
 
-def transcode(src, dst, quality=24, hw_mode="auto", progress=None, timeout_hours=12, info=None):
+def transcode(src, dst, quality=24, hw_mode="auto", progress=None, timeout_hours=12, info=None, codec="h265", preset="fast"):
     """Encodes `src` to `dst`. `progress(percent, speed_x, seconds_left)` is called while it runs. Returns
     {"ok": True, "hw": bool, "seconds": n, "info": src_info, "out": out_info} or {"ok": False, "error": text}. Never raises; removes a half-written dst."""
     info = info or probe(src)
     if not info or not info.get("width") or not info.get("height"):
         return {"ok": False, "error": "the downloaded file cannot be read by ffprobe"}
-    use_hw = hw_mode != "off" and hw_available()
+    if info.get("hdr"):
+        codec = "h265"
+    use_hw = hw_mode != "off" and not info.get("hdr") and hw_available(codec)
     for attempt_hw in ([True, False] if use_hw else [False]):
         started = time.time()
         with _encode_lock:
-            res = _run(build_command(src, dst, info, quality, attempt_hw), info, progress, timeout_hours)
+            res = _run(build_command(src, dst, info, quality, attempt_hw, codec, preset), info, progress, timeout_hours)
         if res is None:
             problem = verify_output(dst, info)
             if problem is None:
-                return {"ok": True, "hw": attempt_hw, "seconds": int(time.time() - started), "info": info, "out": probe(dst)}
+                return {"ok": True, "hw": attempt_hw, "codec": codec, "seconds": int(time.time() - started), "info": info, "out": probe(dst)}
             res = problem
         _remove(dst)
+        if res == "stopped":
+            return {"ok": False, "error": "stopped"}  # the caller cancelled: no second try
         logger.warning("transcode: %s encode of %s failed: %s", "hardware" if attempt_hw else "software", os.path.basename(src), res)
         if not attempt_hw:
             return {"ok": False, "error": res}
@@ -141,6 +183,10 @@ def _remove(path):
             os.remove(path)
     except OSError:
         logger.exception("transcode: could not remove %s", path)
+
+
+class StopEncode(Exception):
+    """Raised by a progress callback to stop the running encode (an encode worker that lost its job)."""
 
 
 def _run(cmd, info, progress, timeout_hours):
@@ -168,7 +214,12 @@ def _run(cmd, info, progress, timeout_hours):
                 last_pct = pct
                 elapsed = max(time.time() - started, 0.001)
                 speed = done / elapsed
-                progress(pct, round(speed, 2), int((info["duration"] - done) / speed) if speed > 0 else None)
+                try:
+                    progress(pct, round(speed, 2), int((info["duration"] - done) / speed) if speed > 0 else None)
+                except StopEncode:
+                    proc.kill()
+                    proc.wait()
+                    return "stopped"
     proc.wait()
     t.join(timeout=5)
     if proc.returncode != 0:

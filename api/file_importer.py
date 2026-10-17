@@ -24,8 +24,10 @@ right pair based on the active `file_import_source` setting.
 """
 import history
 import grp
+import json
 import logging
 import os
+import queue
 import subprocess
 import shutil
 import threading
@@ -33,6 +35,7 @@ import time
 
 import download_client_repo
 import download_history_cleanup
+import encode_queue
 import file_naming
 import library_check
 import quality_detect
@@ -40,6 +43,7 @@ import recycle_bin
 import import_progress
 import release_repo
 import transcode
+from library_organize import PHASH_TOLERANCE
 from sabnzbd_client import SabnzbdClient
 from verification import verify_downloaded_file
 
@@ -316,7 +320,8 @@ def import_one(db, stash_client, stashdb_client, source_item, source_remote_root
                            scene_format, scene_folder_format, use_hardlinks, recycle_bin_path,
                            set_permissions, chmod_folder, chown_group, get_provider_client, stash_id, provider)
     finally:
-        import_progress.clear(provider, stash_id)
+        if not encode_active(provider, stash_id):  # a queued / running encode keeps its own phase
+            import_progress.clear(provider, stash_id)
 
 
 def _import_one(db, stash_client, stashdb_client, source_item, source_remote_root,
@@ -366,9 +371,9 @@ def _import_one(db, stash_client, stashdb_client, source_item, source_remote_roo
         return rejected
     reencoded = _maybe_reencode(db, provider, stash_id, source_file)
     if reencoded is not None:
-        if reencoded.get("status") == "failed":
-            return reencoded
-        source_file = reencoded["file"]
+        if reencoded.get("status") in ("failed", "waiting_encode"):
+            return {"stash_id": stash_id, **reencoded}
+        original_file, source_file = source_file, reencoded["file"]
     rejected = _reject_unwanted_resolution(db, provider, stash_id, source_file, local_output_path,
                                            local_media_mount, recycle_bin_path, keep_source=keep_source)
     if rejected is not None:
@@ -398,6 +403,13 @@ def _import_one(db, stash_client, stashdb_client, source_item, source_remote_roo
     _move_file(source_file, target_path, use_hardlinks,
                progress=lambda done, total: import_progress.update_copy(provider, stash_id, done, total, copy_started),
                keep_source=False if reencoded is not None else keep_source)  # the encoded copy is ours; a torrent's original stays
+    if reencoded is not None:
+        _forget_encode(stash_id)
+        if not keep_source:  # the 2160p original is not needed any more: the encode replaced it (a torrent's original stays for seeding)
+            try:
+                os.remove(original_file)
+            except OSError:
+                logger.warning("could not remove the 2160p original %s after the re-encode", original_file)
     _apply_permissions(target_path, set_permissions, chmod_folder, chown_group)
     if not keep_source:  # a torrent's folder stays complete for seeding
         _delete_extra_files(local_output_path)
@@ -536,11 +548,56 @@ def _reject_unreadable(db, provider, stash_id, source_file, local_output_path,
     return {"stash_id": stash_id, "status": "failed", "error": detail}
 
 
-def _maybe_reencode(db, provider, stash_id, source_file):
-    """A 2160p download taken as a last resort (indexer_search.fallback_resolutions(): the scene is old enough, nothing in the quality profile
-    existed) is scaled down to 1080p HEVC BEFORE the import (v0.218.0, transcode.py). Returns None when this download needs nothing,
-    {"file", "detail"} for the encoded copy (in DATA_DIR/transcode, moved into the library like a download), or a failed-result dict
-    ({"status": "failed", ...}) when the encode did not work -- nothing is imported then and the download stays where it is."""
+# --- Re-encode as its own stage (v0.219.0) -----------------------------------------------------------------------------------------
+# The encode takes an hour on a small NAS, so it must not hold the import run (and with it every other finished download) up: _maybe_reencode()
+# only QUEUES the job (encode_queue.py) and returns "waiting_encode". The sidecar's own thread encodes one file at a time -- or, with the setting
+# encode_target = "worker", an encode worker on another machine does (routers/encode_worker.py, v0.220.0). Either side writes a marker next to
+# the result and starts an import run, which then finds the finished encode and imports it like a download. A restart loses the queue and a
+# running local encode (no marker): the next import run queues it again.
+_encode_thread = None
+_encode_thread_guard = threading.Lock()
+_encode_db = None
+on_encode_done = None   # set by main.py: starts an import run
+
+
+def encode_active(provider, stash_id):
+    return encode_queue.active(provider, stash_id)
+
+
+def _transcode_dir():
+    path = os.path.join(os.environ.get("DATA_DIR", "/data"), "transcode")
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def _marker_path(stash_id):
+    return os.path.join(_transcode_dir(), f"{stash_id}.done.json")
+
+
+def _finished_encode(stash_id, source_file):
+    """{"file", "detail"} of a finished encode of exactly this download, else None (a marker of another file is dropped)."""
+    marker = _marker_path(stash_id)
+    try:
+        with open(marker) as f:
+            data = json.load(f)
+        if (data.get("source") == source_file and data.get("source_size") == os.path.getsize(source_file)
+                and os.path.exists(data.get("file", ""))):
+            return {"file": data["file"], "detail": data["detail"]}
+    except (OSError, ValueError):
+        pass
+    _forget_encode(stash_id)
+    return None
+
+
+def _forget_encode(stash_id):
+    try:
+        os.remove(_marker_path(stash_id))
+    except OSError:
+        pass
+
+
+def _reencode_plan(db, provider, stash_id, source_file):
+    """None when this download needs no re-encode, a failed-result dict when it cannot be done, else {"info": probe of the source}."""
     rows = release_repo.list_rows_for_scene(db, provider, stash_id)
     if not rows:
         return None
@@ -548,7 +605,7 @@ def _maybe_reencode(db, provider, stash_id, source_file):
     if row.get("is_vr") or row.get("upgrade_of"):
         return None
     import indexer_search
-    from routers.settings import resolve_quality_profiles, get_setting_value
+    from routers.settings import resolve_quality_profiles
     if 2160 not in indexer_search.fallback_resolutions(db, row.get("scene_date")):
         return None  # switched off, or the scene is too young for a last resort
     profile, _ = resolve_quality_profiles(db)
@@ -561,33 +618,144 @@ def _maybe_reencode(db, provider, stash_id, source_file):
         return None
     if max(info["height"], int(info["width"] * 9 / 16)) < 2160:
         return None
-    tmp_dir = os.path.join(os.environ.get("DATA_DIR", "/data"), "transcode")
-    os.makedirs(tmp_dir, exist_ok=True)
     try:
         need = os.path.getsize(source_file) // 2
-        if shutil.disk_usage(tmp_dir).free < need:
-            raise OSError(f"not enough free space in {tmp_dir} (about {need // 10**9} GB needed)")
+        if shutil.disk_usage(_transcode_dir()).free < need:
+            raise OSError(f"not enough free space in {_transcode_dir()} (about {need // 10**9} GB needed)")
     except OSError as e:
         return _encode_failed(db, provider, stash_id, str(e))
-    dst = os.path.join(tmp_dir, f"{stash_id}{transcode.output_extension(info)}")
+    return {"info": info}
+
+
+def _maybe_reencode(db, provider, stash_id, source_file):
+    """A 2160p download taken as a last resort (indexer_search.fallback_resolutions(): the scene is old enough, nothing in the quality profile
+    existed) is scaled down to 1080p before the import (v0.218.0, transcode.py). Returns None when this download needs nothing,
+    {"file", "detail"} for a finished encode (in DATA_DIR/transcode, moved into the library like a download), {"status": "waiting_encode"}
+    while the job is queued or running (v0.219.0), or a failed-result dict ({"status": "failed", ...}) when the encode did not work --
+    nothing is imported then and the download stays where it is."""
+    if encode_active(provider, stash_id):
+        return {"status": "waiting_encode"}
+    done = _finished_encode(stash_id, source_file)
+    if done is not None:
+        return done
+    plan = _reencode_plan(db, provider, stash_id, source_file)
+    if plan is None or plan.get("status") == "failed":
+        return plan
+    global _encode_db
+    _encode_db = db
+    encode_queue.add(db, provider, stash_id, source_file, plan["info"])
+    _ensure_encode_thread()
+    from routers.settings import get_setting_value
+    import_progress.set_phase(provider, stash_id, "waiting_encode",
+                              can_local=get_setting_value(db, "encode_target", "nas") == "worker")
+    history.scene("info", "import", "Download complete -- queued for the re-encode to 1080p", provider, stash_id)
+    return {"status": "waiting_encode"}
+
+
+def _ensure_encode_thread():
+    global _encode_thread
+    with _encode_thread_guard:
+        if _encode_thread is None or not _encode_thread.is_alive():
+            _encode_thread = threading.Thread(target=_encode_worker, daemon=True, name="srm-encode")
+            _encode_thread.start()
+
+
+def _local_may_encode():
+    """(wants_worker, wait_hours): whether the sidecar leaves jobs to a worker, and after how many hours it takes them itself (0 = never)."""
+    from routers.settings import get_setting_value
+    try:
+        hours = float(get_setting_value(_encode_db, "encode_worker_wait_hours", "0") or 0)
+    except ValueError:
+        hours = 0.0
+    return get_setting_value(_encode_db, "encode_target", "nas") == "worker", hours
+
+
+def _encode_worker():
+    while True:
+        wants_worker, hours = _local_may_encode()
+        job = encode_queue.claim_local(wants_worker, hours)
+        if job is None:
+            time.sleep(3)
+            continue
+        db, provider, stash_id = job["db"], job["provider"], job["stash_id"]
+        try:
+            _run_encode(db, provider, stash_id, job["source"], job["info"])
+        except Exception:
+            logger.exception("re-encode of scene %s crashed", stash_id)
+            try:
+                _encode_failed(db, provider, stash_id, "unexpected error, see the sidecar log")
+            except Exception:
+                logger.exception("could not record the failed encode of scene %s", stash_id)
+        finally:
+            _encode_finished(provider, stash_id)
+
+
+def _encode_finished(provider, stash_id):
+    encode_queue.remove(provider, stash_id)
+    import_progress.clear(provider, stash_id)
+    if on_encode_done:
+        try:
+            on_encode_done()
+        except Exception:
+            logger.exception("could not start the import run after an encode")
+
+
+def remote_output_path(source_file, stash_id, info):
+    """Where an encode worker writes its result: next to the download (both machines see that folder)."""
+    return os.path.join(os.path.dirname(source_file), f"{stash_id}.srm-encode{transcode.output_extension(info)}")
+
+
+def _write_marker(db, provider, stash_id, source_file, info, dst, hw, codec, seconds, out):
+    detail = (f"Re-encoded from {info['width']}x{info['height']} to {out.get('width')}x{out.get('height')} {'H.264' if codec == 'h264' else 'HEVC'} "
+              f"({'hardware' if hw else 'software'}, {seconds // 60} min {seconds % 60} s, "
+              f"{os.path.getsize(source_file) / 1e9:.1f} GB -> {os.path.getsize(dst) / 1e9:.1f} GB) -- new file hashes, checked by phash after the scan")
+    with open(_marker_path(stash_id), "w") as f:
+        json.dump({"file": dst, "detail": detail, "source": source_file, "source_size": os.path.getsize(source_file)}, f)
+    history.scene("info", "import", detail, provider, stash_id)
+
+
+def finish_remote_encode(provider, stash_id, worker, ok, error=None, seconds=None, hw=False, codec="h265"):
+    """An encode worker reports its result (routers/encode_worker.py). The sidecar checks the file itself before it trusts it."""
+    job = encode_queue.get(provider, stash_id)
+    if not job or job["claimed_by"] != worker:
+        return {"error": "this encode is not (or no longer) assigned to this worker"}
+    db, source_file, info = job["db"], job["source"], job["info"]
+    dst = remote_output_path(source_file, stash_id, info)
+    try:
+        if not ok:
+            _encode_failed(db, provider, stash_id, f"{worker}: {error or 'the encode failed'}")
+            return {"ok": True, "recorded": "failed"}
+        problem = transcode.verify_output(dst, info)
+        if problem:
+            transcode._remove(dst)
+            _encode_failed(db, provider, stash_id, f"{worker}: {problem}")
+            return {"ok": True, "recorded": "failed"}
+        _write_marker(db, provider, stash_id, source_file, info, dst, hw, codec, int(seconds or 0), transcode.probe(dst) or {})
+        return {"ok": True, "recorded": "done"}
+    finally:
+        _encode_finished(provider, stash_id)
+
+
+def _run_encode(db, provider, stash_id, source_file, info):
+    from routers.settings import get_setting_value
+    dst = os.path.join(_transcode_dir(), f"{stash_id}{transcode.output_extension(info)}")
     try:
         quality = int(get_setting_value(db, "transcode_quality", "24") or 24)
     except ValueError:
         quality = 24
-    started = time.time()
-    import_progress.set_phase(provider, stash_id, "encoding", percentage=0)
-    history.scene("info", "import", f"Re-encoding {info['width']}x{info['height']} to 1080p before the import", provider, stash_id)
-    res = transcode.transcode(source_file, dst, quality=quality, hw_mode=get_setting_value(db, "transcode_hw", "auto"), info=info,
+    hw_mode = get_setting_value(db, "transcode_hw", "auto")
+    codec = "h264" if get_setting_value(db, "transcode_codec", "h265") == "h264" and not info.get("hdr") else "h265"
+    preset = get_setting_value(db, "transcode_preset", "fast")
+    method = transcode.method_label("off" if info.get("hdr") else hw_mode, codec)
+    import_progress.set_phase(provider, stash_id, "encoding", percentage=0, method=method)
+    history.scene("info", "import", f"Re-encoding {info['width']}x{info['height']} to 1080p before the import ({method})", provider, stash_id)
+    res = transcode.transcode(source_file, dst, quality=quality, hw_mode=hw_mode, info=info, codec=codec, preset=preset,
                               progress=lambda pct, speed, left: import_progress.set_phase(provider, stash_id, "encoding", percentage=pct,
-                                                                                         speed_x=speed, seconds_left=left))
+                                                                                         speed_x=speed, seconds_left=left, method=method))
     if not res["ok"]:
-        return _encode_failed(db, provider, stash_id, res["error"])
-    out = res["out"] or {}
-    detail = (f"Re-encoded from {info['width']}x{info['height']} to {out.get('width')}x{out.get('height')} HEVC "
-              f"({'hardware' if res['hw'] else 'software'}, {res['seconds'] // 60} min {res['seconds'] % 60} s, "
-              f"{os.path.getsize(source_file) / 1e9:.1f} GB -> {os.path.getsize(dst) / 1e9:.1f} GB) -- no fingerprint check, the file is a new encode")
-    history.scene("info", "import", detail, provider, stash_id)
-    return {"file": dst, "detail": detail}
+        _encode_failed(db, provider, stash_id, res["error"])
+        return
+    _write_marker(db, provider, stash_id, source_file, info, dst, res["hw"], res.get("codec", "h265"), res["seconds"], res["out"] or {})
 
 
 def _encode_failed(db, provider, stash_id, error):
@@ -674,20 +842,21 @@ def _finalize_verification(db, stash_client, provider_client, provider, stash_id
     _finalize_lock and has re-checked the release is still pending."""
     endpoint = _provider_endpoint(provider, stash_client, provider_client)
     rows = release_repo.list_rows_for_scene(db, provider, stash_id)
-    if rows and rows[0].get("import_error_code") == "reencoded":
-        # A re-encode of a 2160p download (transcode.py): its hashes are new, so fingerprints cannot confirm it. The pre-download title/date/
-        # performer checks chose the release; imported and tagged without that comparison, the note stays on the release.
-        if stash_client.find_scene_by_path(path) is None:
-            return None  # Stash has not scanned it yet
+    reencoded = bool(rows and rows[0].get("import_error_code") == "reencoded")
+    # A re-encode of a 2160p download (transcode.py) has new file hashes, but its perceptual hash stays near the original's: compared with
+    # a tolerance (verification.phash_tolerance). No fingerprints at the provider -> imported without the comparison, the note stays.
+    verified, found_title = verify_downloaded_file(stash_client, provider_client, stash_id, path,
+                                                   phash_tolerance=PHASH_TOLERANCE if reencoded else 0)
+    if reencoded and verified in (True, "unverified"):
         scene_id = _tag_imported_scene(stash_client, stash_id, path, endpoint)
         if scene_id is not None:
             _trigger_generate(stash_client, scene_id)
             _after_import(scene_id, path)
         release_repo.set_pending_import_path_for_scene(db, provider, stash_id, None)
         release_repo.set_status_for_scene(db, provider, stash_id, "imported")
-        history.scene("info", "import", "Imported (re-encoded to 1080p, no fingerprint check)", provider, stash_id, details={"path": path})
+        how = "phash matches the provider's" if verified is True else "the provider has no fingerprints for this scene"
+        history.scene("info", "import", f"Imported (re-encoded to 1080p; {how})", provider, stash_id, details={"path": path})
         return {"stash_id": stash_id, "status": "imported", "path": path, "reencoded": True}
-    verified, found_title = verify_downloaded_file(stash_client, provider_client, stash_id, path)
     if verified is True and upgrade_is_pending is not None and upgrade_is_pending(provider, stash_id):
         # Upgrade download (2026-09-26): merged into the existing library
         # scene by the hook instead of tagging a new one -- see

@@ -171,14 +171,29 @@ When both a usenet and a torrent result are found for the same release, usenet i
 
 ## Hardware encoding for 2160p downloads (optional)
 
-For an older scene (default: 10 days after its release date) that exists only in 2160p, the sidecar can take that release and scale it down to 1080p HEVC before the import (Settings > Quality, "Last resort for older scenes"). The encode uses a quality target (variable bitrate). It runs on the CPU; on a machine with an Intel (or other VAAPI) graphics chip it is much faster when the container gets the render device: in `docker-compose.yml` add
+For an older scene (default: 10 days after its release date) that exists only in 2160p, the sidecar can take that release and scale it down to 1080p HEVC before the import (Settings > Quality, "Last resort for older scenes"). The encode uses a quality target (variable bitrate). It runs on the CPU; on a machine with an Intel or AMD graphics chip (VAAPI) it is much faster when the container gets the render device: in `docker-compose.yml` add
 
 ```
     devices:
       - /dev/dri:/dev/dri
 ```
 
-and run `docker compose up -d --build`. The sidecar proves it works with a one-second test encode and falls back to the CPU by itself otherwise. (The re-encoded file has new fingerprints, so such a scene is imported without the fingerprint comparison; the note stays on the release.)
+and run `docker compose up -d --build`. The sidecar proves it works with a one-second test encode and falls back to the CPU by itself otherwise; the progress line on Activity and the history say which one is used ("hardware" or "CPU" with the reason).
+
+What is supported: **Intel** iGPUs (tested on a Celeron N5105 with the non-free media driver the image installs) and **AMD** (Mesa VAAPI driver included, not tested). **NVIDIA** is not supported yet (it would need NVENC and the NVIDIA container toolkit instead of VAAPI): the CPU does the work there. Settings > Quality offers *Hardware encoding* (switch the attempt off), *Re-encode format* (H.265, or H.264 for chips whose hardware can only encode that; larger files) and *CPU speed* (medium / fast / very fast: faster, slightly larger files). Some NAS kernels cannot encode in hardware at all (e.g. an old i915 driver without the video firmware: the GPU "hangs" in the kernel log); there the CPU does the work. (The re-encoded file has new file hashes, but Stash's perceptual hash (phash) stays close to the original's, so after the scan it is compared with the provider's phashes with a tolerance of 8 bits; the note stays on the release.)
+
+## Encoding on another machine (optional)
+
+A re-encode of a 2160p download takes about an hour on a small NAS. The re-encode runs as its own queued step, so the other downloads are not held up, but you can also hand it to a faster computer, for example your desktop with a graphics chip that does hardware encoding:
+
+1. Settings > Quality > *Last resort for older scenes* > **Where to encode** = *On an encode worker*. Downloads that need a re-encode now wait (Activity shows "waiting for the encode worker"). A button **Encode on the NAS now** on such a row lets the sidecar do that one itself; *Encode here if no worker takes it within (hours)* does that by itself after the given time (0 = never).
+2. On the other machine: ffmpeg and Python 3.9+, this project's folder (the worker uses `api/transcode.py` from it), and the download folder of your download client mounted (the same share the sidecar sees as `/downloads`, read/write: the worker writes its result next to the download). Then run
+
+```
+python3 worker/srm_encode_worker.py --sidecar http://NAS:6961 --map /downloads=/path/to/the/mounted/download/folder
+```
+
+The worker asks the sidecar every 30 seconds for waiting encodes, encodes with the settings from the sidecar (quality, format, CPU speed, hardware) and reports progress and the result. The machine can be off: the jobs wait. Switch it on and start the worker again. When the worker is done, the sidecar checks the file itself and imports it. There is no login on the sidecar's address (like the rest of it): use it only in your own network.
 
 ## Moving to another machine (or a fresh install) with your data
 

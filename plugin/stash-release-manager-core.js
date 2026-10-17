@@ -11,7 +11,7 @@
   // rule and the bug it caused when this drifted). Change this if you
   // install under a different folder name.
   // Must equal `version:` in stash-release-manager.yml (scripts/test_plugin_version.py checks it).
-  const PLUGIN_VERSION = '0.218.3';
+  const PLUGIN_VERSION = '0.221.2';
   const PLUGIN_ID = 'stash-release-manager';
   const PLUGIN_NAME = 'StashReleaseManager';
 
@@ -1853,10 +1853,13 @@
         return { pct: 100, text: 'Download complete — waiting for import' };
       case 'preparing':
         return { pct: 0, text: 'Import starting…' };
+      case 'waiting_encode':
+        return { pct: 100, text: p.can_local ? 'Download complete — waiting for the encode worker' : 'Download complete — waiting for the re-encode to 1080p' };
       case 'encoding': {
         const left = p.seconds_left != null ? `, ${formatSeconds(p.seconds_left)} left` : '';
         const speed = p.speed_x ? `, ${p.speed_x}x` : '';
-        return { pct: p.percentage || 0, text: `Re-encoding to 1080p — ${p.percentage || 0}%${speed}${left}` };
+        const how = p.method ? ` (${p.method})` : '';
+        return { pct: p.percentage || 0, text: `Re-encoding to 1080p${how} — ${p.percentage || 0}%${speed}${left}` };
       }
       case 'copying': {
         const left = p.seconds_left != null ? `, ${formatSeconds(p.seconds_left)} left` : '';
@@ -1883,6 +1886,7 @@
     const d = describeProgress(p);
     const phase = (p && p.phase) || 'none';
     if (elements.wrap) elements.wrap.dataset.phase = phase;
+    if (elements.localBtn) elements.localBtn.style.display = phase === 'waiting_encode' && p.can_local ? '' : 'none'; // "Encode on the NAS now"
     if (!d) {
       elements.fill.style.width = '0%';
       elements.text.textContent = '';

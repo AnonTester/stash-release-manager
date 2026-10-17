@@ -281,7 +281,18 @@
           text,
         ]);
         li.push(wrap);
-        progressElements.set(r.scene_stashdb_id, { fill, text, wrap });
+        // A download waiting for the encode worker can be sent to the NAS instead (shown by applyProgress() only in that phase).
+        const localBtn = el('button', {
+          className: 'srw-btn', textContent: 'Encode on the NAS now', style: 'display:none',
+          title: 'Do not wait for the encode worker: let the sidecar re-encode this download itself',
+          onClick: async (e) => {
+            e.currentTarget.disabled = true;
+            try { await window.SRW.runOp('encode_run_local', { provider: r.provider, scene_stashdb_id: r.scene_stashdb_id }); }
+            catch (err) { window.SRW.notify('Encode on the NAS', err.message, 'error'); }
+          },
+        });
+        li.push(localBtn);
+        progressElements.set(r.scene_stashdb_id, { fill, text, wrap, localBtn });
       }
       // Persisted failure reason (2026-09-23) -- see
       // release_repo.set_import_error_for_scene(). Shown as plain text,
@@ -675,6 +686,11 @@
         releaseTitleNode(c.title, c.infoUrl),
         facts ? el('span', { className: 'srw-release-date', textContent: facts }) : null,
         warning,
+        c.reencode ? el('span', {
+          className: 'srw-review-warning',
+          title: 'Last-resort 2160p release: after the download it is scaled down to 1080p and re-encoded to H.265 before the import (Settings > Last resort for older scenes).',
+          textContent: 'will be re-encoded to 1080p on accept',
+        }) : null,
       ]);
     }
 
@@ -698,7 +714,7 @@
       ]);
     }
 
-    function decisionButtons(onAccept, onReject, title) {
+    function decisionButtons(onAccept, onReject, title, onAcceptScene = null) {
       const status = el('span', { className: 'srw-key-status' });
       const run = async (fn, label) => {
         status.textContent = ` ${label}...`;
@@ -715,6 +731,11 @@
           className: 'srw-btn srw-btn-primary', textContent: 'Accept',
           onClick: (e) => confirmInline(e.currentTarget, `Download "${title}"?`, () => run(onAccept, 'grabbing')),
         }),
+        onAcceptScene ? el('button', {
+          className: 'srw-btn', textContent: 'Accept as one scene',
+          title: 'The file is only one scene (part) of this movie: it joins the movie\'s Group and the movie stays on the wishlist for the other parts',
+          onClick: (e) => confirmInline(e.currentTarget, `Download "${title}" as ONE SCENE of the movie? The movie stays wanted.`, () => run(onAcceptScene, 'grabbing')),
+        }) : null,
         el('button', {
           className: 'srw-btn', textContent: 'Reject',
           onClick: (e) => confirmInline(e.currentTarget, `Blocklist "${title}" for this scene?`,
@@ -745,10 +766,12 @@
       ul.appendChild(reviewRow([
         el('span', { className: 'srw-history-category', textContent: 'Movie' }),
         el('span', { className: 'srw-release-title', textContent: `${f.title}${f.year ? ` (${f.year})` : ''}` }),
+        f.parts_imported ? el('span', { className: 'srw-release-date', textContent: `${f.parts_imported} part(s) already in the group` }) : null,
       ], candidateLine(c), decisionButtons(
         () => window.SRW.runOp('films_review_accept', { id: f.id }),
         () => window.SRW.runOp('films_review_reject', { id: f.id }),
         c.title,
+        () => window.SRW.runOp('films_review_accept', { id: f.id, as_scene: true }),
       ), movieThumb(f)));
     });
     upgrades.forEach((u) => {

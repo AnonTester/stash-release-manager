@@ -283,6 +283,11 @@ DEFAULTS = {
     "fallback_accept_sd": "true",
     "transcode_quality": "24",
     "transcode_hw": "auto",
+    "encode_target": "nas",          # 'nas' (this sidecar encodes) or 'worker' (an encode worker on another machine, worker/srm_encode_worker.py)
+    "encode_worker_wait_hours": "0", # with 'worker': after this many hours without a worker the sidecar encodes itself (0 = never)
+    "transcode_codec": "h265",   # 'h265' (smaller files) or 'h264' (bigger, but the only hardware encoder some chips have)
+    "transcode_preset": "fast",  # CPU speed: 'medium' (best), 'fast', 'veryfast'
+
     # Saved tag combinations of the Search page's "By tag" (v0.210.0): JSON list of {name, provider, tags: [{id, name}]}.
     "search_tag_presets": "[]",
     # Permissions (2026-09-19) -- Whisparr's own Media Management >
@@ -669,6 +674,19 @@ def set_one(key: str, body: dict):
         raise HTTPException(400, f"fallback_accept_sd must be 'true' or 'false', got {value!r}")
     if key == "transcode_quality" and not (value.isdigit() and 16 <= int(value) <= 32):
         raise HTTPException(400, f"transcode_quality must be a whole number between 16 and 32, got {value!r}")
+    if key == "encode_target" and value not in ("nas", "worker"):
+        raise HTTPException(400, f"encode_target must be 'nas' or 'worker', got {value!r}")
+    if key == "encode_worker_wait_hours":
+        try:
+            ok = 0 <= float(value) <= 720
+        except ValueError:
+            ok = False
+        if not ok:
+            raise HTTPException(400, f"encode_worker_wait_hours must be a number between 0 and 720, got {value!r}")
+    if key == "transcode_codec" and value not in ("h265", "h264"):
+        raise HTTPException(400, f"transcode_codec must be 'h265' or 'h264', got {value!r}")
+    if key == "transcode_preset" and value not in ("medium", "fast", "veryfast"):
+        raise HTTPException(400, f"transcode_preset must be 'medium', 'fast' or 'veryfast', got {value!r}")
     if key == "transcode_hw" and value not in ("auto", "off"):
         raise HTTPException(400, f"transcode_hw must be 'auto' or 'off', got {value!r}")
     if key == "filter_presets":

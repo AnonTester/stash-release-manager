@@ -85,7 +85,7 @@ def import_downloaded(db, stash_client, film, job, cfg):
             msg = (f"The downloaded file \"{os.path.basename(video)}\" is not a readable video ({reason}) -- probably a failed unpack. "
                    "Nothing was moved into the library; the release is rejected and the movie is searched again")
             rejected = [*film.get("rejected_titles", []), *([film["grabbed_title"]] if film.get("grabbed_title") else [])]
-            film_repo.update(db, film["id"], status="wanted", download_client_id=None, download_job_id=None, grabbed_title=None, grabbed_at=None, review_candidate=None,
+            film_repo.update(db, film["id"], status="wanted", download_client_id=None, download_job_id=None, grabbed_title=None, grabbed_at=None, review_candidate=None, as_scene=0,
                              import_error=msg, last_search_result="unreadable", rejected_titles=rejected)
             history.event("warning", "movies", f"{film['title']}: {msg}")
             return {"id": film["id"], "status": "unreadable"}
@@ -159,21 +159,15 @@ def finalize(db, stash_client, film, movies, get_provider_client, force=False, c
     ids = [s["id"] for s in scenes]
     actual = sum(s["duration"] for s in scenes) / 60
     expected = film.get("duration_min")
+    if film.get("as_scene"):
+        return _add_part(db, stash_client, film, ids, actual, movies, get_provider_client)
     if expected and actual and not force and abs(actual / expected - 1) > LENGTH_TOLERANCE:
         msg = (f"The file(s) are {actual:.0f} min, ThePornDB says {expected:.0f} min -- a different cut or the wrong movie. "
                "Nothing was grouped; look at it (Open file in Stash), then 'Group anyway' or fix it by hand")
         film_repo.update(db, film["id"], status="import_failed", import_error=msg)
         history.event("warning", "movies", f"{film['title']}: {msg}")
         return {"id": film["id"], "status": "import_failed", "actual": round(actual, 1), "expected": expected}
-    if film.get("stash_group_id"):
-        group = movies.create_group(None, ids, group_id=film["stash_group_id"])
-        group_id = group["group_id"]
-    elif film.get("tpdb_id"):
-        record = _tpdb_record(film, get_provider_client)
-        res = movies.create_from_tpdb(record, ids, movies.local_studio_index()) if record else movies.create_group(film["title"], ids)
-        group_id = res["group_id"]
-    else:
-        group_id = movies.create_group(film["title"], ids)["group_id"]
+    group_id = _make_group(db, film, ids, movies, get_provider_client)
     for sid in ids:
         file_importer._trigger_generate(stash_client, sid)
     film_repo.update(db, film["id"], status="imported", imported_group_id=group_id, pending_import_path=None, import_error=None)
@@ -183,9 +177,56 @@ def finalize(db, stash_client, film, movies, get_provider_client, force=False, c
     return {"id": film["id"], "status": "imported", "group_id": group_id, "scenes": len(ids)}
 
 
+def forget_dead_groups(db, stash_client, dry_run=False):
+    """Wishlist movies ('suggested' / 'wanted') whose remembered Stash Group was deleted since. A movie that came from an empty group
+    (source 'empty-group') existed only because of that Group, so it is dismissed (reversible: Restore); any other movie just forgets the
+    dead id. ONE Stash query (all group ids); an empty answer is not believed (Stash down / wrong library) and changes nothing."""
+    alive = {str(g["id"]) for g in stash_client._graphql("{ findGroups(filter: {per_page: -1}) { groups { id } } }", {})["findGroups"]["groups"]}
+    found = []
+    if not alive:
+        return found
+    for f in film_repo.list_films(db, ["suggested", "wanted"], per_page=0)["rows"]:
+        gid = f.get("stash_group_id")
+        if gid and str(gid) not in alive:
+            found.append({"id": f["id"], "title": f["title"], "stash_group_id": gid, "previous": f["status"],
+                          "action": "dismiss" if f.get("source") == "empty-group" else "forget_group"})
+    if not dry_run:
+        for d in found:
+            if d["action"] == "dismiss":
+                film_repo.update(db, d["id"], status="dismissed", review_candidate=None)
+                history.event("info", "movies", f"{d['title']}: dismissed, its empty Stash Group {d['stash_group_id']} was deleted")
+            else:
+                film_repo.update(db, d["id"], stash_group_id=None)
+                history.event("info", "movies", f"{d['title']}: forgot the deleted Stash Group {d['stash_group_id']}")
+    return found
+
+
+def _add_part(db, stash_client, film, ids, actual, movies, get_provider_client):
+    """"Accept as one scene" (v0.221.0): the file(s) are only a scene of the movie, so there is no length check and the movie stays 'wanted'.
+    The scenes join the movie's Group (made on the first part and remembered in stash_group_id, so the next part joins the same one); the
+    release is rejected for this movie so the search proposes the other parts, not this one again."""
+    group_id = _make_group(db, film, ids, movies, get_provider_client)
+    for sid in ids:
+        file_importer._trigger_generate(stash_client, sid)
+    rejected = [*film.get("rejected_titles", []), *([film["grabbed_title"]] if film.get("grabbed_title") else [])]
+    parts = (film.get("parts_imported") or 0) + len(ids)
+    film_repo.update(db, film["id"], status="wanted", stash_group_id=group_id, parts_imported=parts, as_scene=0, pending_import_path=None,
+                     download_client_id=None, download_job_id=None, grabbed_title=None, grabbed_at=None, review_candidate=None,
+                     rejected_titles=rejected, last_search_result="part_imported", import_error=None)
+    history.event("info", "movies", f"{film['title']}: {len(ids)} scene(s) added to group {group_id} as a part ({parts} so far), still wanted",
+                  details={"scenes": ids, "minutes": round(actual, 1)})
+    return {"id": film["id"], "status": "part_imported", "group_id": group_id, "scenes": len(ids)}
+
+
 def _make_group(db, film, ids, movies, get_provider_client):
     if film.get("stash_group_id"):
-        return movies.create_group(None, ids, group_id=film["stash_group_id"])["group_id"]
+        try:
+            return movies.create_group(None, ids, group_id=film["stash_group_id"])["group_id"]
+        except ValueError as e:  # the remembered Group was deleted in Stash meanwhile: forget it and build a new one below
+            if "group not found" not in str(e):
+                raise
+            history.event("warning", "movies", f"{film['title']}: Group {film['stash_group_id']} no longer exists in Stash -- a new Group is made")
+            film_repo.update(db, film["id"], stash_group_id=None)
     if film.get("tpdb_id"):
         record = _tpdb_record(film, get_provider_client)
         if record:
@@ -229,7 +270,7 @@ def run(db, stash_client, movies, get_provider_client, cfg):
                 continue
             if film.get("pending_import_path"):
                 out = finalize(db, stash_client, film, movies, get_provider_client, cfg=cfg)
-                {"imported": result["imported"], "import_failed": result["failed"]}.get(out["status"], result["waiting"]).append(out)
+                {"imported": result["imported"], "part_imported": result["imported"], "import_failed": result["failed"]}.get(out["status"], result["waiting"]).append(out)
                 continue
             client_row = download_client_repo.get_one(db, film["download_client_id"]) if film.get("download_client_id") else None
             if client_row is None or client_row["type"] not in ("sabnzbd", "qbittorrent") or not film.get("download_job_id"):

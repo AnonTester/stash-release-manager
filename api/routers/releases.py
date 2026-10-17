@@ -251,7 +251,7 @@ def download_progress():
 def _import_phase(entry):
     """import_progress entry -> the progress shape the plugin renders."""
     out = {"phase": entry["phase"]}
-    for key in ("percentage", "bytes_done", "bytes_total", "speed_bps", "speed_x", "seconds_left"):
+    for key in ("method", "can_local", "percentage", "bytes_done", "bytes_total", "speed_bps", "speed_x", "seconds_left"):
         if entry.get(key) is not None:
             out[key] = entry[key]
     return out
@@ -289,6 +289,12 @@ def reviews():
             except (TypeError, ValueError):
                 continue
             upgrades_rows.append(row)
+    # A 2160p candidate is scaled down to 1080p before the import unless the profile wants 2160p itself (file_importer._maybe_reencode).
+    profile, _ = resolve_quality_profiles(_db)
+    wants_2160 = 2160 in ((profile or {}).get("resolutions") or [])
+    for row in wishlist:
+        res = (((row["review_candidate"].get("quality") or {}).get("quality") or {}).get("resolution"))
+        row["review_candidate"]["reencode"] = bool(res == 2160 and not wants_2160 and not row.get("is_vr"))
     # Never hand the download URL (carries the indexer's API key) to the browser.
     for row in wishlist + upgrades_rows:
         row["review_candidate"].pop("downloadUrl", None)

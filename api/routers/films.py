@@ -88,7 +88,7 @@ def activity():
                 "import_error": f.get("import_error"), "stash_group_id": f.get("stash_group_id"), "source": f.get("source"), "key": f"film:{f['id']}",
                 "image_url": f.get("image_url"), "studio_name": f.get("studio_name"), "release_date": f.get("release_date"),
                 "review_candidate": f.get("review_candidate"), "last_search_at": f.get("last_search_at"),
-                "last_search_result": f.get("last_search_result")}
+                "last_search_result": f.get("last_search_result"), "parts_imported": f.get("parts_imported") or 0}
         if mode == "scenes":
             have = sum(1 for sc in (f.get("scene_ids") or [])
                        if any(r["status"] == "imported" for r in release_repo.list_rows_for_scene(_db, "stashdb", sc["id"])))
@@ -254,7 +254,7 @@ _GRAB_MESSAGES = {
 }
 
 
-def _grab_film(film, candidate):
+def _grab_film(film, candidate, as_scene=False):
     """Sends a candidate to the download client and records the job on the movie (used by the manual grab and by Accept of a found candidate)."""
     film_id = film["id"]
     if film["status"] not in ("wanted", "import_failed"):
@@ -267,7 +267,7 @@ def _grab_film(film, candidate):
         raise HTTPException(400, _GRAB_MESSAGES.get(sent["result"], sent["result"]))
     film_repo.update(_db, film_id, status="grabbed", download_client_id=sent["client_row"]["id"], download_job_id=sent["nzo_id"],
                      grabbed_title=candidate.get("title"), grabbed_at=film_repo.now(), last_search_result="grabbed", import_error=None,
-                     review_candidate=None)
+                     review_candidate=None, as_scene=1 if as_scene else 0)
     history.event("info", "movies", f"Grabbed for the movie {film['title']}: {candidate.get('title')}",
                   details={"indexer": candidate.get("indexer"), "job": sent["nzo_id"],
                            **({"size_gb": round(candidate["size"] / 1e9, 2)} if candidate.get("size") else {})})
@@ -301,12 +301,43 @@ def search_now(film_id: int):
     return out
 
 
+class AcceptBody(BaseModel):
+    as_scene: bool = False
+
+
 @router.post("/{film_id}/review-accept")
-def review_accept(film_id: int):
+def review_accept(film_id: int, body: AcceptBody = AcceptBody()):
+    """Accept the found release. With `as_scene` (v0.221.0) the file is only ONE scene of the movie: it joins the movie's Group and the movie
+    stays on the wishlist for the other parts (film_import.finalize)."""
     film = film_repo.get(_db, film_id)
     if not film or not film.get("review_candidate"):
         raise HTTPException(404, "no candidate waiting for this movie")
-    return _grab_film(film, film["review_candidate"])
+    return _grab_film(film, film["review_candidate"], as_scene=body.as_scene)
+
+
+class ForgetDeadBody(BaseModel):
+    dry_run: bool = True
+
+
+@router.post("/forget-dead-groups")
+def forget_dead_groups(body: ForgetDeadBody):
+    """Wishlist movies whose remembered Stash Group was deleted since (its cover then leads to "No group found"). A movie that came from an
+    empty group (source 'empty-group') existed only because of that Group: deleting the Group means it is not wanted any more, so the movie is
+    dismissed (reversible: Restore). Any other movie just forgets the dead id. Only 'suggested' / 'wanted' movies; with dry_run (default) it
+    only lists what would happen. The same sweep runs before every automatic movie search."""
+    found = film_import.forget_dead_groups(_db, _get_stash_client(), dry_run=body.dry_run)
+    return {"dry_run": body.dry_run, "films": found}
+
+
+@router.post("/{film_id}/parts-done")
+def parts_done(film_id: int):
+    """All parts are in the Group: the movie counts as imported (it leaves the wishlist)."""
+    film = film_repo.get(_db, film_id)
+    if not film or film["status"] != "wanted" or not film.get("parts_imported") or not film.get("stash_group_id"):
+        raise HTTPException(400, "only a wishlist movie with scenes already added as parts can be completed")
+    film_repo.update(_db, film_id, status="imported", imported_group_id=film["stash_group_id"], as_scene=0, review_candidate=None, import_error=None)
+    history.event("info", "movies", f"{film['title']}: marked complete with {film['parts_imported']} part(s) in group {film['stash_group_id']}")
+    return {"ok": True, "previous": film["status"]}
 
 
 @router.post("/{film_id}/review-reject")

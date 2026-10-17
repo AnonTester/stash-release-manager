@@ -114,7 +114,7 @@ def update(db, film_id, **fields):
     allowed = set(_COLS) | {"download_client_id", "download_job_id", "grabbed_title", "grabbed_at", "last_search_at",
                             "last_search_result", "pending_import_path", "import_error", "imported_group_id", "mode", "scene_ids",
                             "stashdb_json", "review_candidate", "rejected_titles", "whisparr_id", "whisparr_state", "whisparr_checked_at",
-                            "whisparr_file_state", "whisparr_file_checked_at", "whisparr_note", "library_choice"}
+                            "whisparr_file_state", "whisparr_file_checked_at", "whisparr_note", "library_choice", "as_scene", "parts_imported"}
     values = {k: v for k, v in fields.items() if k in allowed}
     if isinstance(values.get("performers"), (list, tuple)):  # (Link movie / Use candidate pass the ThePornDB performer names)
         values["performers"] = json.dumps(values["performers"], ensure_ascii=False)

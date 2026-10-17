@@ -99,6 +99,7 @@ import film_search
 import film_repo
 import scene_compare
 import scene_alias
+from routers.encode_worker import router as encode_worker_router, init_encode_worker_router
 from routers.releases import router as releases_router, init_releases_router, download_progress as compute_download_progress
 from routers.scan import router as scan_router, init_scan_router, set_progress as set_scan_progress
 from routers.settings import (
@@ -868,6 +869,10 @@ def run_film_search():
     if not _film_search_lock.acquire(blocking=False):
         return {"skipped": True, "reason": "a movie search is already in progress"}
     try:
+        try:  # first: a movie whose empty Stash Group was deleted is not wanted any more (film_import.forget_dead_groups)
+            film_import.forget_dead_groups(db, get_stash_client())
+        except Exception as e:  # noqa: BLE001
+            logger.warning("forget_dead_groups failed: %s", e)
         result = _logged("film_search", lambda: film_search.run(db, get_film_search_source, int(_get_setting("film_search_per_run")),
                                                                  _get_setting("film_search_min_days"),
                                                                  int(_get_setting("film_search_recent_days")),
@@ -1000,6 +1005,18 @@ def on_download_complete(nzo_id, status=None):
 
     threading.Thread(target=_worker, daemon=True).start()
     return {"ours": True, "import": "started"}
+
+
+def _import_after_encode():
+    """A finished (or failed) re-encode: import it right away instead of waiting for the next safety-net tick (v0.219.0)."""
+    def _worker():
+        result = run_file_import()
+        if result.get("skipped"):
+            _file_import_rerun.set()
+    threading.Thread(target=_worker, daemon=True).start()
+
+
+_file_importer_module.on_encode_done = _import_after_encode
 
 
 def _wait_for_sabnzbd_job_done(nzo_id, step=10, max_wait=300):
@@ -1521,6 +1538,7 @@ def run_recycle_bin_cleanup():
 
 
 init_watchlist_router(db, get_stash_client, inactive_job)
+init_encode_worker_router(db)
 init_releases_router(db, get_whisparr_client, get_stash_client, get_stashdb_client,
                       get_manual_search_sources, get_search_source, settings,
                       get_provider_client=get_provider_client)
@@ -2099,6 +2117,7 @@ app = FastAPI(title="StashReleaseManager", lifespan=lifespan)
 
 app.include_router(watchlist_router)
 app.include_router(releases_router)
+app.include_router(encode_worker_router)
 app.include_router(scan_router)
 app.include_router(settings_router)
 app.include_router(stashdb_favorites_router)

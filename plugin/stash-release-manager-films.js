@@ -153,6 +153,17 @@
         });
         act.push(searchSlot);
       }
+      if (f.status === 'wanted' && f.parts_imported) { // scenes were added with "Accept as one scene" (v0.221.0): done when all parts are in
+        act.push(el('span', { className: 'srw-hint', textContent: `${f.parts_imported} part(s) in the group` }));
+        act.push(el('button', { className: 'srw-btn', textContent: 'All parts are in',
+          title: 'Take the movie off the wishlist: the Group built from the parts is the finished movie',
+          onClick: async (e) => {
+            e.currentTarget.disabled = true;
+            const res = await window.SRW.runOp('films_parts_done', { id: f.id });
+            if (res.error) notify('Movie', res.error, 'error'); else notify('Movie', `"${f.title}" is complete.`, 'success');
+            await load();
+          } }));
+      }
       if (f.status === 'wanted') { // the automatic search for this one movie, now (v0.128.0): the result is a candidate in Activity > Needs review
         act.push(el('button', { className: 'srw-btn', textContent: 'Search now',
           title: 'Ask the indexers for this movie (1-3 requests); a plausible release becomes a candidate in Activity > Needs review',

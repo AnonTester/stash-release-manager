@@ -6,6 +6,39 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.221.2
+- Movies: a wishlist movie whose Stash Group was deleted is taken care of automatically before each movie search. A movie that came from an empty group is dismissed (Restore brings it back), any other movie just forgets the dead Group, so its cover no longer leads to "No group found". `POST /films/forget-dead-groups` does the same by hand (dry run by default).
+
+## 0.221.1
+- Movies: a movie whose remembered Stash Group was deleted in the meantime no longer fails at the import; a new Group is made from the movie's data.
+
+## 0.221.0
+- Movies, Activity > Needs review: "Accept as one scene" next to Accept. The found file is only one scene (part) of the movie: it skips the length check, joins the movie's Group (the next parts join the same one) and the movie stays on the wishlist, with the accepted release rejected for it so the search proposes the other parts. "All parts are in" on the Movies page takes the movie off the wishlist.
+
+## 0.220.0
+- Encode worker: Settings > Quality > "Where to encode" can hand the re-encode of a 2160p download to another machine (`worker/srm_encode_worker.py`, plain Python 3 plus ffmpeg; it only pulls jobs, a job waits while the machine is off). "Encode on the NAS now" on the waiting row and "Encode here if no worker takes it within (hours)" keep the queue from stalling. INSTALL.md has a section for it.
+
+## 0.219.2
+- A re-encoded scene is verified by its phash with a tolerance of 8 bits (its file hashes necessarily differ). A far-off phash gives the normal "different video" failure; a provider without fingerprints still imports it.
+
+## 0.219.1
+- After a re-encoded scene is imported, the 2160p original is removed from the download folder.
+
+## 0.219.0
+- The re-encode is its own stage: the import run only queues it and goes on with the other downloads. One background thread encodes one file at a time and then starts an import run that picks up the result.
+
+## 0.218.7
+- Re-encode settings: format H.265 (default) or H.264 (larger files, the only hardware encoder some chips have) and CPU speed medium / fast (default) / very fast. HDR sources stay 10-bit H.265 on the CPU. The hardware self-test runs per format.
+
+## 0.218.6
+- The hardware self-test also tries `-low_power 1` (the only HEVC encoder on some Intel generations); the working variant is used for the real encode and the reason for a failed test names both attempts.
+
+## 0.218.5
+- The image installs the non-free Intel media driver (needed to encode HEVC on recent Intel chips), vainfo and the Mesa VAAPI drivers for AMD (untested). INSTALL.md lists what is supported (Intel, AMD; NVIDIA not yet). The progress line and history name the method ("hardware" or "CPU: why not").
+
+## 0.218.4
+- Activity > Needs review: a 2160p last-resort candidate says "will be re-encoded to 1080p on accept".
+
 ## 0.218.3
 - Search, more tolerant about the date: studios often date a release a day off from the provider. When the exact date finds nothing, the queries also try the day before and after (2 more requests for a scene that is not found). A release of the scene's own studio, one day off, whose name holds nothing the title / performers do not explain, is offered under Needs review (never grabbed automatically). For an older scene the review may offer a 2160p / SD release.
 - The review rule "names every credited performer" uses the performers' own names again (an alias can be another person's stage name).

@@ -75,7 +75,17 @@ def _fingerprints_may_be_stale(stash_client, scene, matching_file):
         return True
 
 
-def verify_downloaded_file(stash_client, stashdb_client, scene_stashdb_id, file_path):
+def phash_distance(local_fingerprints, remote_fingerprints):
+    """The smallest number of differing bits between a local and a remote phash (99 when either side has none)."""
+    local = [h for algo, h in local_fingerprints if algo == "phash"]
+    remote = [h for algo, h in remote_fingerprints if algo == "phash"]
+    try:
+        return min(bin(int(a, 16) ^ int(b, 16)).count("1") for a in local for b in remote)
+    except ValueError:  # no pair, or a value that is not hex
+        return 99
+
+
+def verify_downloaded_file(stash_client, stashdb_client, scene_stashdb_id, file_path, phash_tolerance=0):
     """Returns a `(verified, found_title)` pair:
     - `(True, <title>)`: fingerprints match, genuinely verified.
     - `(False, <title>)`: fingerprints were compared and none match --
@@ -88,6 +98,9 @@ def verify_downloaded_file(stash_client, stashdb_client, scene_stashdb_id, file_
       a lookup failed. Callers must treat this as "still unknown", not
       as a mismatch -- the whole point is to only ever act on a
       *confirmed* answer.
+
+    `phash_tolerance` (v0.219.2): a phash within this many bits of one of the provider's counts as a match. 0 = exact hashes only (every
+    normal download). A re-encode has new file hashes, but its perceptual hash stays close to the original's (the importer passes 8 then).
 
     `file_path` is expected to be Whisparr's own reported file path
     (e.g. `movie["movieFile"]["path"]`) -- the same path this project
@@ -133,6 +146,8 @@ def verify_downloaded_file(stash_client, stashdb_client, scene_stashdb_id, file_
         return None, None
 
     matched = bool(local_fingerprints & remote_fingerprints)
+    if not matched and phash_tolerance:
+        matched = phash_distance(local_fingerprints, remote_fingerprints) <= phash_tolerance
     if not matched and not any(algo == "phash" for algo, _ in local_fingerprints):
         # No mismatch verdict without a local phash (2026-09-25, needed
         # once verification can run straight from Stash's

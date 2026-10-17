@@ -517,6 +517,7 @@ class Database:
         self._migrate_vr_verdict_manual(conn)
         self._migrate_film_want_scenes(conn)
         self._migrate_film_want_candidates(conn)
+        self._migrate_film_want_parts(conn)
         self._migrate_scene_alias_duplicates(conn)
         self._migrate_film_want_search(conn)
         self._migrate_torrent_support(conn)
@@ -707,6 +708,14 @@ class Database:
         for name in ("whisparr_note", "library_choice"):
             if cols and name not in cols:
                 conn.execute(f"ALTER TABLE film_want ADD COLUMN {name} TEXT")
+
+    def _migrate_film_want_parts(self, conn):
+        """film_want.as_scene (the grabbed file is ONE scene of the movie, not the whole movie) and parts_imported (scenes added to its Group that
+        way so far), v0.221.0. Plain ADD COLUMNs."""
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(film_want)").fetchall()}
+        for name in ("as_scene", "parts_imported"):
+            if cols and name not in cols:
+                conn.execute(f"ALTER TABLE film_want ADD COLUMN {name} INTEGER NOT NULL DEFAULT 0")
 
     def _migrate_film_want_search(self, conn):
         """film_want.review_candidate (JSON of the indexer result the automatic movie search found and the user has to accept/reject) and

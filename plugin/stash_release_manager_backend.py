@@ -201,7 +201,9 @@ def main():
     elif mode == "films_search":
         result = _post(sidecar_url, f"/films/{args.get('id')}/search", {}, timeout=120)
     elif mode == "films_review_accept":
-        result = _post(sidecar_url, f"/films/{args.get('id')}/review-accept", {}, timeout=120)
+        result = _post(sidecar_url, f"/films/{args.get('id')}/review-accept", {"as_scene": bool(args.get("as_scene"))}, timeout=120)
+    elif mode == "films_parts_done":
+        result = _post(sidecar_url, f"/films/{args.get('id')}/parts-done", {}, timeout=30)
     elif mode == "films_review_reject":
         result = _post(sidecar_url, f"/films/{args.get('id')}/review-reject", {}, timeout=30)
     elif mode == "films_review_restore":
@@ -679,6 +681,9 @@ def main():
         # Scene-scoped, same reasoning as releases_dismiss above.
         path = f"/releases/{args.get('provider')}/{args.get('scene_stashdb_id')}/whisparr-fallback"
         result = _post(sidecar_url, path, {}, timeout=60)
+    elif mode == "encode_run_local":
+        result = _post(sidecar_url, "/encode-worker/run-local",
+                       {"provider": args.get("provider"), "scene_stashdb_id": args.get("scene_stashdb_id")}, timeout=30)
     elif mode == "releases_review_candidate_accept":
         # RESULT_NEEDS_REVIEW (2026-09-19) -- the user's own explicit
         # "yes, get this one" decision on a candidate that matched every

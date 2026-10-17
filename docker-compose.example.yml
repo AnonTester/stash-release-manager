@@ -19,7 +19,7 @@ services:
       - /path/to/your/library:/media                  # CHANGE: your library (same files Stash has as /data)
       - /path/to/sabnzbd/complete:/downloads          # CHANGE: finished downloads of SABnzbd
     # Hardware encoding of the 2160p -> 1080p re-encode (last resort for older scenes, see Settings > Quality): hand the render device to the
-    # container. Optional; without it the CPU does the work. Only on a machine with an Intel (or other VAAPI) GPU.
+    # container. Optional; without it the CPU does the work. Intel and AMD GPUs (VAAPI); not NVIDIA.
     # devices:
     #   - /dev/dri:/dev/dri
     environment:
