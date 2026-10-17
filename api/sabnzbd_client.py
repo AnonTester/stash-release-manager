@@ -92,7 +92,17 @@ class SabnzbdClient:
     def delete_history(self, nzo_id, del_files=False):
         """Removes one finished job from SABnzbd's history (what the *arr applications do after an import: "Remove Completed"). The files
         stay unless `del_files` -- after an import this program has moved or removed them itself."""
-        self._call("history", name="delete", value=nzo_id, del_files=1 if del_files else 0)
+        # archive=0: really remove it. SABnzbd 4.2+ moves a deleted entry to its Archive by default, and its duplicate detection still reads the
+        # archive -- the same release then fails with "Duplicate NZB" (found 2026-10-17); this program's own ledger covers "downloaded before".
+        self._call("history", name="delete", value=nzo_id, del_files=1 if del_files else 0, archive=0)
+
+    def get_archive(self, limit=5000):
+        """The entries SABnzbd keeps in its Archive (4.2+: what "delete" moves a history entry to; its duplicate detection reads them too)."""
+        return self._call("history", archive=1, start=0, limit=limit).get("history", {}).get("slots", [])
+
+    def delete_archived(self, nzo_id):
+        """Removes one entry from the Archive for good (the same call as delete_history: archive=0 = really remove)."""
+        self._call("history", name="delete", value=nzo_id, del_files=0, archive=0)
 
     def find_history_by_nzo_id(self, nzo_id):
         """One specific job by SABnzbd's own id -- what

@@ -355,6 +355,18 @@ def last_search(provider: str, scene_stashdb_id: str):
     return details
 
 
+def _tried_reason(title, events):
+    """Why a manual-search result is marked: what the scene's history last says about this release name."""
+    for ev in events:  # newest first
+        msg = ev["message"] or ""
+        if title and title in msg:
+            if "rejected (blocklisted)" in msg or "Possible match rejected" in msg:
+                return "declined in Needs review on " + ev["at"][:10]
+            if "failed" in msg.lower() or msg.startswith("Blocklisted"):
+                return "download failed or blocklisted on " + ev["at"][:10]
+    return "blocked for this scene before"
+
+
 @router.post("/{provider}/{scene_stashdb_id}/manual-search")
 def manual_search(provider: str, scene_stashdb_id: str, body: dict):
     """Manual search with a user-typed query (2026-09-22, Prowlarr only
@@ -386,6 +398,29 @@ def manual_search(provider: str, scene_stashdb_id: str, body: dict):
     priorities = source.indexer_priorities()
     results.sort(key=lambda r: (priorities.get(r["indexerId"], 25), r["age"] if r["age"] is not None else float("inf"),
                                  -(r["size"] or 0)))
+    # Releases this scene has been through already (declined in Needs review, a download that failed) are marked, so they are not picked
+    # again. Only the release's own name counts: its other encodes (another resolution) were never tried.
+    blocked = {indexer_search._exact_key(t[len(indexer_search.EXACT_PREFIX):] if str(t).startswith(indexer_search.EXACT_PREFIX) else t)
+               for t in release_repo.get_review_rejected_titles(_db, provider, scene_stashdb_id)}
+    film_blocked = set()
+    if provider == "theporndb":  # the manual search of a MOVIE (Movies > Stuck / Upgrade) asks with the movie's ThePornDB id or "film-<id>"
+        with _db.connect() as conn:
+            film = conn.execute("SELECT rejected_titles FROM film_want WHERE tpdb_id = ? OR 'film-' || id = ? LIMIT 1",
+                                (scene_stashdb_id, scene_stashdb_id)).fetchone()
+        try:
+            film_blocked = {indexer_search._exact_key(t) for t in (json.loads(film["rejected_titles"]) if film and film["rejected_titles"] else [])}
+        except ValueError:
+            film_blocked = set()
+    if blocked or film_blocked:
+        with _db.connect() as conn:
+            events = conn.execute("SELECT at, message FROM history WHERE provider = ? AND scene_id = ? ORDER BY at DESC",
+                                  (provider, scene_stashdb_id)).fetchall()
+        for r in results:
+            key = indexer_search._exact_key(r.get("title"))
+            if key in blocked:
+                r["tried"] = _tried_reason(r.get("title"), events)
+            elif key in film_blocked:
+                r["tried"] = "rejected or failed for this movie before"
     return {"results": results, "source": name}
 
 
@@ -674,6 +709,21 @@ def retry_failed(provider: str, scene_stashdb_id: str):
     release_repo.set_import_error_for_scene(_db, provider, scene_stashdb_id, None, None)
     release_repo.set_pending_import_path_for_scene(_db, provider, scene_stashdb_id, None)
     history.scene("info", "wishlist", "Search again: back on the wishlist", provider, scene_stashdb_id)
+    return {"ok": True, "status": "sent_to_whisparr"}
+
+
+@router.post("/{provider}/{scene_stashdb_id}/retry-encode")
+def retry_encode(provider: str, scene_stashdb_id: str):
+    """"Retry the encode" for an 'import_failed' release whose re-encode failed (import_error_code 'encode_failed'): the download is still in
+    place, so it goes back to the import (job kept) and an import run starts, which queues the encode again."""
+    rows = release_repo.list_rows_for_scene(_db, provider, scene_stashdb_id)
+    if not rows or rows[0].get("import_error_code") != "encode_failed" or not rows[0].get("download_job_id"):
+        raise HTTPException(400, "only a release whose re-encode failed (download still in place) can be retried")
+    release_repo.set_status_for_scene(_db, provider, scene_stashdb_id, "sent_to_whisparr")
+    release_repo.set_import_error_for_scene(_db, provider, scene_stashdb_id, None, None)
+    history.scene("info", "import", "Retry the re-encode", provider, scene_stashdb_id)
+    if file_importer.on_encode_done:
+        file_importer.on_encode_done()  # starts an import run
     return {"ok": True, "status": "sent_to_whisparr"}
 
 

@@ -138,8 +138,21 @@ def build_command(src, dst, info, quality, use_hw, codec="h265", preset="fast"):
     return cmd
 
 
+def decode_problem(path, timeout_hours=2):
+    """None when ffmpeg decodes the whole video (and the first audio track) without an error, else the first error line. A hardware encoder can
+    report success and still write a broken stream (found 2026-10-17: a VAAPI encode on a GPU that hangs, "CABAC_MAX_BIN" in every other frame)."""
+    try:
+        res = subprocess.run(["ffmpeg", "-v", "error", "-xerror", "-i", path, "-map", "0:v:0", "-map", "0:a:0?", "-f", "null", "-"],
+                             capture_output=True, text=True, timeout=timeout_hours * 3600)
+    except subprocess.TimeoutExpired:
+        return "decoding the encoded file did not finish in time"
+    except Exception as e:  # noqa: BLE001
+        return f"{type(e).__name__}: {e}"
+    return None if res.returncode == 0 and not res.stderr.strip() else _error_tail(res.stderr)
+
+
 def verify_output(dst, source_info):
-    """None when the encoded file looks right (1080p class, the same length), else the reason."""
+    """None when the encoded file looks right (1080p class, the same length, decodes without errors), else the reason."""
     out = probe(dst)
     if not out:
         return "the encoded file cannot be read"
@@ -147,7 +160,8 @@ def verify_output(dst, source_info):
         return f"the encoded file is still {out['width']}x{out['height']}"
     if source_info["duration"] and abs(out["duration"] - source_info["duration"]) > max(2.0, source_info["duration"] * 0.01):
         return f"the encoded file is {out['duration']:.0f} s long, the original {source_info['duration']:.0f} s"
-    return None
+    bad = decode_problem(dst)
+    return f"the encoded video is damaged ({bad})" if bad else None
 
 
 def transcode(src, dst, quality=24, hw_mode="auto", progress=None, timeout_hours=12, info=None, codec="h265", preset="fast"):
@@ -172,6 +186,8 @@ def transcode(src, dst, quality=24, hw_mode="auto", progress=None, timeout_hours
         if res == "stopped":
             return {"ok": False, "error": "stopped"}  # the caller cancelled: no second try
         logger.warning("transcode: %s encode of %s failed: %s", "hardware" if attempt_hw else "software", os.path.basename(src), res)
+        if attempt_hw and str(res).startswith("the encoded video is damaged"):  # the encoder "works" but writes broken streams: no more jobs on it
+            _hw_state[codec].update(ok=False, reason=f"the hardware encoder wrote a damaged file ({res})")
         if not attempt_hw:
             return {"ok": False, "error": res}
     return {"ok": False, "error": "encoding failed"}  # not reached

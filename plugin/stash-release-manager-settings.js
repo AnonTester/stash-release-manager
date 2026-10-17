@@ -3202,6 +3202,27 @@
     }));
     section.appendChild(historyStatus);
 
+    // SABnzbd's Archive (v0.222.3): its duplicate detection reads it, so an old entry can block a re-grab with "Duplicate NZB"
+    section.appendChild(el('p', { className: 'srw-subsection-heading', textContent: 'SABnzbd archive' }));
+    section.appendChild(el('p', {
+      className: 'srw-hint',
+      textContent: 'SABnzbd 4.2+ keeps deleted history entries in its Archive, and its duplicate detection reads them. Entries older than this are removed from the Archive once a day (only the category of the download client, when one is set; 0 = never).',
+    }));
+    const archiveDaysInput = el('input', {
+      type: 'number', min: '0', step: '1', value: settings.sab_archive_purge_days || '30',
+    });
+    const archiveStatus = el('span', { className: 'srw-key-status' });
+    section.appendChild(el('label', {}, ['Remove entries older than (days): ', archiveDaysInput]));
+    section.appendChild(el('button', {
+      className: 'srw-btn', textContent: 'Save',
+      onClick: async () => {
+        const result = await window.SRW.runOp('settings_set', { key: 'sab_archive_purge_days', value: archiveDaysInput.value });
+        archiveStatus.textContent = result && result.error ? ` error: ${result.error}` : ' saved';
+        setTimeout(() => { archiveStatus.textContent = ''; }, 2000);
+      },
+    }));
+    section.appendChild(archiveStatus);
+
     return section;
   }
 

@@ -518,6 +518,7 @@ class Database:
         self._migrate_film_want_scenes(conn)
         self._migrate_film_want_candidates(conn)
         self._migrate_film_want_parts(conn)
+        self._migrate_film_want_upgrade(conn)
         self._migrate_scene_alias_duplicates(conn)
         self._migrate_film_want_search(conn)
         self._migrate_torrent_support(conn)
@@ -716,6 +717,14 @@ class Database:
         for name in ("as_scene", "parts_imported"):
             if cols and name not in cols:
                 conn.execute(f"ALTER TABLE film_want ADD COLUMN {name} INTEGER NOT NULL DEFAULT 0")
+
+    def _migrate_film_want_upgrade(self, conn):
+        """film_want.upgrade_wanted (the owned file is below the quality profile: the movie is listed under Upgrade, not on the wishlist) and
+        owned_height (the best file's height when that was decided), v0.221.12. Plain ADD COLUMNs."""
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(film_want)").fetchall()}
+        for name in ("upgrade_wanted", "owned_height", "upgrading"):
+            if cols and name not in cols:  # upgrading (v0.222.0): the running download is the better version of the owned file
+                conn.execute(f"ALTER TABLE film_want ADD COLUMN {name} INTEGER" + (" NOT NULL DEFAULT 0" if name != "owned_height" else ""))
 
     def _migrate_film_want_search(self, conn):
         """film_want.review_candidate (JSON of the indexer result the automatic movie search found and the user has to accept/reject) and

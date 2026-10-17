@@ -96,6 +96,19 @@ def _imported_keys(db, client_id):
     return ids, names
 
 
+def _active_job_ids(db):
+    """Job ids of downloads whose import is still open (waiting, being encoded, failed but kept): their history entry is how the importer finds the
+    file. Found 2026-10-17: a release picked by hand from the manual search although it was blocklisted matched the 'blocked' rule and its
+    entry was removed while the import was pending -- the scene then waited for ever."""
+    ids = set()
+    with db.connect() as conn:
+        for table, statuses in (("release", ("sent_to_whisparr", "import_failed")), ("film_want", ("grabbed", "import_failed"))):
+            marks = ",".join("?" * len(statuses))
+            for r in conn.execute(f"SELECT download_job_id FROM {table} WHERE download_job_id IS NOT NULL AND status IN ({marks})", statuses):
+                ids.add(str(r[0]))
+    return ids
+
+
 def _blocked_names(db):
     """Release names this program rejected itself (blocklisted or quality-rejected downloads, of scenes and movies): the download is over for good, its
     file was discarded, the name stays blocked -- the history entry has nothing left to say."""
@@ -132,11 +145,14 @@ def find_candidates(db, client_row, client=None):
     client = client or SabnzbdClient(client_row["url"], client_row["api_key"])
     ids, names = _imported_keys(db, client_row["id"])
     blocked = _blocked_names(db)
+    active = _active_job_ids(db)
     out = []
     for slot in client.get_history(limit=HISTORY_LIMIT):
         if (slot.get("status") or "").lower() != "completed":
             continue
         nzo_id, name = slot.get("nzo_id"), slot.get("name")
+        if nzo_id and str(nzo_id) in active and str(nzo_id) not in ids:
+            continue  # its import is still open
         if nzo_id and str(nzo_id) in ids:
             out.append({"nzo_id": nzo_id, "name": name, "matched_by": "job"})
         elif norm_title(name) and norm_title(name) in names:
@@ -176,4 +192,56 @@ def clean_all(db):
             total += res["removed"]
         except Exception:
             logger.exception("clean history: client %s failed", row.get("name"))
+    return total
+
+
+# ---- the SABnzbd Archive (v0.222.3) ----
+# SABnzbd 4.2+ keeps a deleted history entry in its Archive, and its duplicate detection reads the archive too ("Duplicate NZB" for a release
+# that was downloaded long ago). This program removes its own entries for real (sabnzbd_client.delete_history, archive=0), so the archive only
+# fills with what the user or other programs delete. A regular purge keeps it from blocking a re-grab months later.
+ARCHIVE_PURGE_DEFAULT_DAYS = 30
+
+
+def purge_archive(client_row, older_than_days=ARCHIVE_PURGE_DEFAULT_DAYS, dry_run=True, client=None, now=None):
+    """Removes the Archive entries of this client that are older than `older_than_days` (by their completed time) and, when the client row names a
+    category, belong to it -- other categories (other programs) stay. Dry run (default): only counts. After a real run the archive is read again:
+    when nothing went away SABnzbd ignored the call and the run says so (`warning`)."""
+    import time
+    client = client or SabnzbdClient(client_row["url"], client_row["api_key"])
+    cutoff = (now if now is not None else time.time()) - int(older_than_days) * 86400
+    category = (client_row.get("category") or "").strip().lower()
+    old = [e for e in client.get_archive()
+           if (e.get("completed") or 0) and int(e["completed"]) < cutoff and e.get("nzo_id")
+           and (not category or (e.get("category") or "").lower() == category)]
+    out = {"dry_run": dry_run, "found": len(old), "older_than_days": int(older_than_days), "sample": [e.get("name") for e in old[:5]]}
+    if dry_run or not old:
+        return out
+    removed, errors = 0, []
+    for e in old:
+        try:
+            client.delete_archived(e["nzo_id"])
+            removed += 1
+        except Exception as ex:  # noqa: BLE001
+            errors.append(f"{e.get('name')}: {ex}")
+    out.update(removed=removed, errors=errors[:5])
+    left = {e.get("nzo_id") for e in client.get_archive()}
+    if removed and all(e["nzo_id"] in left for e in old):
+        out["warning"] = "SABnzbd still lists every entry in its Archive -- it did not remove them (purge them in SABnzbd by hand)"
+        logger.warning("archive purge: %s", out["warning"])
+    return out
+
+
+def purge_archives(db, older_than_days):
+    """The regular step: every enabled SABnzbd client whose option is on. Never raises; returns the number of removed entries."""
+    total = 0
+    for row in download_client_repo.list_all(db):
+        if not row.get("enabled") or not enabled_for(row):
+            continue
+        try:
+            res = purge_archive(row, older_than_days, dry_run=False)
+            total += res.get("removed", 0)
+            if res.get("removed"):
+                logger.info("archive purge: %d entr(ies) older than %d days removed from %s", res["removed"], older_than_days, row.get("name"))
+        except Exception:
+            logger.exception("archive purge: client %s failed", row.get("name"))
     return total

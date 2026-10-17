@@ -715,23 +715,41 @@ def _write_marker(db, provider, stash_id, source_file, info, dst, hw, codec, sec
 
 
 def finish_remote_encode(provider, stash_id, worker, ok, error=None, seconds=None, hw=False, codec="h265"):
-    """An encode worker reports its result (routers/encode_worker.py). The sidecar checks the file itself before it trusts it."""
+    """An encode worker reports its result (routers/encode_worker.py). The sidecar checks the file itself before it trusts it -- in the
+    background: decoding the whole file takes minutes on a NAS and the worker's request would time out (found 2026-10-17)."""
     job = encode_queue.get(provider, stash_id)
     if not job or job["claimed_by"] != worker:
         return {"error": "this encode is not (or no longer) assigned to this worker"}
+    db = job["db"]
+    if not ok:
+        try:
+            _encode_failed(db, provider, stash_id, f"{worker}: {error or 'the encode failed'}")
+        finally:
+            _encode_finished(provider, stash_id)
+        return {"ok": True, "recorded": "failed"}
+    encode_queue.start_verify(provider, stash_id, worker)
+    import_progress.set_phase(provider, stash_id, "encoding", percentage=100, method=f"{worker}: checking the result")
+    threading.Thread(target=_verify_remote_result, args=(provider, stash_id, worker, seconds, hw, codec), daemon=True,
+                     name=f"verify-encode-{stash_id[:8]}").start()
+    return {"ok": True, "recorded": "verifying"}
+
+
+def _verify_remote_result(provider, stash_id, worker, seconds, hw, codec):
+    job = encode_queue.get(provider, stash_id)
+    if not job:
+        return
     db, source_file, info = job["db"], job["source"], job["info"]
     dst = remote_output_path(source_file, stash_id, info)
     try:
-        if not ok:
-            _encode_failed(db, provider, stash_id, f"{worker}: {error or 'the encode failed'}")
-            return {"ok": True, "recorded": "failed"}
         problem = transcode.verify_output(dst, info)
         if problem:
             transcode._remove(dst)
             _encode_failed(db, provider, stash_id, f"{worker}: {problem}")
-            return {"ok": True, "recorded": "failed"}
+            return
         _write_marker(db, provider, stash_id, source_file, info, dst, hw, codec, int(seconds or 0), transcode.probe(dst) or {})
-        return {"ok": True, "recorded": "done"}
+    except Exception as e:  # noqa: BLE001
+        logger.exception("checking the result of %s failed", stash_id)
+        _encode_failed(db, provider, stash_id, f"{worker}: checking the result failed ({type(e).__name__}: {e})")
     finally:
         _encode_finished(provider, stash_id)
 

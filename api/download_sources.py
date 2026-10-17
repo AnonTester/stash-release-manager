@@ -109,6 +109,10 @@ class SabnzbdSource:
                 import download_failures
                 download_failures.handle_failed(self.db, release, job)
                 continue
+            if download_jobs.is_lost(job, release.get("grabbed_at")):
+                import download_failures
+                download_failures.handle_lost(self.db, release)
+                continue
             if job["state"] != "completed":
                 continue  # still downloading / in post-processing (the next run gets it) / a torrent removed by hand
             items.append({

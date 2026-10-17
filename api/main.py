@@ -873,10 +873,15 @@ def run_film_search():
             film_import.forget_dead_groups(db, get_stash_client())
         except Exception as e:  # noqa: BLE001
             logger.warning("forget_dead_groups failed: %s", e)
+        try:  # then: a movie whose Group has a file now needs no download (film_import.adopt_filled_groups)
+            film_import.adopt_filled_groups(db, get_stash_client(), film_import.min_film_resolution(db))
+        except Exception as e:  # noqa: BLE001
+            logger.warning("adopt_filled_groups failed: %s", e)
         result = _logged("film_search", lambda: film_search.run(db, get_film_search_source, int(_get_setting("film_search_per_run")),
                                                                  _get_setting("film_search_min_days"),
                                                                  int(_get_setting("film_search_recent_days")),
-                                                                 _get_setting("film_search_recent_min_days")))
+                                                                 _get_setting("film_search_recent_min_days"),
+                                                                 stash=get_stash_client(), min_res=film_import.min_film_resolution(db)))
         _mark_ran("film_search")
         return result
     finally:
@@ -1238,7 +1243,8 @@ def kick_film_whisparr(film_ids=()):
 
 def run_film_import():
     """One pass of the film wishlist's import (film_import.py). Called from run_file_import()."""
-    return film_import.run(db, get_stash_client(), _movies(), get_provider_client, _film_cfg())
+    return film_import.run(db, get_stash_client(), _movies(), get_provider_client, _film_cfg(),
+                           file_tools=(lambda p: _recycle_library_file(_stash_path_to_local(p)), _stash_path_to_local))
 
 
 def run_file_import():
@@ -1982,6 +1988,10 @@ async def _file_import_loop():
             removed = await asyncio.to_thread(download_history_cleanup.clean_all, db)  # "Remove completed" (v0.215.0)
             if removed:
                 logger.info("file import: %d finished download(s) removed from the client's history", removed)
+            purge_days = int(get_setting_value(db, "sab_archive_purge_days", "30") or 0)
+            if purge_days > 0 and _hours_until_due("sab_archive_purge", 24) == 0:  # SABnzbd's Archive: once a day (v0.222.3)
+                await asyncio.to_thread(download_history_cleanup.purge_archives, db, purge_days)
+                _mark_ran("sab_archive_purge")
         except Exception:
             logger.exception("file import failed")
         await asyncio.sleep(max(interval_hours, 0.1) * 3600)

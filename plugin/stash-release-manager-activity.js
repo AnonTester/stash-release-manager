@@ -82,7 +82,7 @@
     const filmsMissing = films.filter(fileMissing);
     const filmsDownloading = films.filter((f) => f.status === 'grabbed' && !fileMissing(f));
     const filmsFailed = films.filter((f) => f.status === 'import_failed');
-    const filmsReview = films.filter((f) => f.status === 'wanted' && f.review_candidate); // the automatic search found something to decide on
+    const filmsReview = films.filter((f) => (f.status === 'wanted' || f.upgrade) && f.review_candidate); // the automatic search found something to decide on (an owned movie: a better version)
     const filmsStuck = films.filter((f) => f.status === 'wanted' && !f.review_candidate);   // searched, nothing usable
     // Settings > Schedule & Import: may the fingerprints of a confirmed file be submitted to StashDB?
     uploadEnabled = !!appSettings && appSettings.fingerprint_upload_enabled === 'true';
@@ -342,6 +342,18 @@
       // back on the wishlist for a new search, or dismiss.
       if (showFixWrongDownload && r.status === 'import_failed' && r.import_error_code !== 'fingerprint_mismatch') {
         const actStatus = el('span', { className: 'srw-key-status' });
+        if (r.import_error_code === 'encode_failed') { // the download is still in place: encode it again instead of fetching a new one
+          li.push(el('button', {
+            className: 'srw-btn srw-btn-primary', textContent: 'Retry the encode',
+            title: 'The downloaded file is still there: queue the re-encode again (it goes to the encode worker or the NAS as set in Settings > Quality)',
+            onClick: async () => {
+              const result = await window.SRW.runOp('releases_retry_encode', { provider: r.provider, scene_stashdb_id: r.scene_stashdb_id });
+              if (result.error) { actStatus.textContent = ` error: ${result.error}`; return; }
+              window.SRW.notify('Retry the encode', `"${r.title}" is queued again.`, 'success');
+              if (onChanged) onChanged();
+            },
+          }));
+        }
         if (r.import_error_code !== 'scene_gone') {
           li.push(el('button', {
             className: 'srw-btn srw-btn-primary', textContent: 'Search again',
@@ -764,8 +776,9 @@
     filmsReview.forEach((f) => { // movies: the automatic movie search found a plausible release (Reject = never this release for this movie)
       const c = f.review_candidate || {};
       ul.appendChild(reviewRow([
-        el('span', { className: 'srw-history-category', textContent: 'Movie' }),
+        el('span', { className: 'srw-history-category', textContent: f.upgrade ? 'Upgrade · Movie' : 'Movie' }),
         el('span', { className: 'srw-release-title', textContent: `${f.title}${f.year ? ` (${f.year})` : ''}` }),
+        f.upgrade ? el('span', { className: 'srw-release-date', textContent: `now ${f.owned_height || '?'}p -- accepting replaces the file (the old one goes to the recycle bin)` }) : null,
         f.parts_imported ? el('span', { className: 'srw-release-date', textContent: `${f.parts_imported} part(s) already in the group` }) : null,
       ], candidateLine(c), decisionButtons(
         () => window.SRW.runOp('films_review_accept', { id: f.id }),

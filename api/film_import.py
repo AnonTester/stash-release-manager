@@ -85,7 +85,7 @@ def import_downloaded(db, stash_client, film, job, cfg):
             msg = (f"The downloaded file \"{os.path.basename(video)}\" is not a readable video ({reason}) -- probably a failed unpack. "
                    "Nothing was moved into the library; the release is rejected and the movie is searched again")
             rejected = [*film.get("rejected_titles", []), *([film["grabbed_title"]] if film.get("grabbed_title") else [])]
-            film_repo.update(db, film["id"], status="wanted", download_client_id=None, download_job_id=None, grabbed_title=None, grabbed_at=None, review_candidate=None, as_scene=0,
+            film_repo.update(db, film["id"], **_fail_back(film), download_client_id=None, download_job_id=None, grabbed_title=None, grabbed_at=None, review_candidate=None, as_scene=0,
                              import_error=msg, last_search_result="unreadable", rejected_titles=rejected)
             history.event("warning", "movies", f"{film['title']}: {msg}")
             return {"id": film["id"], "status": "unreadable"}
@@ -139,7 +139,7 @@ def _tpdb_record(film, get_provider_client):
     return stored
 
 
-def finalize(db, stash_client, film, movies, get_provider_client, force=False, cfg=None):
+def finalize(db, stash_client, film, movies, get_provider_client, force=False, cfg=None, file_tools=None):
     """Step 2 -- scenes -> length check -> Group. Returns {"status": waiting | imported | import_failed, ...}. With `cfg`, a file that Stash has not turned
     into a scene is checked for being a readable video at all: if not, the movie goes to import_failed (use "Wrong movie") instead of waiting forever."""
     paths = json.loads(film["pending_import_path"])
@@ -167,6 +167,13 @@ def finalize(db, stash_client, film, movies, get_provider_client, force=False, c
         film_repo.update(db, film["id"], status="import_failed", import_error=msg)
         history.event("warning", "movies", f"{film['title']}: {msg}")
         return {"id": film["id"], "status": "import_failed", "actual": round(actual, 1), "expected": expected}
+    if film.get("upgrading"):  # the better version of a file we own: replaces it, no new Group
+        if len(ids) != 1:
+            msg = f"The upgrade download has {len(ids)} files -- it replaces one file only. Look at it, then 'Wrong movie' or fix it by hand"
+            film_repo.update(db, film["id"], status="import_failed", import_error=msg)
+            history.event("warning", "movies", f"{film['title']}: {msg}")
+            return {"id": film["id"], "status": "import_failed", "reason": "upgrade_files"}
+        return _finish_upgrade(db, stash_client, film, scenes[0], json.loads(film["pending_import_path"])[0], file_tools, force=force)
     group_id = _make_group(db, film, ids, movies, get_provider_client)
     for sid in ids:
         file_importer._trigger_generate(stash_client, sid)
@@ -175,6 +182,77 @@ def finalize(db, stash_client, film, movies, get_provider_client, force=False, c
     history.event("info", "movies", f"{film['title']} imported: group {group_id} with {len(ids)} scene(s)",
                   details={"scenes": ids, "minutes": round(actual, 1)})
     return {"id": film["id"], "status": "imported", "group_id": group_id, "scenes": len(ids)}
+
+
+_GROUP_FILES_QUERY = "query($id: ID!) { findGroup(id: $id) { id scenes { id files { id path height width duration } } } }"
+
+
+def upgrade_target(stash_client, group_id):
+    """The owned file an upgrade replaces (v0.222.0): {"scene_id", "file_id", "path", "height", "width"}; None when the Group is gone; a text (why
+    not) when the Group holds more than one scene or file -- which file would be replaced is then the user's call, so it is not searched."""
+    group = stash_client._graphql(_GROUP_FILES_QUERY, {"id": str(group_id)}).get("findGroup")
+    if not group:
+        return None
+    scenes = group.get("scenes") or []
+    if len(scenes) != 1:
+        return f"the Group holds {len(scenes)} scenes -- replace the files by hand"
+    files = scenes[0].get("files") or []
+    if len(files) != 1:
+        return f"the scene holds {len(files)} files -- replace the file by hand"
+    f = files[0]
+    return {"scene_id": str(scenes[0]["id"]), "file_id": str(f["id"]), "path": f["path"], "height": f.get("height") or 0, "width": f.get("width") or 0}
+
+
+def _rejected_with_grabbed(film):
+    """The movie's blocklist plus the release that just failed (an upgrade must not offer the same failing release again)."""
+    return [*film.get("rejected_titles", []), *([film["grabbed_title"]] if film.get("grabbed_title") and film.get("upgrading") else [])]
+
+
+def _fail_back(film):
+    """Where a movie goes when a download or its import fails: the wishlist -- but a movie that was being UPGRADED still owns its file, so it
+    goes back onto the Upgrade list (status 'imported', upgrade_wanted)."""
+    if film.get("upgrading"):
+        return {"status": "imported", "upgrading": 0, "upgrade_wanted": 1}
+    return {"status": "wanted"}
+
+
+def _finish_upgrade(db, stash_client, film, scene, new_path, file_tools, force=False):
+    """The better file is in the library and its scene exists: merged into the owned scene (Stash sceneMerge keeps that scene's metadata, rating,
+    play history and its place in the Group, like a scene upgrade), the new file becomes primary, the old file goes to the recycle bin. Nothing
+    is touched when the owned file cannot be found any more (import_failed, both files stay)."""
+    recycle, to_local = file_tools if file_tools else (None, None)
+    target = upgrade_target(stash_client, film["imported_group_id"]) if film.get("imported_group_id") else None
+    if not isinstance(target, dict):
+        why = target or "the Stash Group does not exist any more"
+        msg = f"Upgrade not applied: {why}. The new file is in the library; put it in the Group by hand"
+        film_repo.update(db, film["id"], status="import_failed", import_error=msg)
+        history.event("warning", "movies", f"{film['title']}: {msg}")
+        return {"id": film["id"], "status": "import_failed", "reason": "upgrade_target"}
+    if recycle is None:
+        raise RuntimeError("no recycle tool for an upgrade")
+    new_scene_id = scene["id"]
+    old_scene_id, old_path = target["scene_id"], target["path"]
+    if str(new_scene_id) != str(old_scene_id):
+        stash_client.merge_scene_into(new_scene_id, old_scene_id)
+    files = stash_client.scene_files(old_scene_id) or []
+    new_file = next((x for x in files if x["path"] == new_path), None)
+    if new_file:
+        stash_client.set_primary_file(old_scene_id, new_file["id"])
+    if old_path != new_path:
+        recycle(old_path)
+        try:
+            stash_client.clean_paths([old_path.rsplit("/", 1)[0]])
+        except Exception:  # noqa: BLE001
+            logger.exception("movie upgrade: Stash clean for %s failed (the old file entry stays until the next clean)", old_path)
+    file_importer._trigger_generate(stash_client, old_scene_id)
+    height = next((x.get("height") for x in (stash_client._graphql("query($id: ID!) { findScene(id: $id) { files { path height } } }",
+                                                                    {"id": str(old_scene_id)})["findScene"]["files"]) if x["path"] == new_path), None)
+    film_repo.update(db, film["id"], status="imported", upgrading=0, upgrade_wanted=0, owned_height=height or None, pending_import_path=None,
+                     import_error=None, download_client_id=None, download_job_id=None, grabbed_title=None, grabbed_at=None, review_candidate=None,
+                     last_search_result="upgraded")
+    history.event("info", "movies", f"{film['title']}: upgrade done -- the better file ({height or '?'}p) is in the group, the old one ({target['height']}p) is in the recycle bin",
+                  details={"scene": old_scene_id, "old": old_path, "new": new_path})
+    return {"id": film["id"], "status": "imported", "group_id": film.get("imported_group_id"), "scenes": 1, "upgraded": True}
 
 
 def forget_dead_groups(db, stash_client, dry_run=False):
@@ -198,6 +276,55 @@ def forget_dead_groups(db, stash_client, dry_run=False):
             else:
                 film_repo.update(db, d["id"], stash_group_id=None)
                 history.event("info", "movies", f"{d['title']}: forgot the deleted Stash Group {d['stash_group_id']}")
+    return found
+
+
+_FILLED_QUERY = "{ findGroups(filter: {per_page: -1}) { groups { id scenes { files { duration width height } } } } }"
+
+
+def min_film_resolution(db):
+    """The smallest resolution of the scene quality profile (Settings > Quality), None when no profile is set: a movie file below it is an upgrade."""
+    from routers.settings import resolve_quality_profiles
+    profile, _ = resolve_quality_profiles(db)
+    resolutions = [int(r) for r in ((profile or {}).get("resolutions") or [])]
+    return min(resolutions) if resolutions else None
+
+
+def _meets(width, height, resolution):
+    """A file counts as `resolution` p when its height reaches it or its width does (letterboxed 1920x800 is 1080p); 10 % slack."""
+    return (height or 0) >= resolution * 0.9 or (width or 0) >= resolution * 16 / 9 * 0.9
+
+
+def adopt_filled_groups(db, stash_client, min_resolution, dry_run=False):
+    """Wishlist movies ('suggested' / 'wanted') whose remembered Stash Group has a file now that covers the movie (v0.221.12): the user or the
+    library filled the Group, so nothing needs to be downloaded. The movie becomes 'imported' with that Group; when the best file is below
+    `min_resolution` (the smallest resolution of the quality profile) it is flagged upgrade_wanted and shows under Upgrade, not on the wishlist.
+    Length rule = the film import's (+-15 % of the ThePornDB length, scenes summed); a movie without a known length is left alone.
+    ONE Stash query; an empty answer is not believed and changes nothing."""
+    groups = {str(g["id"]): g for g in stash_client._graphql(_FILLED_QUERY, {})["findGroups"]["groups"]}
+    found = []
+    if not groups:
+        return found
+    for f in film_repo.list_films(db, ["suggested", "wanted"], per_page=0)["rows"]:
+        gid = f.get("stash_group_id")
+        g = groups.get(str(gid)) if gid else None
+        if not g or not f.get("duration_min") or f.get("parts_imported"):
+            continue
+        scenes = [[x for x in (s.get("files") or [])] for s in g["scenes"]]
+        scenes = [fl for fl in scenes if fl]
+        minutes = sum(max((x.get("duration") or 0) for x in fl) for fl in scenes) / 60
+        if not minutes or abs(minutes / float(f["duration_min"]) - 1) > LENGTH_TOLERANCE:
+            continue
+        best = max((x for fl in scenes for x in fl), key=lambda x: (x.get("height") or 0))
+        low = bool(min_resolution) and not _meets(best.get("width"), best.get("height"), int(min_resolution))
+        found.append({"id": f["id"], "title": f["title"], "stash_group_id": gid, "previous": f["status"], "minutes": round(minutes, 1),
+                      "height": best.get("height"), "upgrade": low})
+    if not dry_run:
+        for d in found:
+            film_repo.update(db, d["id"], status="imported", imported_group_id=d["stash_group_id"], review_candidate=None, import_error=None,
+                             upgrade_wanted=1 if d["upgrade"] else 0, owned_height=d["height"], last_search_result="in_library")
+            history.event("info", "movies", f"{d['title']}: the Stash Group {d['stash_group_id']} already has the movie ({d['minutes']} min, "
+                          f"{d['height']}p) -- " + ("below the quality profile, listed under Upgrade" if d["upgrade"] else "taken off the wishlist"))
     return found
 
 
@@ -258,7 +385,7 @@ def assemble(db, stash_client, film, movies, get_provider_client):
     return {"id": film["id"], "status": "imported", "group_id": group_id, "scenes": len(local)}
 
 
-def run(db, stash_client, movies, get_provider_client, cfg):
+def run(db, stash_client, movies, get_provider_client, cfg, file_tools=None):
     """One pass over every 'grabbed' film -- called at the end of every file-import run (loop, SABnzbd webhook, finished scan)."""
     result = {"moved": [], "imported": [], "failed": [], "waiting": []}
     for row in film_repo.list_films(db, ["grabbed"], per_page=0)["rows"]:
@@ -269,7 +396,7 @@ def run(db, stash_client, movies, get_provider_client, cfg):
                 (result["imported"] if out["status"] == "imported" else result["waiting"]).append(out)
                 continue
             if film.get("pending_import_path"):
-                out = finalize(db, stash_client, film, movies, get_provider_client, cfg=cfg)
+                out = finalize(db, stash_client, film, movies, get_provider_client, cfg=cfg, file_tools=file_tools)
                 {"imported": result["imported"], "part_imported": result["imported"], "import_failed": result["failed"]}.get(out["status"], result["waiting"]).append(out)
                 continue
             client_row = download_client_repo.get_one(db, film["download_client_id"]) if film.get("download_client_id") else None
@@ -279,10 +406,17 @@ def run(db, stash_client, movies, get_provider_client, cfg):
             if job["state"] == "failed":
                 label = job.get("client") or "SABnzbd"
                 msg = f"Download failed in {label}{(': ' + job['fail_message']) if job.get('fail_message') else ''} -- back on the wishlist"
-                film_repo.update(db, film["id"], status="wanted", download_job_id=None, download_client_id=None, import_error=msg,
-                                 last_search_result="download_failed")
+                film_repo.update(db, film["id"], **_fail_back(film), download_job_id=None, download_client_id=None, import_error=msg,
+                                 last_search_result="download_failed", rejected_titles=_rejected_with_grabbed(film))
                 history.event("error", "movies", f"{film['title']}: {msg}")
                 result["failed"].append({"id": film["id"], "status": "download_failed"})
+                continue
+            if download_jobs.is_lost(job, film.get("grabbed_at")):
+                msg = "The download client no longer knows this download (removed from its history?) -- back on the wishlist"
+                film_repo.update(db, film["id"], **_fail_back(film), download_job_id=None, download_client_id=None, import_error=msg,
+                                 last_search_result="download_failed", rejected_titles=_rejected_with_grabbed(film))
+                history.event("warning", "movies", f"{film['title']}: {msg}")
+                result["failed"].append({"id": film["id"], "status": "download_lost"})
                 continue
             if job["state"] == "post_processing":  # "Completed" comes before the output path is set (found with the first real film grab, v0.125.3)
                 result["waiting"].append({"id": film["id"], "status": "post_processing"})
@@ -329,10 +463,13 @@ def discard(db, stash_client, film, recycle, to_local, dismiss=False):
     except Exception:  # noqa: BLE001
         logger.exception("movie discard: Stash clean for %s failed (the entries go with the next clean)", folders)
     rejected = [*film.get("rejected_titles", []), *([film["grabbed_title"]] if film.get("grabbed_title") else [])]
-    film_repo.update(db, film["id"], status="dismissed" if dismiss else "wanted", pending_import_path=None, import_error=None,
+    back = {"status": back["status"]}
+    if film.get("upgrading"):  # the owned file stays: back on the Upgrade list (or off it when the user dismisses)
+        back = {"status": "imported", "upgrading": 0, "upgrade_wanted": 0 if dismiss else 1}
+    film_repo.update(db, film["id"], **back, pending_import_path=None, import_error=None,
                      download_client_id=None, download_job_id=None, grabbed_title=None, grabbed_at=None,
                      review_candidate=None, last_search_at=None, last_search_result="rejected", rejected_titles=rejected)
     history.event("info", "movies", f"{film['title']}: wrong movie removed ({len(recycled)} file(s) in the recycle bin), "
                   + ("dismissed" if dismiss else "searched again"),
                   details={"scenes": removed_scenes, "files": recycled, "missing": missing, "blocklisted": film.get("grabbed_title")})
-    return {"ok": True, "files": recycled, "scenes": removed_scenes, "missing": missing, "status": "dismissed" if dismiss else "wanted"}
+    return {"ok": True, "files": recycled, "scenes": removed_scenes, "missing": missing, "status": back["status"]}

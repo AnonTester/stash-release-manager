@@ -47,7 +47,7 @@ def get(provider, stash_id):
 
 def _expire_locked(now):
     for job in _jobs.values():
-        if job["claimed_by"] and job["claimed_by"] != "local" and now - job["beat"] > LEASE_SECONDS:
+        if job["claimed_by"] not in (None, "local", "verify") and now - job["beat"] > LEASE_SECONDS:
             job["claimed_by"] = None
             import_progress.set_phase(job["provider"], job["stash_id"], "waiting_encode", can_local=True)  # the worker went silent
 
@@ -99,6 +99,17 @@ def run_local_now(provider, stash_id):
         if not job or (job["claimed_by"] and job["claimed_by"] != "local"):
             return False
         job["local"] = True
+        return True
+
+
+def start_verify(provider, stash_id, worker):
+    """The worker reported its result; the sidecar now checks the file (minutes on a NAS). The job stays out of every claim and its lease
+    cannot run out meanwhile. False when `worker` no longer holds the job."""
+    with _lock:
+        job = _jobs.get(_key(provider, stash_id))
+        if not job or job["claimed_by"] != worker:
+            return False
+        job["claimed_by"] = "verify"
         return True
 
 

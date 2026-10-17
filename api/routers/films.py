@@ -81,6 +81,8 @@ def activity():
     # wanted movies the automatic search has something to say about: a candidate to decide on (Needs review) or "nothing usable" (Stuck)
     rows += [f for f in film_repo.list_films(_db, ["wanted"], per_page=0)["rows"]
              if f.get("review_candidate") or f.get("last_search_result") in ("no_match", "rejected", "error")]
+    # owned movies below the quality profile with a better release waiting for a decision (Needs review > Upgrade)
+    rows += [f for f in film_repo.list_films(_db, ["imported"], per_page=0)["rows"] if f.get("upgrade_wanted") and f.get("review_candidate")]
     out = []
     for f in rows:
         mode = f.get("mode") or "file"
@@ -88,7 +90,8 @@ def activity():
                 "import_error": f.get("import_error"), "stash_group_id": f.get("stash_group_id"), "source": f.get("source"), "key": f"film:{f['id']}",
                 "image_url": f.get("image_url"), "studio_name": f.get("studio_name"), "release_date": f.get("release_date"),
                 "review_candidate": f.get("review_candidate"), "last_search_at": f.get("last_search_at"),
-                "last_search_result": f.get("last_search_result"), "parts_imported": f.get("parts_imported") or 0}
+                "last_search_result": f.get("last_search_result"), "parts_imported": f.get("parts_imported") or 0,
+                "upgrade": bool(f.get("upgrade_wanted") or f.get("upgrading")), "owned_height": f.get("owned_height")}
         if mode == "scenes":
             have = sum(1 for sc in (f.get("scene_ids") or [])
                        if any(r["status"] == "imported" for r in release_repo.list_rows_for_scene(_db, "stashdb", sc["id"])))
@@ -257,8 +260,13 @@ _GRAB_MESSAGES = {
 def _grab_film(film, candidate, as_scene=False):
     """Sends a candidate to the download client and records the job on the movie (used by the manual grab and by Accept of a found candidate)."""
     film_id = film["id"]
-    if film["status"] not in ("wanted", "import_failed"):
-        raise HTTPException(400, f"the movie is '{film['status']}' -- only a movie on the wishlist can be grabbed")
+    upgrade = bool(film.get("upgrading")) or (film["status"] == "imported" and bool(film.get("upgrade_wanted")))  # the better version of the file we own (v0.222.0)
+    if film["status"] not in ("wanted", "import_failed") and not upgrade:
+        raise HTTPException(400, f"the movie is '{film['status']}' -- only a movie on the wishlist (or on the Upgrade list) can be grabbed")
+    if upgrade:
+        target = film_import.upgrade_target(_get_stash_client(), film.get("imported_group_id"))
+        if not isinstance(target, dict):
+            raise HTTPException(400, target or "the Stash Group of this movie does not exist any more")
     if not indexer_search.candidate_url(candidate):
         raise HTTPException(400, "candidate.downloadUrl is required")
     sent = indexer_search.send_to_download_client(
@@ -267,8 +275,8 @@ def _grab_film(film, candidate, as_scene=False):
         raise HTTPException(400, _GRAB_MESSAGES.get(sent["result"], sent["result"]))
     film_repo.update(_db, film_id, status="grabbed", download_client_id=sent["client_row"]["id"], download_job_id=sent["nzo_id"],
                      grabbed_title=candidate.get("title"), grabbed_at=film_repo.now(), last_search_result="grabbed", import_error=None,
-                     review_candidate=None, as_scene=1 if as_scene else 0)
-    history.event("info", "movies", f"Grabbed for the movie {film['title']}: {candidate.get('title')}",
+                     review_candidate=None, as_scene=1 if as_scene else 0, upgrading=1 if upgrade else 0)
+    history.event("info", "movies", f"Grabbed {'an upgrade ' if upgrade else ''}for the movie {film['title']}: {candidate.get('title')}",
                   details={"indexer": candidate.get("indexer"), "job": sent["nzo_id"],
                            **({"size_gb": round(candidate["size"] / 1e9, 2)} if candidate.get("size") else {})})
     return {"ok": True, "grab": {"title": candidate.get("title"), "nzo_id": sent["nzo_id"]}}
@@ -281,7 +289,8 @@ def grab(film_id: int, body: dict):
     film = film_repo.get(_db, film_id)
     if not film:
         raise HTTPException(404, "movie not found")
-    return _grab_film(film, body.get("candidate") or {})
+    as_scene = bool(body.get("as_scene")) and film["status"] == "wanted"  # a part of the movie for its group (like Accept as one scene)
+    return _grab_film(film, body.get("candidate") or {}, as_scene=as_scene)
 
 
 @router.post("/{film_id}/search")
@@ -291,11 +300,16 @@ def search_now(film_id: int):
     film = film_repo.get(_db, film_id)
     if not film:
         raise HTTPException(404, "movie not found")
-    if film["status"] != "wanted":
-        raise HTTPException(400, f"the movie is '{film['status']}' -- only a movie on the wishlist is searched")
+    upgrade = film["status"] == "imported" and bool(film.get("upgrade_wanted"))
+    if film["status"] != "wanted" and not upgrade:
+        raise HTTPException(400, f"the movie is '{film['status']}' -- only a movie on the wishlist (or on the Upgrade list) is searched")
     source = _get_film_source() if _get_film_source else None
     if source is None:
         raise HTTPException(400, "No Prowlarr or direct indexers configured (Settings > Connections / Indexers)")
+    if upgrade:
+        out = film_search.search_upgrade(_db, film, source, _get_stash_client(), film_import.min_film_resolution(_db))
+        out["judged"] = out.get("judged", [])[:15]
+        return out
     out = film_search.search_film(_db, film, source)
     out["judged"] = out.get("judged", [])[:15]
     return out
@@ -327,6 +341,26 @@ def forget_dead_groups(body: ForgetDeadBody):
     only lists what would happen. The same sweep runs before every automatic movie search."""
     found = film_import.forget_dead_groups(_db, _get_stash_client(), dry_run=body.dry_run)
     return {"dry_run": body.dry_run, "films": found}
+
+
+@router.post("/adopt-filled")
+def adopt_filled(body: ForgetDeadBody):
+    """Wishlist movies whose Stash Group has a file now that covers the movie: they leave the wishlist (imported); a file below the quality
+    profile's smallest resolution lists the movie under Upgrade. With dry_run (default) it only lists what would happen. The same sweep runs
+    before every automatic movie search."""
+    found = film_import.adopt_filled_groups(_db, _get_stash_client(), film_import.min_film_resolution(_db), dry_run=body.dry_run)
+    return {"dry_run": body.dry_run, "films": found}
+
+
+@router.post("/{film_id}/upgrade-keep")
+def upgrade_keep(film_id: int):
+    """"Keep this file": the movie leaves the Upgrade list (stays imported)."""
+    film = film_repo.get(_db, film_id)
+    if not film or film["status"] != "imported" or not film.get("upgrade_wanted"):
+        raise HTTPException(400, "this movie is not on the Upgrade list")
+    film_repo.update(_db, film_id, upgrade_wanted=0)
+    history.event("info", "movies", f"{film['title']}: kept the file ({film.get('owned_height')}p), off the Upgrade list")
+    return {"ok": True}
 
 
 @router.post("/{film_id}/parts-done")
@@ -421,7 +455,7 @@ def finalize_film(film_id: int, body: FinalizeBody):
     if film["status"] not in ("grabbed", "import_failed"):
         raise HTTPException(400, f"the movie is '{film['status']}'")
     try:
-        result = film_import.finalize(_db, _get_stash_client(), film, _get_movies(), _get_provider_client, force=body.force)
+        result = film_import.finalize(_db, _get_stash_client(), film, _get_movies(), _get_provider_client, force=body.force, file_tools=_file_tools)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(500, f"{type(e).__name__}: {e}")
     return result

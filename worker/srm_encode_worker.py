@@ -13,6 +13,7 @@ hardware encoding (VAAPI, /dev/dri) works here when the machine has it; the sett
 import argparse
 import json
 import os
+import signal
 import socket
 import sys
 import time
@@ -21,6 +22,36 @@ import urllib.request
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "api"))
 import transcode  # noqa: E402
+
+
+class Status:
+    """What the worker is doing, as a small JSON file other tools can read (the KDE widget, worker/plasmoid): written atomically, a few times a
+    minute. Default place: $XDG_RUNTIME_DIR/srm-encode-worker/status.json."""
+
+    def __init__(self, path, name, sidecar):
+        self.path, self.data = path, {"name": name, "sidecar": sidecar, "pid": os.getpid(), "state": "idle", "last_result": None}
+        self.stopping, self.busy = False, False
+
+    def set(self, **fields):
+        self.data.update(fields, updated_at=time.time())
+        if not self.path:
+            return
+        try:
+            os.makedirs(os.path.dirname(self.path), exist_ok=True)
+            tmp = f"{self.path}.{os.getpid()}.tmp"
+            with open(tmp, "w") as f:
+                json.dump(self.data, f)
+            os.replace(tmp, self.path)
+        except OSError:
+            pass  # the status is a convenience, never a reason to stop encoding
+
+    def idle(self, state="idle", **fields):
+        self.set(state=state, file=None, percent=None, speed_x=None, seconds_left=None, method=None, **fields)
+
+
+def default_status_path():
+    base = os.environ.get("XDG_RUNTIME_DIR") or os.path.join("/tmp", f"srm-{os.getuid()}")
+    return os.path.join(base, "srm-encode-worker", "status.json")
 
 
 def call(base, path, body=None, timeout=30):
@@ -37,7 +68,7 @@ def translate(path, maps):
     return None
 
 
-def run_job(base, name, job, maps):
+def run_job(base, name, job, maps, status):
     provider, stash_id = job["provider"], job["stash_id"]
     src, dst = translate(job["source"], maps), translate(job["dest"], maps)
     key = {"provider": provider, "stash_id": stash_id, "worker": name}
@@ -46,8 +77,13 @@ def run_job(base, name, job, maps):
         return
     print(f"[{time.strftime('%H:%M:%S')}] encoding {os.path.basename(src)}", flush=True)
     last = [0.0]
+    status.set(state="encoding", file=os.path.basename(src), percent=0, speed_x=None, seconds_left=None, started_at=time.time(),
+               method=transcode.method_label(job["hw_mode"], job["codec"]))
 
     def progress(pct, speed, left):
+        if status.stopping:
+            raise transcode.StopEncode()  # "Stop" from the widget / systemd: ffmpeg ends, the half file is removed
+        status.set(percent=pct, speed_x=speed, seconds_left=left)
         if time.time() - last[0] < 5:
             return
         last[0] = time.time()
@@ -63,11 +99,14 @@ def run_job(base, name, job, maps):
         res = {"ok": False, "error": f"{type(e).__name__}: {e}"}
         transcode._remove(dst)
     if res.get("error") == "stopped":
-        print("  the sidecar gave the job to someone else; stopped", flush=True)
+        print("  stopped" + ("" if status.stopping else " (the sidecar gave the job to someone else)"), flush=True)
         transcode._remove(dst)
+        status.idle(last_result={"ok": False, "text": "stopped", "file": os.path.basename(src), "at": time.time()})
         return
     body = {**key, "ok": res["ok"], "error": res.get("error"), "seconds": int(time.time() - started), "hw": res.get("hw", False), "codec": res.get("codec", job["codec"])}
     call(base, "/encode-worker/done", body)
+    status.idle(last_result={"ok": res["ok"], "text": "done" if res["ok"] else str(res.get("error")), "file": os.path.basename(src),
+                             "seconds": body["seconds"], "at": time.time()})
     print(f"  {'done' if res['ok'] else 'failed: ' + str(res.get('error'))} after {body['seconds']} s ({method[0]})", flush=True)
 
 
@@ -78,6 +117,7 @@ def main():
     ap.add_argument("--name", default=socket.gethostname(), help="how this worker shows up on the Activity page (default: the host name)")
     ap.add_argument("--interval", type=int, default=30, help="seconds between asking for work (default 30)")
     ap.add_argument("--once", action="store_true", help="do at most one job, then exit")
+    ap.add_argument("--status-file", default=default_status_path(), help="where the current state is written as JSON (for the KDE widget); '' = nowhere")
     args = ap.parse_args()
     maps = []
     for m in args.map:
@@ -85,19 +125,38 @@ def main():
             ap.error(f"--map needs REMOTE=LOCAL, got {m!r}")
         maps.append(tuple(m.split("=", 1)))
     print(f"encode worker {args.name!r} asks {args.sidecar} every {args.interval} s", flush=True)
-    while True:
-        try:
-            job = call(args.sidecar, f"/encode-worker/next?worker={urllib.request.quote(args.name)}").get("job")
-            if job:
-                run_job(args.sidecar, args.name, job, maps)
-                if args.once:
-                    return
-                continue  # look for the next one right away
-        except (urllib.error.URLError, OSError, ValueError) as e:
-            print(f"[{time.strftime('%H:%M:%S')}] sidecar not reachable: {e}", flush=True)
-        if args.once:
-            return
-        time.sleep(args.interval)
+    status = Status(args.status_file, args.name, args.sidecar)
+    status.set(state="idle", interval=args.interval, started_at=time.time())
+
+    def on_stop(signum, frame):
+        status.stopping = True
+        if not status.busy:  # between jobs: leave at once; during a job the progress callback ends ffmpeg first
+            status.set(state="stopped")
+            sys.exit(0)
+    signal.signal(signal.SIGTERM, on_stop)
+    signal.signal(signal.SIGINT, on_stop)
+    try:
+        while not status.stopping:
+            try:
+                job = call(args.sidecar, f"/encode-worker/next?worker={urllib.request.quote(args.name)}").get("job")
+                if job:
+                    status.busy = True
+                    try:
+                        run_job(args.sidecar, args.name, job, maps, status)
+                    finally:
+                        status.busy = False
+                    if args.once:
+                        return
+                    continue  # look for the next one right away
+                status.idle(error=None)
+            except (urllib.error.URLError, OSError, ValueError) as e:
+                print(f"[{time.strftime('%H:%M:%S')}] sidecar not reachable: {e}", flush=True)
+                status.idle(state="unreachable", error=str(e)[:200])
+            if args.once:
+                return
+            time.sleep(args.interval)
+    finally:
+        status.set(state="stopped")
 
 
 if __name__ == "__main__":

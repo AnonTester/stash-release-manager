@@ -29,6 +29,8 @@ def handle_failed(db, release, job):
     rows = upgrades._scene_rows(db, provider, pid)
     upgrade_of = next((r.get("upgrade_of") for r in rows if r.get("upgrade_of")), None)
     release_repo.set_download_job_for_scene(db, provider, pid, None, None)
+    if not upgrade_of:  # the row would keep saying "grabbed" (Stuck); an upgrade candidate has its own last_search_result below
+        release_repo.set_search_result_for_scene(db, provider, pid, f"download failed: {reason}"[:200])
     summary = {"title": title, "reason": reason, "upgrade": bool(upgrade_of)}
     if upgrade_of:
         with db.connect() as conn:
@@ -52,3 +54,13 @@ def handle_failed(db, release, job):
                   provider, pid)
     logger.warning("download failed for scene %s: %s (%s)", pid, title, reason)
     return summary
+
+
+def handle_lost(db, release):
+    """The download client no longer knows the job of a grabbed release (see download_jobs.is_lost). Not the release's fault, so no blocklist:
+    the job is dropped and the scene shows on Stuck (with the manual search) instead of waiting for ever."""
+    provider, pid = release["provider"], release["scene_stashdb_id"]
+    release_repo.set_download_job_for_scene(db, provider, pid, None, None)
+    release_repo.set_search_result_for_scene(db, provider, pid, "download lost: the download client no longer knows this job")
+    history.scene("warning", "download", "The download client no longer knows this download (removed from its history?) -- back on Stuck, "
+                  f"search again or pick a release by hand: {release.get('grabbed_title') or '?'}", provider, pid)

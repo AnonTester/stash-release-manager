@@ -1,0 +1,13 @@
+# User service for the encode worker (started by hand or by the KDE widget; NOT enabled at login).
+# Install: worker/install.sh   Manual: systemctl --user start|stop|restart srm-encode-worker
+[Unit]
+Description=StashReleaseManager encode worker
+After=network-online.target
+
+[Service]
+ExecStart=@PYTHON@ @WORKER@ --sidecar @SIDECAR@ @MAPS@
+Restart=no
+# the worker ends ffmpeg and removes the half file on SIGTERM; give it time
+TimeoutStopSec=60
+KillMode=mixed
+Nice=10

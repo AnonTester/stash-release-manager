@@ -11,7 +11,7 @@
   // rule and the bug it caused when this drifted). Change this if you
   // install under a different folder name.
   // Must equal `version:` in stash-release-manager.yml (scripts/test_plugin_version.py checks it).
-  const PLUGIN_VERSION = '0.221.2';
+  const PLUGIN_VERSION = '0.223.0';
   const PLUGIN_ID = 'stash-release-manager';
   const PLUGIN_NAME = 'StashReleaseManager';
 
@@ -1757,35 +1757,42 @@
         const qualityLabel = quality.source === 'vr' ? 'VR' : (quality.resolution ? `${quality.resolution}p` : 'unknown quality');
         const ageLabel = candidate.age != null ? `${candidate.age}d old` : 'unknown age';
         const rowStatus = el('span', { className: 'srw-key-status' });
+        // One grab button: `grab` = the caller's own grab (null = the default grab of this panel), `ask` = the confirm text
+        const grabButton = (label, className, grab, ask, hint) => el('button', {
+          className, textContent: label, title: hint || '',
+          onClick: (e) => {
+            confirmInline(e.currentTarget, candidate.tried ? `${ask} (Note: ${candidate.tried}.)` : ask, async () => {
+              rowStatus.textContent = ' starting...';
+              try {
+                const result = grab ? await grab(candidate) : (opts && opts.grab ? await opts.grab(candidate) : await runOp('releases_manual_search_grab', {
+                  provider: r.provider, scene_stashdb_id: r.scene_stashdb_id, candidate,
+                }));
+                if (result.error) {
+                  rowStatus.textContent = ` error: ${result.error}`;
+                  notify(`Grab failed: ${r.title || ''}`, result.error, 'error');
+                  return;
+                }
+                rowStatus.textContent = ' grabbed';
+                notify(`Grabbed: ${r.title || ''}`, `${candidate.title} (${candidate.indexer || 'indexer'}) -- sent to the download client.`, 'success');
+                if (onGrabbed) await onGrabbed();
+              } catch (err) {
+                rowStatus.textContent = ` error: ${err.message}`;
+              }
+            });
+          },
+        });
         return el('div', { className: 'srw-manual-search-result' }, [
           releaseTitleNode(candidate.title, candidate.infoUrl),
           el('span', {
             className: 'srw-review-candidate-meta',
             textContent: `${candidate.indexer || 'unknown indexer'}${candidate.protocol === 'torrent' ? ` (torrent${candidate.seeders != null ? `, ${candidate.seeders} seeders` : ''})` : ''} — ${qualityLabel} — ${sizeGb} — ${ageLabel}`,
           }),
-          el('button', {
-            className: 'srw-btn srw-btn-primary', textContent: 'Grab',
-            onClick: (e) => {
-              confirmInline(e.currentTarget, `Download "${candidate.title}" for "${r.title}"?`, async () => {
-                rowStatus.textContent = ' starting...';
-                try {
-                  const result = opts && opts.grab ? await opts.grab(candidate) : await runOp('releases_manual_search_grab', {
-                    provider: r.provider, scene_stashdb_id: r.scene_stashdb_id, candidate,
-                  });
-                  if (result.error) {
-                    rowStatus.textContent = ` error: ${result.error}`;
-                    notify(`Grab failed: ${r.title || ''}`, result.error, 'error');
-                    return;
-                  }
-                  rowStatus.textContent = ' grabbed';
-                  notify(`Grabbed: ${r.title || ''}`, `${candidate.title} (${candidate.indexer || 'indexer'}) -- sent to the download client.`, 'success');
-                  if (onGrabbed) await onGrabbed();
-                } catch (err) {
-                  rowStatus.textContent = ` error: ${err.message}`;
-                }
-              });
-            },
-          }),
+          candidate.tried ? el('span', { className: 'srw-review-warning', textContent: candidate.tried.startsWith('declined') ? 'declined before' : 'tried before',
+            title: `${candidate.tried} (blocklist of this scene)` }) : null,
+          grabButton('Grab', 'srw-btn srw-btn-primary', null, `Download "${candidate.title}" for "${r.title}"?`),
+          opts && opts.grabAsScene ? grabButton('Grab as one scene', 'srw-btn', opts.grabAsScene,
+            `Download "${candidate.title}" as ONE SCENE of "${r.title}"? It joins the movie's group; the movie stays on the wishlist for the other parts.`,
+            'The file is only a part of the movie: it is added to its group and the movie stays wanted for the other parts') : null,
           rowStatus,
         ]);
       }

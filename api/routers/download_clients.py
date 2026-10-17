@@ -158,6 +158,21 @@ def clean_history(client_id: int, dry_run: bool = True):
         return {"error": str(e)}
 
 
+@router.post("/{client_id}/purge-archive")
+def purge_archive(client_id: int, dry_run: bool = True, older_than_days: int = 30):
+    """Removes the entries of the client's SABnzbd Archive that are older than `older_than_days` (default 30; only its category when one is set).
+    Dry run (default): only counts. The same purge runs by itself every day (setting sab_archive_purge_days, 0 = off)."""
+    client_row = download_client_repo.get_one(_db, client_id)
+    if client_row is None:
+        raise HTTPException(404, "download client not found")
+    if client_row["type"] != "sabnzbd":
+        raise HTTPException(400, "only SABnzbd clients have an Archive")
+    try:
+        return download_history_cleanup.purge_archive(client_row, older_than_days, dry_run=dry_run)
+    except Exception as e:
+        return {"error": str(e)}
+
+
 @router.post("/{client_id}/check")
 def check_client(client_id: int):
     """Cheapest authenticated call available for this saved client's type, same role as the other connections' "Check connections"

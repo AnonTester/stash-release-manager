@@ -1,0 +1,14 @@
+{
+    "KPackageStructure": "Plasma/Applet",
+    "KPlugin": {
+        "Authors": [],
+        "Category": "System Information",
+        "Description": "Shows what the StashReleaseManager encode worker is doing and starts, stops or restarts it",
+        "Icon": "video-x-generic",
+        "Id": "org.srm.encodeworker",
+        "Name": "SRM Encode Worker",
+        "Version": "1.0",
+        "Website": ""
+    },
+    "X-Plasma-API-Minimum-Version": "6.0"
+}

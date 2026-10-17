@@ -31,6 +31,22 @@ out = tc.probe(dst)
 check("software encode: 1080p HEVC, same length, audio kept", res["ok"] and not res["hw"] and out["height"] == 1080 and out["vcodec"] == "hevc" and out["acodec"] == "aac" and abs(out["duration"] - info["duration"]) < 0.5)
 check("progress was reported", len(seen) >= 1 and all(0 <= s[0] <= 99 for s in seen))
 check("verify_output accepts it and rejects a wrong length", tc.verify_output(dst, info) is None and tc.verify_output(dst, {**info, "duration": 30.0}))
+# a stream that is damaged inside (the length and size still fit): found with a VAAPI encode that "succeeded". Garbage at one spot is
+# sometimes absorbed by the decoder, so try several spots: the check has to catch at least the ones that break the stream.
+data = open(dst, "rb").read()
+flagged = []
+for frac in (0.2, 0.3, 0.4, 0.5, 0.6):
+    bad = os.path.join(TMP, "bad.mp4")
+    damaged = bytearray(data)
+    at = int(len(damaged) * frac)
+    damaged[at:at + 4000] = bytes((i * 131 + 7) % 256 for i in range(4000))
+    open(bad, "wb").write(damaged)
+    if tc.decode_problem(bad) is not None:
+        flagged.append(frac)
+check("a damaged stream is found by the decode check (and a good one passes)", tc.decode_problem(dst) is None and len(flagged) >= 1)
+if flagged:
+    damaged = bytearray(data); at = int(len(damaged) * flagged[0]); damaged[at:at + 4000] = bytes((i * 131 + 7) % 256 for i in range(4000)); open(bad, "wb").write(damaged)
+    check("verify_output names it as damaged", str(tc.verify_output(bad, info)).startswith("the encoded video is damaged"))
 res = tc.transcode(os.path.join(TMP, "missing.mp4"), os.path.join(TMP, "x.mp4"), hw_mode="off")
 check("an unreadable source fails cleanly, nothing left behind", not res["ok"] and not os.path.exists(os.path.join(TMP, "x.mp4")))
 check("audio the mp4 cannot carry -> mkv", tc.output_extension({"acodec": "dts"}) == ".mkv" and tc.output_extension({"acodec": "aac"}) == ".mp4")

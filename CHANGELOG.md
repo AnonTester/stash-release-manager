@@ -6,6 +6,52 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.223.0
+- NEW SABnzbd Archive purge: SABnzbd 4.2+ keeps a deleted history entry in its Archive and its duplicate detection reads it ("Duplicate NZB" for a release downloaded long ago). Once a day the sidecar removes the Archive entries older than `sab_archive_purge_days` (default 30, 0 = never; Settings > Schedule > "SABnzbd archive") from every enabled SABnzbd client -- only its category when the client has one, never a newer entry. After a run the archive is read again; if SABnzbd ignored the call a warning says so. `POST /download-clients/{id}/purge-archive` (dry run by default, `older_than_days`) does it by hand.
+- Movie search: an apostrophe in the title no longer hides the release. "Joe's Movie 13" is written Joe.s.Movie.13 or Joes.Movie.13 in release names; a lone s / t / d / m / ll / re / ve now belongs to the word before it, and the plain spelling is asked as the last query for titles with an apostrophe.
+
+## 0.222.2
+- Movie search: a release of ONE SCENE is no longer offered as the movie. A scene release was only known by a four-digit date (2011.06.28); now a yy.mm.dd date (11.06.28) and a scene mark in the name ("Sc4", "Scene 2") count too.
+
+## 0.222.1
+- Movies > On Wishlist (Stuck): the manual search has "Grab as one scene" next to Grab. When the search finds only ONE scene of the movie, the file joins the movie's Group and the movie stays wanted for the other parts (like "Accept as one scene" in Needs review).
+- The manual search of a movie marks the releases the movie rejected before ("tried before"), like the scene search; only the release's own name, not its other resolutions.
+
+## 0.222.0
+- NEW Upgrade search for movies. A movie on Movies > Upgrade (its file is below the quality profile) is searched for a BETTER release with the same movie search (same pace and per-run count as the wishlist; "Search now" on the row does it at once, and the manual search + Grab work on the row too). The release name must say a resolution that is at least the profile's smallest one and higher than the owned file's; a name without a resolution is not taken. A candidate waits in Activity > Needs review ("Upgrade · Movie"; Accept = download, Reject = never this release for this movie) -- nothing is downloaded by itself. Only a Group with exactly ONE scene and ONE file is searched.
+- The import of an upgrade checks the length like any movie import, then merges the new file's scene INTO the owned scene (Stash sceneMerge, like a scene upgrade: metadata, rating, play history and the place in the Group stay), makes the new file primary and puts the old file in the recycle bin. If the owned Group is gone or the download has several files, both files stay and the movie is Import failed. Every failure (download failed or lost, unreadable file, "Wrong movie") sends the movie back to the Upgrade list, never to the wishlist, with the release blocklisted.
+
+## 0.221.12
+- Movies: a wishlist movie whose Stash Group has a file now that covers the movie (length within +-15 % of the ThePornDB length) leaves the wishlist and counts as imported with that Group. This runs before every automatic movie search; `POST /films/adopt-filled` (dry run by default) does it by hand. A file below the quality profile's smallest resolution puts the movie on the new Movies > Upgrade tab instead; "Keep this file" takes it off that list. A movie without a known length, or with parts added by hand, is left alone.
+
+## 0.221.11
+- NEW KDE Plasma 6 widget "SRM Encode Worker" (`worker/plasmoid`): shows what the encode worker does (state, file, progress bar, speed, time left, method, last result) and has Start / Stop / Restart buttons. The worker writes its state to `$XDG_RUNTIME_DIR/srm-encode-worker/status.json` (`--status-file`) and ends cleanly on SIGTERM / Ctrl+C (ffmpeg stopped, half file removed). `worker/install.sh` sets up the systemd user service (not enabled at login) and the widget.
+
+## 0.221.10
+- Manual search: the "tried before" mark is true again. It marks only the release's OWN name (before, a failed 2160p also marked the SD and the 1080p of the same release) and says why: "declined before" (declined in Needs review) or "tried before" (download failed or blocklisted). The badge sits next to the Grab button.
+
+## 0.221.9
+- The cleanup of SABnzbd's history removes entries for real (`archive=0`). SABnzbd 4.2+ only moves a deleted entry to its Archive, and its duplicate detection still reads the archive: a release this program had imported or rejected failed with "Duplicate NZB" when it was picked again. Entries archived before stay there until they are deleted from the Archive in SABnzbd (History > Show Archive).
+
+## 0.221.8
+- A download the client no longer knows (not in its queue, not in its history) and that was grabbed more than 30 minutes ago no longer waits for ever on "Download complete -- waiting for import": the job is dropped and the scene (or movie) goes to Stuck with "download lost". The release is not blocklisted.
+
+## 0.221.7
+- The cleanup of SABnzbd's history no longer removes the entry of a download whose import is still open.
+
+## 0.221.6
+- Activity > Import failed: "Retry the encode" for a release whose re-encode failed (the download is still in place). "Search again" would have left the downloaded file behind.
+
+## 0.221.5
+- Encode worker: the sidecar's check of a worker's result (decoding the whole file) runs in the background; the worker's "done" request used to wait for it and timed out on a NAS. The job is held ("checking the result") and cannot be handed to another worker meanwhile.
+
+## 0.221.4
+- A re-encode is checked by decoding the whole new file before it counts as done. A hardware encoder can report success and still write a broken stream (found with a VAAPI encode: CABAC errors). A damaged result is thrown away, the encode is repeated on the CPU, and a hardware encoder that wrote a damaged file is switched off until the next restart.
+
+## 0.221.3
+- A download the client reports as failed (e.g. SABnzbd "Duplicate NZB") no longer leaves the scene on Stuck with the status "grabbed": it says "download failed: <reason>".
+- Manual search: a release this scene has been through already (rejected, blocklisted, failed download) carries a "tried before" mark, and Grab asks again before fetching it.
+
 ## 0.221.2
 - Movies: a wishlist movie whose Stash Group was deleted is taken care of automatically before each movie search. A movie that came from an empty group is dismissed (Restore brings it back), any other movie just forgets the dead Group, so its cover no longer leads to "No group found". `POST /films/forget-dead-groups` does the same by hand (dry run by default).
 

@@ -109,4 +109,22 @@ with db3.connect() as c:
     got = {r["title"]: r["outcome"] for r in c.execute("SELECT title, outcome FROM downloaded_release")}
 check("migration: imported stays 'imported', a blocklist-only name becomes 'rejected', unknown stays 'imported'",
       got == {"Studio.26.10.01.Title.1080p-GRP": "imported", "Wrong.Release.For.Another.Scene.1080p-X": "rejected", "Unknown.Old.Entry.1080p": "imported"})
+# --- v0.221.7: a blocklisted release picked by hand again: its entry stays while the import is open
+with db2.connect() as c:
+    c.execute("UPDATE release SET status='sent_to_whisparr', download_client_id=?, download_job_id='manual-1'", (cid2,))
+slots3 = [{"nzo_id": "manual-1", "name": "Anna.Placeholder.Title.Here.1080P.x265", "status": "Completed"},   # blocked name, but the import of this job is open
+          {"nzo_id": "other-2", "name": "SomeStudio.26.10.03.Tomi.XXX.MP4-GRP", "status": "Completed"}]  # blocked name, nobody waits for it
+found3 = {c["nzo_id"] for c in dhc.find_candidates(db2, row2, Sab(slots3))}
+check("an open import keeps its history entry although the name is blocked", "manual-1" not in found3 and "other-2" in found3)
+
+# --- v0.221.9: the removal is real (SABnzbd would archive it, and its duplicate detection still reads the archive)
+import sabnzbd_client
+sent = {}
+class _Resp:
+    ok = True
+    def json(self): return {}
+sabnzbd_client.requests.get = lambda url, params=None, timeout=None: (sent.update(params or {}), _Resp())[1]
+sabnzbd_client.SabnzbdClient("http://x", "k").delete_history("abc")
+check("delete_history asks SABnzbd to remove for real (archive=0), files kept", sent.get("archive") == 0 and sent.get("name") == "delete" and sent.get("del_files") == 0)
+
 sys.exit(0 if all(res) else 1)

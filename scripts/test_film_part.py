@@ -84,4 +84,15 @@ check("dead empty-group movie dismissed, other forgets the id, living Group unto
       and film_repo.get(db, e3)["stash_group_id"] == "903" and film_repo.get(db, e3)["status"] == "wanted")
 
 print("\n%s" % ("ALL OK" if not FAILS else f"{len(FAILS)} FAILED: {FAILS}"))
+# the manual grab of a movie's search result: "Grab as one scene" sets as_scene, the plain Grab does not (v0.222.1)
+from routers import films as fr  # noqa: E402
+import indexer_search  # noqa: E402
+fr._db = db
+indexer_search.send_to_download_client = lambda d, c, w: {"result": indexer_search.RESULT_GRABBED, "client_row": {"id": 1}, "nzo_id": "j9"}
+a, _ = film_repo.add(db, title="Part Movie", year=2000, tpdb_id="tp-a", status="wanted")
+b, _ = film_repo.add(db, title="Whole Movie", year=2001, tpdb_id="tp-b", status="wanted")
+fr.grab(a, {"candidate": {"title": "Part.Movie.2000.part2", "downloadUrl": "http://x"}, "as_scene": True})
+fr.grab(b, {"candidate": {"title": "Whole.Movie.2001", "downloadUrl": "http://x"}})
+check("manual grab as one scene: the movie is grabbed with as_scene", film_repo.get(db, a)["status"] == "grabbed" and film_repo.get(db, a)["as_scene"] == 1)
+check("manual plain grab: as_scene stays 0", film_repo.get(db, b)["as_scene"] == 0)
 sys.exit(1 if FAILS else 0)

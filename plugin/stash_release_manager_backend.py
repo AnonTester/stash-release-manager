@@ -163,7 +163,7 @@ def main():
     elif mode == "films_link":
         result = _post(sidecar_url, f"/films/{args.get('id')}/link", {"movie": args.get("movie")}, timeout=30)
     elif mode == "films_grab":
-        result = _post(sidecar_url, f"/films/{args.get('id')}/grab", {"candidate": args.get("candidate") or {}}, timeout=120)
+        result = _post(sidecar_url, f"/films/{args.get('id')}/grab", {"candidate": args.get("candidate") or {}, "as_scene": bool(args.get("as_scene"))}, timeout=120)
     elif mode == "films_check_stashdb":
         result = _post(sidecar_url, f"/films/{args.get('id')}/check-stashdb", {}, timeout=90)
     elif mode == "films_use_scenes":
@@ -198,10 +198,14 @@ def main():
         result = _get(sidecar_url, "/films/imported", timeout=30)
     elif mode == "releases_local_scenes":
         result = _post(sidecar_url, "/releases/local-scenes", {"scenes": args.get("scenes") or []}, timeout=60)
+    elif mode == "releases_retry_encode":
+        result = _post(sidecar_url, f"/releases/{args.get('provider')}/{args.get('scene_stashdb_id')}/retry-encode", {}, timeout=30)
     elif mode == "films_search":
         result = _post(sidecar_url, f"/films/{args.get('id')}/search", {}, timeout=120)
     elif mode == "films_review_accept":
         result = _post(sidecar_url, f"/films/{args.get('id')}/review-accept", {"as_scene": bool(args.get("as_scene"))}, timeout=120)
+    elif mode == "films_upgrade_keep":
+        result = _post(sidecar_url, f"/films/{args.get('id')}/upgrade-keep", {}, timeout=30)
     elif mode == "films_parts_done":
         result = _post(sidecar_url, f"/films/{args.get('id')}/parts-done", {}, timeout=30)
     elif mode == "films_review_reject":

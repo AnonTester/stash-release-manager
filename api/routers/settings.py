@@ -344,6 +344,9 @@ DEFAULTS = {
     # days; 0 keeps everything. 14 by default: the log also takes the
     # background events (grabs, imports, job results), not just pop-ups.
     "history_retention_days": "14",
+    # SABnzbd's Archive (4.2+) keeps deleted history entries and its duplicate detection reads them ("Duplicate NZB"); entries older than this many
+    # days are removed once a day (v0.222.3, download_history_cleanup.purge_archive). 0 = never.
+    "sab_archive_purge_days": "30",
     # Size cap for non-VR releases (2026-09-28, see indexer_search's
     # DEFAULT_SIZE_LIMITS for the library numbers behind them), GB; 0 = none.
     "max_file_gb": "8",
@@ -725,6 +728,8 @@ def set_one(key: str, body: dict):
                 raise ValueError
         except ValueError:
             raise HTTPException(400, f"{key} must be a number of GB between 0 and 1000, got {value!r}")
+    if key == "sab_archive_purge_days" and not (value.isdigit() and int(value) <= 3650):
+        raise HTTPException(400, f"sab_archive_purge_days must be a whole number between 0 and 3650, got {value!r}")
     if key == "history_retention_days" and not (value.isdigit() and int(value) <= 3650):
         raise HTTPException(400, f"history_retention_days must be a whole number between 0 and 3650, got {value!r}")
     with _db.connect() as conn:

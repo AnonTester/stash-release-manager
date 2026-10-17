@@ -3,7 +3,7 @@
 The importers used to ask SABnzbd's history directly. `job_state()` answers the same question for SABnzbd and qBittorrent in one shape, so
 the scene importer (download_sources.py), the movie importer (film_import.py) and the failure handling stay client-agnostic:
 
-    {"state": "downloading" | "post_processing" | "completed" | "failed" | "missing",
+    {"state": "downloading" | "post_processing" | "completed" | "failed" | "missing" | "unknown",
      "name": job name, "storage": the finished output path in the CLIENT's own namespace (None until known),
      "fail_message": str | None,
      "keep_source": True for torrents (the files keep seeding: hard-linked or copied into the library, never moved/removed),
@@ -13,6 +13,7 @@ the scene importer (download_sources.py), the movie importer (film_import.py) an
 Like the *arr applications, a finished torrent counts as importable as soon as it has all its data (downloaded 100 %, no longer checking or
 moving); seeding then goes on in the client."""
 import logging
+from datetime import datetime, timedelta, timezone
 
 import qbittorrent_client
 from qbittorrent_client import QbittorrentClient
@@ -31,9 +32,12 @@ def job_state(client_row, job_id):
     if client_row is None or not job_id:
         return {"state": "missing"}
     if client_row["type"] == "sabnzbd":
-        job = SabnzbdClient(client_row["url"], client_row["api_key"]).find_history_by_nzo_id(job_id)
-        if job is None:
-            return {"state": "downloading"}  # still downloading, or SABnzbd doesn't know the id (yet)
+        client = SabnzbdClient(client_row["url"], client_row["api_key"])
+        job = client.find_history_by_nzo_id(job_id)
+        if job is None:  # not finished: still in the queue (downloading), or SABnzbd does not know the id at all
+            if any(str(s.get("nzo_id")) == str(job_id) for s in client.get_queue()):
+                return {"state": "downloading"}
+            return {"state": "unknown"}
         if job.get("status") == "Failed":
             return {"state": "failed", "name": job.get("name"), "fail_message": job.get("fail_message"), "keep_source": False, "client": "SABnzbd"}
         if job.get("status") != "Completed":
@@ -54,3 +58,18 @@ def job_state(client_row, job_id):
                     "remote_root": (opts.get("remote_path") or None), "local_mount": (opts.get("local_path") or None)}
         return {"state": "downloading", "name": t.get("name")}
     return {"state": "downloading"}  # a client type the importers don't read
+
+
+LOST_AFTER_MINUTES = 30
+
+
+def is_lost(job, grabbed_at, minutes=LOST_AFTER_MINUTES):
+    """True when the client knows the job neither in its queue nor in its history and it was grabbed more than `minutes` ago: the entry was
+    removed (by hand, a purge) before the import took the file. Found 2026-10-17: the scene waited for ever on "waiting for import"."""
+    if job.get("state") != "unknown" or not grabbed_at:
+        return False
+    try:
+        at = datetime.strptime(str(grabbed_at)[:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return False
+    return datetime.now(timezone.utc) - at > timedelta(minutes=minutes)

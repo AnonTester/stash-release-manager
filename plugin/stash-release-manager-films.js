@@ -7,7 +7,9 @@
 
   // Same tabs as the scene page: [New releases | On Wishlist | Imported | Dismissed]. "New releases" = the suggestions (list or calendar);
   // Downloading and Import failed live on the Activity page.
-  const TABS = [['wanted', 'On Wishlist'], ['imported', 'Imported'], ['dismissed', 'Dismissed']];
+  const TABS = [['wanted', 'On Wishlist'], ['upgrade', 'Upgrade'], ['imported', 'Imported'], ['dismissed', 'Dismissed']];
+  // 'Upgrade' is a view of imported movies whose owned file is below the quality profile (upgrade_wanted); Imported shows the others
+  const viewKey = (f) => (f.status === 'imported' && f.upgrade_wanted ? 'upgrade' : f.status);
   const COUNTED = ['suggested', 'wanted', 'imported', 'dismissed'];
   const CLASS_LABEL = {
     sure: ['sure match', 'Same title, year and length as the ThePornDB movie'],
@@ -62,7 +64,7 @@
     const panes = {};
     const status = el('span', { className: 'srw-key-status' });
 
-    const countOf = (s) => films.filter((f) => f.status === s).length;
+    const countOf = (s) => films.filter((f) => viewKey(f) === s).length;
 
     // The two suggestion buttons only show while there is something to decide.
     function syncSuggestions() {
@@ -140,7 +142,7 @@
       }
       // Own query + Grab, the same panel as the scene wishlist (v0.109.0). The prefill is "Title Year" (film release names carry
       // title and year, not studio and date).
-      if (['wanted', 'import_failed'].includes(f.status)) {
+      if (['wanted', 'import_failed'].includes(f.status) || viewKey(f) === 'upgrade') {
         const searchSlot = el('span', { className: 'srw-search-actions' });
         window.SRW.getSearchCapabilities().then((caps) => {
           const sources = (caps && caps.manual_sources) || [];
@@ -149,6 +151,8 @@
           searchSlot.appendChild(window.SRW.buildManualSearch(asRelease, sources, caps.backend, () => load(), {
             host: () => li,
             grab: (candidate) => window.SRW.runOp('films_grab', { id: f.id, candidate }),
+            // Stuck: the search finds one scene of the movie -> it joins the movie's group, the movie stays wanted for the other parts (v0.222.1)
+            grabAsScene: f.status === 'wanted' ? (candidate) => window.SRW.runOp('films_grab', { id: f.id, candidate, as_scene: true }) : null,
           }));
         });
         act.push(searchSlot);
@@ -164,15 +168,17 @@
             await load();
           } }));
       }
-      if (f.status === 'wanted') { // the automatic search for this one movie, now (v0.128.0): the result is a candidate in Activity > Needs review
+      if (f.status === 'wanted' || viewKey(f) === 'upgrade') { // the automatic search for this one movie, now (v0.128.0; an owned movie: a better version, v0.222.0): the result is a candidate in Activity > Needs review
         act.push(el('button', { className: 'srw-btn', textContent: 'Search now',
-          title: 'Ask the indexers for this movie (1-3 requests); a plausible release becomes a candidate in Activity > Needs review',
+          title: viewKey(f) === 'upgrade' ? 'Ask the indexers for a BETTER version of this movie (1-3 requests); a candidate waits in Activity > Needs review'
+            : 'Ask the indexers for this movie (1-3 requests); a plausible release becomes a candidate in Activity > Needs review',
           onClick: async (e) => {
             e.currentTarget.disabled = true;
             const res = await window.SRW.runOp('films_search', { id: f.id });
             if (res.error) notify('Movie search', res.error, 'error');
             else if (res.result === 'needs_review') notify('Movie search', `Candidate found: ${res.candidate.title} -- see Activity > Needs review.`, 'success');
-            else notify('Movie search', res.result === 'no_match' ? `Nothing usable found (${(res.queries || []).join(' | ')}).` : `Search failed: ${res.error || ''}`, 'info');
+            else notify('Movie search', res.result === 'no_match' ? `Nothing ${viewKey(f) === 'upgrade' ? 'better' : 'usable'} found (${(res.queries || []).join(' | ')}).`
+              : (res.result === 'not_searched' ? res.reason : `Search failed: ${res.error || ''}`), 'info');
             await load();
           } }));
       }
@@ -262,6 +268,20 @@
               await load();
             }) }));
       }
+      if (viewKey(f) === 'upgrade') {
+        if (f.imported_group_id) {
+          act.push(el('a', { className: 'srw-btn', href: `/groups/${f.imported_group_id}`, target: '_blank', rel: 'noopener noreferrer', textContent: 'Open group',
+            title: 'Open the group in Stash (new tab)' }));
+        }
+        act.push(el('button', { className: 'srw-btn', textContent: 'Keep this file',
+          title: 'The file stays as it is; the movie leaves the Upgrade list',
+          onClick: async (e) => {
+            e.currentTarget.disabled = true;
+            const res = await window.SRW.runOp('films_upgrade_keep', { id: f.id });
+            if (res.error) notify('Movie', res.error, 'error'); else notify('Movie', `"${f.title}": the file stays.`, 'success');
+            await load();
+          } }));
+      }
       if (f.status === 'dismissed') {
         act.push(el('button', { className: 'srw-btn', textContent: 'Restore', onClick: () => setStatus('wanted', `"${f.title}" is back on the wishlist.`) }));
       }
@@ -298,6 +318,7 @@
                 } }),
             ])),
           ]) : null,
+          viewKey(f) === 'upgrade' ? el('div', { className: 'srw-hint', textContent: `The file in the group is ${f.owned_height || '?'}p, below the quality profile -- a better version is searched${f.review_candidate ? ' (a candidate waits in Activity > Needs review)' : (f.last_search_result === 'no_match' ? ' (nothing better found at the last search)' : (f.last_search_result === 'upgrade_manual' ? ' -- not searched: the group holds several scenes or files, replace the file by hand' : ''))}` }) : null,
           f.import_error ? el('div', { className: 'srw-search-status', textContent: f.import_error }) : null,
           f.grabbed_title ? el('div', { className: 'srw-hint', textContent: `Download: ${f.grabbed_title}` }) : null,
           // Whisparr bookkeeping (like the scenes: Whisparr is told about the movie per the Whisparr scope preset)
@@ -345,10 +366,11 @@
       const S = newFilterState(null);
       const view = window.SRW.buildFilteredPagedList({
         filters: [], perPage: window.SRW.listViewPageSize || 100,
-        emptyText: key === 'suggested' ? 'No new movies to decide on. New movies of your watched studios arrive here.' : 'Nothing here.',
+        emptyText: key === 'suggested' ? 'No new movies to decide on. New movies of your watched studios arrive here.'
+          : (key === 'upgrade' ? 'No movie file below your quality profile.' : 'Nothing here.'),
         filteredEmptyText: 'Nothing matches the current filter.',
         fetchPage: window.SRW.localPageFetcher(
-          () => films.filter((f) => f.status === key && passesFilter(f, S)).sort((a, b) => (key === 'suggested' ? classRank(a) - classRank(b) : 0)
+          () => films.filter((f) => viewKey(f) === key && passesFilter(f, S)).sort((a, b) => (key === 'suggested' ? classRank(a) - classRank(b) : 0)
             || (a.title || '').localeCompare(b.title || '')),
           {}),
         renderItems: (items) => el('ul', { className: 'srw-release-list' }, items.map(buildRow)),

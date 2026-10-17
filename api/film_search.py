@@ -56,12 +56,31 @@ def title_words(title):
 _SCENE_DATE = re.compile(r"\b(?:19|20)\d\d[ ._-](?:0[1-9]|1[0-2])[ ._-](?:0[1-9]|[12]\d|3[01])\b")
 
 
+_SCENE_DATE_YY = re.compile(r"\b\d\d[ ._-](?:0[1-9]|1[0-2])[ ._-](?:0[1-9]|[12]\d|3[01])\b")  # 11.06.28 (yy.mm.dd), the way studios date a scene release
+_SCENE_MARK = re.compile(r"\b(?:sc|scene|sce)\s?\d{1,2}\b")
+
+
 def _starts_with_performer(prefix, performers, min_ratio=0.7):
     """True when a word in front of the title is (nearly) a first or last name of one of the movie's performers ("Alisya" ~ "Alysa Gap")."""
     names = set()
     for p in performers or []:
         names.update(w for w in _words(p) if len(w) >= 4)
     return any(difflib.SequenceMatcher(None, w, n).ratio() >= min_ratio for w in prefix if len(w) >= 4 for n in names)
+
+
+_CONTRACTION = {"s", "t", "d", "m", "ll", "re", "ve"}
+
+
+def _join_contractions(tokens):
+    """['joe', 's', 'movie'] -> ['joes', 'movie']: a release writes "Joe's" as Joe.s (the apostrophe becomes a separator), a title word has
+    no apostrophe after title_words(); a lone 's' / 't' / 'll' ... belongs to the word before it."""
+    out = []
+    for t in tokens:
+        if t in _CONTRACTION and out and out[-1] not in _CONTRACTION:
+            out[-1] += t
+        else:
+            out.append(t)
+    return out
 
 
 def judge(film, candidate):
@@ -71,7 +90,7 @@ def judge(film, candidate):
     - a year in the name is the movie's year (+-1),
     - it is no sample/trailer, no single "Scene N" clip, and its size fits the movie's length (3 .. 450 MB per minute, >= 0.2 GB)."""
     name = candidate.get("title") or ""
-    flat = " ".join(_words(name))
+    flat = " ".join(_join_contractions(_words(name)))
     tokens = set(flat.split())
     words, nums = title_words(film["title"])
     if not words and not nums:
@@ -102,8 +121,10 @@ def judge(film, candidate):
         return False, 0, "sample/trailer"
     # A full date in the name (2008.11.25) is how SCENES are released; a performer's name in front of the title ("Alisya_Anal.Gaping.Sluts")
     # names a scene of that performer. Collections (packs) are judged by their size below.
-    if not is_pack and _SCENE_DATE.search(name):
+    if not is_pack and (_SCENE_DATE.search(name) or _SCENE_DATE_YY.search(name)):
         return False, 0, "dated like a single scene, not the movie"
+    if not is_pack and _SCENE_MARK.search(flat):  # "...POV.13.Sc4..." / "Scene 5": one scene of the movie
+        return False, 0, "a single scene, not the movie"
     if not is_pack and at > 0 and _starts_with_performer(sig[:at], film.get("performers")):
         return False, 0, "starts with a performer's name -- a single scene, not the movie"
     if tokens & {"bonus", "extras", "extra"} and not is_pack:
@@ -143,6 +164,41 @@ def judge(film, candidate):
     return True, round(score, 2), "plausible" + (" (pack)" if is_pack else "")
 
 
+_RES_IN_NAME = re.compile(r"\b(2160|1080|720|576|480)p?\b")
+
+
+def resolution_of(name):
+    """The resolution a release name advertises (2160 / 1080 / 720 / 576 / 480), None when it names none."""
+    m = _RES_IN_NAME.search(name or "")
+    return int(m.group(1)) if m else None
+
+
+def resolution_class(height, width=0):
+    """The resolution class of a file: 1080 when its height reaches 972 or its width 1728 (a letterboxed 1920x800 is 1080p), 480 below 576."""
+    h, w = height or 0, width or 0
+    for r in (2160, 1080, 720, 576):
+        if h >= r * 0.9 or w >= r * 16 / 9 * 0.9:
+            return r
+    return 480
+
+
+def judge_upgrade(film, candidate, min_res, owned_height, owned_width=0):
+    """judge() plus the upgrade rule (v0.222.0): the name must NAME a resolution that is at least the quality profile's smallest one and
+    higher than the class of the file we own. A name without a resolution cannot be called better, so it is not taken."""
+    ok, score, reason = judge(film, candidate)
+    if not ok:
+        return ok, score, reason
+    res = resolution_of(candidate.get("title"))
+    if res is None:
+        return False, 0, "the name does not say its resolution, so it cannot be called better"
+    if min_res and res < int(min_res):
+        return False, 0, f"{res}p is below the quality profile's {min_res}p"
+    owned = resolution_class(owned_height, owned_width)
+    if res <= owned:
+        return False, 0, f"{res}p is not better than the owned {owned}p file"
+    return True, score + (res - owned) / 1000.0, f"better: {res}p instead of {owned}p"
+
+
 def queries(film):
     """The queries in the order they are tried -- the next one only when the previous found nothing plausible."""
     title = clean_title(film["title"])
@@ -153,6 +209,8 @@ def queries(film):
     studio = clean_title(film.get("studio_name") or "")
     if studio:
         out.append(f"{studio.split(' / ')[0].split()[0]} {title}")
+    if "'" in title:  # releases write Joe's as Joes or Joe.s: the plain spelling is asked last (one more request, only for these titles)
+        out.append(f"{title.replace(chr(39), '')} {year}" if year else title.replace(chr(39), ""))
     seen, uniq = set(), []
     for q in out:
         if q.lower() not in seen:
@@ -165,9 +223,10 @@ def _norm(name):
     return re.sub(r"[^a-z0-9]+", "", (name or "").lower())
 
 
-def search_film(db, film, source):
+def search_film(db, film, source, upgrade=None):
     """One movie, up to three queries. Returns {"result": 'needs_review' | 'no_match' | 'error', "candidate", "queries", "judged"}. Writes
-    the outcome to the movie row (candidate / result / time)."""
+    the outcome to the movie row (candidate / result / time). `upgrade` = {"min_res", "owned_height"}: a movie that is owned below the quality
+    profile (Movies > Upgrade); only releases that are better than the owned file count."""
     rejected = {_norm(t) for t in (film.get("rejected_titles") or [])}
     asked, judged, best = [], [], None
     try:
@@ -178,7 +237,7 @@ def search_film(db, film, source):
             for r in results:
                 if _norm(r.get("title")) in rejected:
                     continue
-                ok, score, reason = judge(film, r)
+                ok, score, reason = judge_upgrade(film, r, upgrade.get("min_res"), upgrade.get("owned_height"), upgrade.get("owned_width", 0)) if upgrade else judge(film, r)
                 judged.append({"title": r.get("title"), "ok": ok, "score": score, "reason": reason})
                 if ok:
                     plausible.append((score, r))
@@ -238,8 +297,45 @@ def due_films(db, per_run=5, min_days=7, only_ids=None, recent_days=0, recent_mi
     return out[: max(int(per_run), 0)] if only_ids is None else out
 
 
-def run(db, get_source, per_run=5, min_days=7, recent_days=0, recent_min_days=None):
-    """One pass: the due movies, one source for all. `get_source()` -> a source with .search(query) or None when none is configured."""
+def due_upgrades(db, per_run=5, min_days=7, only_ids=None):
+    """Owned movies below the quality profile (Movies > Upgrade) to search now: no candidate waiting, no download running, never searched
+    or searched more than `min_days` ago. Same pacing as the wishlist."""
+    now_s = film_repo.now()
+    out = []
+    for f in film_repo.list_films(db, ["imported"], per_page=0)["rows"]:
+        if not f.get("upgrade_wanted") or f.get("review_candidate") or f.get("upgrading") or not f.get("imported_group_id"):
+            continue
+        if only_ids is not None and f["id"] not in only_ids:
+            continue
+        last = f.get("last_search_at")
+        if last and only_ids is None:
+            with db.connect() as conn:
+                age = conn.execute("SELECT julianday(?) - julianday(?) AS d", (now_s, last)).fetchone()["d"]
+            if age is not None and age < min_days:
+                continue
+        out.append(f)
+    out.sort(key=lambda f: (f.get("last_search_at") or ""))
+    return out[: max(int(per_run), 0)] if only_ids is None else out
+
+
+def search_upgrade(db, film, source, stash, min_res):
+    """The upgrade search of ONE owned movie: the owned file is looked at first (a Group with one scene and one file only -- anything else is
+    replaced by hand), then search_film() with the upgrade rule. Returns the search_film() result or {"result": 'not_searched', "reason"}."""
+    import film_import
+    target = film_import.upgrade_target(stash, film["imported_group_id"])
+    if target is None:  # the Group is gone: nothing to upgrade any more
+        film_repo.update(db, film["id"], upgrade_wanted=0)
+        return {"result": "not_searched", "reason": "the Stash Group does not exist any more"}
+    if isinstance(target, str):
+        film_repo.update(db, film["id"], last_search_at=film_repo.now(), last_search_result="upgrade_manual")
+        return {"result": "not_searched", "reason": target}
+    film_repo.update(db, film["id"], owned_height=target["height"])
+    return search_film(db, film, source, upgrade={"min_res": min_res, "owned_height": target["height"], "owned_width": target["width"]})
+
+
+def run(db, get_source, per_run=5, min_days=7, recent_days=0, recent_min_days=None, stash=None, min_res=None):
+    """One pass: the due movies, one source for all. `get_source()` -> a source with .search(query) or None when none is configured. With
+    `stash`, the owned movies below the quality profile are searched for a better release too (same per-run budget, own count)."""
     source = get_source()
     if source is None:
         return {"skipped": True, "reason": "no search source configured"}
@@ -247,4 +343,15 @@ def run(db, get_source, per_run=5, min_days=7, recent_days=0, recent_min_days=No
     for f in due_films(db, per_run, min_days, recent_days=recent_days, recent_min_days=recent_min_days):
         full = film_repo.get(db, f["id"])
         results.append({"id": f["id"], "title": f["title"], **{k: v for k, v in search_film(db, full, source).items() if k != "judged"}})
-    return {"searched": len(results), "found": sum(1 for r in results if r["result"] == "needs_review"), "results": results}
+    upgrades = []
+    if stash is not None:
+        for f in due_upgrades(db, per_run, min_days):
+            full = film_repo.get(db, f["id"])
+            try:
+                out = search_upgrade(db, full, source, stash, min_res)
+            except Exception as e:  # noqa: BLE001
+                logger.exception("upgrade search failed for %s", f["title"])
+                out = {"result": "error", "error": f"{type(e).__name__}: {e}"}
+            upgrades.append({"id": f["id"], "title": f["title"], **{k: v for k, v in out.items() if k != "judged"}})
+    return {"searched": len(results), "found": sum(1 for r in results if r["result"] == "needs_review"), "results": results,
+            "upgrades_searched": len(upgrades), "upgrades_found": sum(1 for r in upgrades if r["result"] == "needs_review"), "upgrades": upgrades}
