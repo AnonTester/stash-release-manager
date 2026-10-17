@@ -183,27 +183,51 @@
     });
   }
 
-  // "Search all stuck now" (v0.201.0): ONE targeted indexer query for every stuck scene release, once, on request (the normal RSS mode only
-  // queries a release daily in its first week, then weekly). The sidecar lists what it would query first (dry run) and the click confirms it.
+  // "Search all stuck scenes / movies" (v0.201.0; split in two v0.224.0): ONE targeted indexer query for every stuck scene release, or the movie
+  // search for every stuck movie, once, on request (the normal modes only ask a release daily in its first week, then weekly). The sidecar lists
+  // what it would query first (dry run) and the click confirms it.
   async function withStuckToolbar(group, container) {
     const { el, confirmInline } = window.SRW;
-    let preview = null;
-    try { preview = await window.SRW.runOp('indexer_search_stuck_preview'); } catch (e) { preview = null; }
-    if (!preview || preview.error || !preview.count) return group;
+    let scenes = null;
+    let movies = null;
+    try { scenes = await window.SRW.runOp('indexer_search_stuck_preview'); } catch (e) { scenes = null; }
+    try { movies = await window.SRW.runOp('films_stuck_preview'); } catch (e) { movies = null; }
+    const nScenes = scenes && !scenes.error ? scenes.count || 0 : 0;
+    const nMovies = movies && !movies.error ? movies.count || 0 : 0;
+    if (!nScenes && !nMovies) return group;
     const status = el('span', { className: 'srw-key-status' });
-    const btn = el('button', {
-      type: 'button', className: 'srw-btn', textContent: `Search all stuck now (${preview.count})`,
-      title: 'One targeted indexer query per stuck release, right now. Releases already found to be duplicates are left out. Scenes only; the movie search runs on its own.',
-    });
-    btn.addEventListener('click', () => confirmInline(btn, `Send ${preview.count} indexer queries now, one per stuck release?`, async () => {
-      status.textContent = ' starting...';
-      try {
-        const r = await window.SRW.runOp('indexer_search_run_stuck');
-        status.textContent = r.error ? ` error: ${r.error}`
-          : (r.started ? ` running in the background (${r.count} release(s)) -- the result appears in History; reload this page afterwards` : ' nothing to search');
-      } catch (err) { status.textContent = ` error: ${err.message}`; }
-    }));
-    const bar = el('div', { className: 'srw-toolbar' }, [btn, status]);
+    const buttons = [];
+    if (nScenes) {
+      const btn = el('button', {
+        type: 'button', className: 'srw-btn', textContent: `Search all stuck scenes (${nScenes})`,
+        title: 'One targeted indexer query per stuck scene release, right now. Releases already found to be duplicates are left out.',
+      });
+      btn.addEventListener('click', () => confirmInline(btn, `Send ${nScenes} indexer queries now, one per stuck scene release?`, async () => {
+        status.textContent = ' starting...';
+        try {
+          const r = await window.SRW.runOp('indexer_search_run_stuck');
+          status.textContent = r.error ? ` error: ${r.error}`
+            : (r.started ? ` running in the background (${r.count} scene release(s)) -- the result appears in History; reload this page afterwards` : ' nothing to search');
+        } catch (err) { status.textContent = ` error: ${err.message}`; }
+      }));
+      buttons.push(btn);
+    }
+    if (nMovies) {
+      const btn = el('button', {
+        type: 'button', className: 'srw-btn', textContent: `Search all stuck movies (${nMovies})`,
+        title: 'The movie search (title + year, title, studio + title) for every stuck movie, right now. A plausible release becomes a candidate in Needs review; nothing is downloaded.',
+      });
+      btn.addEventListener('click', () => confirmInline(btn, `Send up to ${movies.max_queries} indexer queries now (the movie search, ${nMovies} movies)?`, async () => {
+        status.textContent = ' starting...';
+        try {
+          const r = await window.SRW.runOp('films_search_stuck');
+          status.textContent = r.error ? ` error: ${r.error}`
+            : (r.started ? ` running in the background (${r.count} movie(s)) -- the result appears in History; reload this page afterwards` : (r.reason || ' nothing to search'));
+        } catch (err) { status.textContent = ` error: ${err.message}`; }
+      }));
+      buttons.push(btn);
+    }
+    const bar = el('div', { className: 'srw-toolbar' }, [...buttons, status]);
     const summary = group.querySelector(':scope > summary');
     if (summary) summary.after(bar); else group.prepend(bar);
     return group;
@@ -458,7 +482,7 @@
     // Filter bar + paging (2026-09-26, user principle), same component as
     // everywhere else; the bar shows once a section has >10 entries.
     const view = window.SRW.buildFilteredPagedList({
-      filters: ['search', 'description', 'type', 'vr', 'dates', 'providers'],
+      filters: ['search', 'kind', 'description', 'type', 'vr', 'dates', 'providers'],
       perPage: 40,
       showFilterBarFrom: 10,
       fetchPage: window.SRW.localPageFetcher(() => sorted, {
@@ -468,6 +492,7 @@
         vr: (r) => r.is_vr,
         provider: (r) => r.provider,
         date: (r) => r.scene_date || r.scene_created,
+        kind: (r) => (r._filmLi ? 'movies' : 'scenes'),
       }),
       renderItems: (items) => {
         const ul = el('ul', { className: 'srw-release-list' }, items.map(renderRow));

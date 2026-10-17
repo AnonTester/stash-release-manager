@@ -11,7 +11,7 @@
   // rule and the bug it caused when this drifted). Change this if you
   // install under a different folder name.
   // Must equal `version:` in stash-release-manager.yml (scripts/test_plugin_version.py checks it).
-  const PLUGIN_VERSION = '0.223.0';
+  const PLUGIN_VERSION = '0.225.5';
   const PLUGIN_ID = 'stash-release-manager';
   const PLUGIN_NAME = 'StashReleaseManager';
 
@@ -1950,13 +1950,13 @@
 
   function defaultFilterState() {
     return {
-      search: '', description: false, tags: false, type: 'both', vr: 'all', dateFrom: '', dateUntil: '',
+      search: '', description: false, tags: false, type: 'both', vr: 'all', kind: 'all', dateFrom: '', dateUntil: '',
       providers: { stashdb: true, theporndb: true }, late: 'all', pairing: '', pairingOptions: [], cast: '', castOptions: [],
     };
   }
 
   function isFilterActive(f) {
-    return Boolean(f.search.trim() || f.type !== 'both' || f.vr !== 'all' || f.dateFrom || f.dateUntil
+    return Boolean(f.search.trim() || f.type !== 'both' || f.vr !== 'all' || f.kind !== 'all' || f.dateFrom || f.dateUntil
       || !providersAllOn(f.providers) || f.late !== 'all' || Boolean(f.pairing) || Boolean(f.cast.trim()));
   }
 
@@ -1986,6 +1986,7 @@
         if (!text.toLowerCase().includes(q)) return false;
       }
       if (f.type !== 'both' && fields.type && fields.type(x) !== f.type) return false;
+      if (f.kind !== 'all' && fields.kind && fields.kind(x) !== f.kind) return false;  // 'movies' | 'scenes' (lists that hold both)
       if (f.vr !== 'all' && fields.vr && Boolean(fields.vr(x)) !== (f.vr === 'vr')) return false;
       if (fields.provider) {
         const p = fields.provider(x);
@@ -2013,6 +2014,15 @@
     }
     sync();
     return el('span', { className: 'srw-view-toggle' }, buttons);
+  }
+
+  // A drop-down for a filter with a few values (v0.225.5; was a row of buttons): one small control per filter, all on the bar's row.
+  function buildSelect(options, getValue, setValue, title) {
+    const sel = el('select', { className: 'srw-filter-select srw-provider-filter-item', title: title || '' },
+      options.map(({ key, label }) => el('option', { value: key, textContent: label })));
+    sel.value = getValue();
+    sel.addEventListener('change', () => setValue(sel.value));
+    return sel;
   }
 
   function buildPagedFilterBar(state, filters, onChange) {
@@ -2043,25 +2053,25 @@
         className: 'srw-provider-filter-item', title: 'Also match the scene\'s tags (e.g. "anal", "MILF") -- for videos whose title does not say it',
       }, [tagCb, ' incl. tags']));
     }
+    if (filters.includes('kind')) {
+      parts.push(buildSelect(
+        [{ key: 'all', label: 'All releases' }, { key: 'movies', label: 'Movies' }, { key: 'scenes', label: 'Scenes' }],
+        () => state.kind, (v) => { state.kind = v; onChange(); }, 'Scenes, movies or both (lists that hold both)'));
+    }
     if (filters.includes('type')) {
-      parts.push(buildToggleGroup(
-        [{ key: 'both', label: 'All' }, { key: 'studio', label: 'Studios' }, { key: 'performer', label: 'Performer' }],
-        () => state.type, (v) => { state.type = v; onChange(); },
-      ));
+      parts.push(buildSelect(
+        [{ key: 'both', label: 'All types' }, { key: 'studio', label: 'Studios' }, { key: 'performer', label: 'Performer' }],
+        () => state.type, (v) => { state.type = v; onChange(); }, 'Came in through a watched studio or a watched performer'));
     }
     if (filters.includes('vr')) {
-      parts.push(buildToggleGroup(
-        [{ key: 'all', label: 'All' }, { key: 'vr', label: 'VR' }, { key: 'non_vr', label: 'Non-VR' }],
-        () => state.vr, (v) => { state.vr = v; onChange(); },
-      ));
+      parts.push(buildSelect(
+        [{ key: 'all', label: 'VR + Non-VR' }, { key: 'vr', label: 'VR' }, { key: 'non_vr', label: 'Non-VR' }],
+        () => state.vr, (v) => { state.vr = v; onChange(); }, 'VR or flat releases'));
     }
     if (filters.includes('late')) {
-      parts.push(buildToggleGroup(
-        [{ key: 'all', label: 'All' },
-          { key: 'only', label: 'Added late', title: 'Only back-catalogue additions found by the scan' },
-          { key: 'hide', label: 'Not added late' }],
-        () => state.late, (v) => { state.late = v; onChange(); },
-      ));
+      parts.push(buildSelect(
+        [{ key: 'all', label: 'All additions' }, { key: 'only', label: 'Added late' }, { key: 'hide', label: 'Not added late' }],
+        () => state.late, (v) => { state.late = v; onChange(); }, 'Back-catalogue additions found by the scan'));
     }
     if (filters.includes('cast')) {
       // Co-performer filter (v0.182.0): type a name (matches any part of it) or pick one from the list of the performers in these scenes.
@@ -2369,7 +2379,7 @@
     searchStatusLabel, confirmInline, buildManagedList, buildSearchActions, whenNoOpenPanel, buildManualSearch, getSearchCapabilities,
     rememberOpen, icon, mismatchWarning, buildPagedList, buildPager, releaseTitleNode, notify, dismissedNotice, releaseDismissedNotice, dismissRelease, buildWishlistDismiss, buildFilmDismissButtons, notifyHandoff, buildAddOnlyButton,
     sceneUrl, notifyReadd, loadMetadataProviderUrls, loadProviders, resetProviders, providerInfo, providerLabel, providerKeys, providerOn, providersAllOn, providersSelected, isLateAdditionNew, buildLateAdditionBadge,
-    buildFilteredPagedList, buildSafetyPanel, ignoreRenamers, pairingOptionsFor, castOptionsFor, buildPairingBadge, localPageFetcher, releaseQueryArgs, filterLocally, isFilterActive,
+    buildFilteredPagedList, buildSelect, buildSafetyPanel, ignoreRenamers, pairingOptionsFor, castOptionsFor, buildPairingBadge, localPageFetcher, releaseQueryArgs, filterLocally, isFilterActive,
     describeProgress, applyProgress, attachLive, buildLiveHint,
     buildEntityIcons, buildLocalEntityLink, buildReleaseThumb, buildStudioContext, fillCast, groupByScene,
     SENT_STATUS_LABEL, SENT_STATUS_LABEL_LONG,

@@ -709,32 +709,15 @@
     const tagsToggle = el('label', {
       className: 'srw-provider-filter-item', title: 'Also match the scene\'s tags, not only title/studio',
     }, [tagsCheckbox, ' incl. tags']);
-    const FILTERS = [
-      { key: 'both', label: 'All' },
-      { key: 'studio', label: 'Studios' },
-      { key: 'performer', label: 'Performer' },
-    ];
-    const filterButtons = FILTERS.map(({ key, label }) => el('button', {
-      className: 'srw-btn srw-btn-sm', textContent: label,
-      onClick: () => { listTypeFilter = key; onFilterChange(); updateActiveFilterBtn(); },
-    }));
-    function updateActiveFilterBtn() {
-      filterButtons.forEach((btn, i) => btn.classList.toggle('srw-btn-primary', FILTERS[i].key === listTypeFilter));
-    }
-    updateActiveFilterBtn();
-    const VR_FILTERS = [
-      { key: 'all', label: 'All' },
-      { key: 'vr', label: 'VR' },
-      { key: 'non_vr', label: 'Non-VR' },
-    ];
-    const vrButtons = VR_FILTERS.map(({ key, label }) => el('button', {
-      className: 'srw-btn srw-btn-sm', textContent: label,
-      onClick: () => { listVrFilter = key; onFilterChange(); updateActiveVrBtn(); },
-    }));
-    function updateActiveVrBtn() {
-      vrButtons.forEach((btn, i) => btn.classList.toggle('srw-btn-primary', VR_FILTERS[i].key === listVrFilter));
-    }
-    updateActiveVrBtn();
+    // Drop-downs like the other lists' filter bars (v0.225.5); the function names stay for the presets that set the values.
+    const typeSelect = window.SRW.buildSelect(
+      [{ key: 'both', label: 'All types' }, { key: 'studio', label: 'Studios' }, { key: 'performer', label: 'Performer' }],
+      () => listTypeFilter, (v) => { listTypeFilter = v; onFilterChange(); }, 'Came in through a watched studio or a watched performer');
+    function updateActiveFilterBtn() { typeSelect.value = listTypeFilter; }
+    const vrSelect = window.SRW.buildSelect(
+      [{ key: 'all', label: 'VR + Non-VR' }, { key: 'vr', label: 'VR' }, { key: 'non_vr', label: 'Non-VR' }],
+      () => listVrFilter, (v) => { listVrFilter = v; onFilterChange(); }, 'VR or flat releases');
+    function updateActiveVrBtn() { vrSelect.value = listVrFilter; }
     // Date-range filter (2026-09-20) -- against `scene_date` (falling
     // back to `scene_created`'s own day, see release_repo.query_releases()),
     // same field the year/month/day grouping below is already built
@@ -790,8 +773,8 @@
       searchInput,
       descToggle,
       tagsToggle,
-      el('span', { className: 'srw-view-toggle' }, filterButtons),
-      el('span', { className: 'srw-view-toggle' }, vrButtons),
+      typeSelect,
+      vrSelect,
       dateRangeWrap,
       providerBoxes,
     ]);
@@ -1567,32 +1550,15 @@
     const tagsToggle = el('label', {
       className: 'srw-provider-filter-item', title: `Also match the ${noun}'s tags, not only title/studio`,
     }, [tagsCheckbox, ' incl. tags']);
-    const FILTERS = [
-      { key: 'both', label: 'All' },
-      { key: 'studio', label: 'Studios' },
-      { key: 'performer', label: 'Performer' },
-    ];
-    const filterButtons = FILTERS.map(({ key, label }) => el('button', {
-      className: 'srw-btn srw-btn-sm', textContent: label,
-      onClick: () => { S.type = key; onFilterChange(); updateActiveFilterBtn(); },
-    }));
-    function updateActiveFilterBtn() {
-      filterButtons.forEach((btn, i) => btn.classList.toggle('srw-btn-primary', FILTERS[i].key === S.type));
-    }
-    updateActiveFilterBtn();
-    const VR_FILTERS = [
-      { key: 'all', label: 'All' },
-      { key: 'vr', label: 'VR' },
-      { key: 'non_vr', label: 'Non-VR' },
-    ];
-    const vrButtons = VR_FILTERS.map(({ key, label }) => el('button', {
-      className: 'srw-btn srw-btn-sm', textContent: label,
-      onClick: () => { S.vr = key; onFilterChange(); updateActiveVrBtn(); },
-    }));
-    function updateActiveVrBtn() {
-      vrButtons.forEach((btn, i) => btn.classList.toggle('srw-btn-primary', VR_FILTERS[i].key === S.vr));
-    }
-    updateActiveVrBtn();
+    // Drop-downs like the other lists' filter bars (v0.225.5); the function names stay for the presets that set the values.
+    const typeSelect = window.SRW.buildSelect(
+      [{ key: 'both', label: 'All types' }, { key: 'studio', label: 'Studios' }, { key: 'performer', label: 'Performer' }],
+      () => S.type, (v) => { S.type = v; onFilterChange(); }, opts.typeTitle || 'Came in through a watched studio or a watched performer');
+    function updateActiveFilterBtn() { typeSelect.value = S.type; }
+    const vrSelect = window.SRW.buildSelect(
+      [{ key: 'all', label: 'VR + Non-VR' }, { key: 'vr', label: 'VR' }, { key: 'non_vr', label: 'Non-VR' }],
+      () => S.vr, (v) => { S.vr = v; onFilterChange(); }, 'VR or flat releases');
+    function updateActiveVrBtn() { vrSelect.value = S.vr; }
     // `opts.providerKeys`: the providers this list can contain (the Movies lists only have ThePornDB); default: every provider.
     const providerBoxes = buildProviderCheckboxes(S.providers, onFilterChange, opts.providerKeys || null);
     const importedCheckbox = el('input', { type: 'checkbox' });
@@ -1634,8 +1600,8 @@
       searchInput,
       descToggle,
       tagsToggle,
-      el('span', { className: 'srw-view-toggle', title: opts.typeTitle || '' }, filterButtons),
-      el('span', { className: 'srw-view-toggle' }, vrButtons),
+      typeSelect,
+      vrSelect,
       providerBoxes,
       opts.noImported ? null : importedToggle,
     ]);

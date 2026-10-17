@@ -2115,3 +2115,15 @@ a.srw-btn { text-decoration: none; display: inline-block; text-align: center; }
 /* Yes / Cancel of an inline question stay together on one line; only the text wraps (v0.209.2) */
 .srw-inline-confirm-buttons { display: inline-flex; flex: 0 0 auto; flex-wrap: nowrap; align-items: center; gap: 0.4rem; white-space: nowrap; }
 .srw-cal-pill .srw-inline-confirm, .srw-search-card .srw-inline-confirm { row-gap: 0.3rem; }
+
+#srw-plugin-root .srw-filter-select {
+  margin-left: 0.75rem;
+  width: auto;
+  min-width: 135px;
+  background: #1e1e1e;
+  color: #e0e0e0;
+  border: 1px solid rgba(128, 128, 128, 0.4);
+  border-radius: 4px;
+  padding: 0.15rem 0.3rem;
+}
+#srw-plugin-root .srw-filter-select option { background: #1e1e1e; color: #e0e0e0; }

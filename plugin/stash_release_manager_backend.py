@@ -200,6 +200,10 @@ def main():
         result = _post(sidecar_url, "/releases/local-scenes", {"scenes": args.get("scenes") or []}, timeout=60)
     elif mode == "releases_retry_encode":
         result = _post(sidecar_url, f"/releases/{args.get('provider')}/{args.get('scene_stashdb_id')}/retry-encode", {}, timeout=30)
+    elif mode == "films_stuck_preview":
+        result = _get(sidecar_url, "/films/stuck", timeout=30)
+    elif mode == "films_search_stuck":
+        result = _post(sidecar_url, "/films/search-stuck", {}, timeout=30)
     elif mode == "films_search":
         result = _post(sidecar_url, f"/films/{args.get('id')}/search", {}, timeout=120)
     elif mode == "films_review_accept":

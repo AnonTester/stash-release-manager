@@ -355,3 +355,22 @@ def run(db, get_source, per_run=5, min_days=7, recent_days=0, recent_min_days=No
             upgrades.append({"id": f["id"], "title": f["title"], **{k: v for k, v in out.items() if k != "judged"}})
     return {"searched": len(results), "found": sum(1 for r in results if r["result"] == "needs_review"), "results": results,
             "upgrades_searched": len(upgrades), "upgrades_found": sum(1 for r in upgrades if r["result"] == "needs_review"), "upgrades": upgrades}
+
+
+def stuck_films(db):
+    """The movies Activity > Stuck lists: on the wishlist, one-file mode, no candidate waiting, searched before with no usable result."""
+    rows = [f for f in film_repo.list_films(db, ["wanted"], per_page=0)["rows"]
+            if (f.get("mode") or "file") == "file" and not f.get("review_candidate")
+            and f.get("last_search_result") in ("no_match", "rejected", "error")]
+    rows.sort(key=lambda f: (f.get("last_search_at") or ""))
+    return rows
+
+
+def search_stuck(db, source):
+    """"Search all stuck movies": every stuck movie once, now (search_film(): 1-3 queries each, a plausible release becomes a candidate in Needs
+    review, nothing is grabbed). Returns {"searched", "found", "results"}."""
+    results = []
+    for f in stuck_films(db):
+        out = search_film(db, film_repo.get(db, f["id"]), source)
+        results.append({"id": f["id"], "title": f["title"], "result": out["result"]})
+    return {"searched": len(results), "found": sum(1 for r in results if r["result"] == "needs_review"), "results": results}

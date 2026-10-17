@@ -6,6 +6,18 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.225.5
+- Releases page (list view and calendar) and the Movies lists: Type (All types / Studios / Performer) and VR (VR + Non-VR / VR / Non-VR) are drop-downs now, like the other lists' filter bars. Presets keep working. (Plugin only.)
+
+## 0.225.1 - 0.225.4
+- Filter bar of the paged lists (Activity, History, Maintenance ...) stays on ONE row: the button groups became drop-downs ("All releases / Movies / Scenes" -- new, on lists that hold scenes and movies --, "All types / Studios / Performer", "VR + Non-VR / VR / Non-VR", "All additions / Added late / Not added late"). The drop-downs are readable on the dark bar and wide enough for their labels. (Plugin only.)
+
+## 0.225.0
+- Activity's Stuck / Downloading / Imported lists get an All | Movies | Scenes switch. (The "Filter (n)" menu that came with it was replaced in 0.225.1.)
+
+## 0.224.0
+- Activity > Stuck has two buttons because scenes and movies share the list: "Search all stuck scenes (N)" (one targeted indexer query per stuck scene release) and the new "Search all stuck movies (M)": the movie search (1-4 queries each) for every stuck movie, once, in the background. The confirm names the most queries it can send, a plausible release becomes a candidate in Needs review, nothing is downloaded, the result line lands in History. `GET /films/stuck` (preview), `POST /films/search-stuck`. A scene-only or movie-only Stuck list shows only its own button.
+
 ## 0.223.0
 - NEW SABnzbd Archive purge: SABnzbd 4.2+ keeps a deleted history entry in its Archive and its duplicate detection reads it ("Duplicate NZB" for a release downloaded long ago). Once a day the sidecar removes the Archive entries older than `sab_archive_purge_days` (default 30, 0 = never; Settings > Schedule > "SABnzbd archive") from every enabled SABnzbd client -- only its category when the client has one, never a newer entry. After a run the archive is read again; if SABnzbd ignored the call a warning says so. `POST /download-clients/{id}/purge-archive` (dry run by default, `older_than_days`) does it by hand.
 - Movie search: an apostrophe in the title no longer hides the release. "Joe's Movie 13" is written Joe.s.Movie.13 or Joes.Movie.13 in release names; a lone s / t / d / m / ll / re / ve now belongs to the word before it, and the plain spelling is asked as the last query for titles with an apostrophe.

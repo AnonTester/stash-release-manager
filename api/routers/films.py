@@ -293,6 +293,45 @@ def grab(film_id: int, body: dict):
     return _grab_film(film, body.get("candidate") or {}, as_scene=as_scene)
 
 
+_stuck_search = {"running": False}
+
+
+@router.get("/stuck")
+def stuck_preview():
+    """Dry run of "Search all stuck movies": the movies on Activity > Stuck and how many indexer queries the search would send at most."""
+    rows = film_search.stuck_films(_db)
+    return {"count": len(rows), "max_queries": sum(len(film_search.queries(f)) for f in rows),
+            "films": [{"id": f["id"], "title": f["title"], "last_search_result": f.get("last_search_result")} for f in rows]}
+
+
+@router.post("/search-stuck")
+def search_stuck():
+    """One search for every stuck movie, right now (the button after its confirmation). Runs in the background (up to 4 queries per movie); the
+    result lands in History. Nothing is grabbed: a plausible release becomes a candidate in Needs review."""
+    import threading
+    source = _get_film_source() if _get_film_source else None
+    if source is None:
+        raise HTTPException(400, "No Prowlarr or direct indexers configured (Settings > Connections / Indexers)")
+    if _stuck_search["running"]:
+        return {"started": False, "count": 0, "reason": "a search of the stuck movies is already running"}
+    rows = film_search.stuck_films(_db)
+    if not rows:
+        return {"started": False, "count": 0}
+
+    def work():
+        _stuck_search["running"] = True
+        try:
+            out = film_search.search_stuck(_db, source)
+            history.event("info", "movies", f"Search all stuck movies: {out['searched']} searched, {out['found']} candidate(s) found (Activity > Needs review)")
+        except Exception as e:  # noqa: BLE001
+            history.event("error", "movies", f"Search all stuck movies failed: {type(e).__name__}: {e}")
+        finally:
+            _stuck_search["running"] = False
+
+    threading.Thread(target=work, daemon=True, name="search-stuck-movies").start()
+    return {"started": True, "count": len(rows)}
+
+
 @router.post("/{film_id}/search")
 def search_now(film_id: int):
     """Searches the indexers for this movie NOW (1-3 queries, see film_search.py); the best plausible result becomes the review candidate
