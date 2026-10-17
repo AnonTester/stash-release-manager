@@ -125,6 +125,7 @@
     try {
       const st = await window.SRW.runOp('settings_get_all');
       window.SRW.listViewPageSize = parseInt(st && st.list_view_page_size, 10) || 100;
+      if (st && !st.error) { loadFilterPresets(st); applyDefaultPreset(); }
     } catch (e) { window.SRW.listViewPageSize = 100; }
     const pageHeader = window.SRW.buildPageHeader('releases');
     container.appendChild(pageHeader);
@@ -473,6 +474,30 @@
     }
   }
 
+  // The default view (v0.217.0): applied once per page load, before the List / Calendar filter bars are built, to the state both views keep at module
+  // level. Nothing happens without a preset marked as default.
+  let defaultPresetApplied = false;
+  function applyDefaultPreset() {
+    if (defaultPresetApplied) return;
+    defaultPresetApplied = true;
+    const p = filterPresets.find((x) => x.default);
+    if (!p) return;
+    listSearchText = p.search || '';
+    listSearchDescription = Boolean(p.description);
+    listSearchTags = Boolean(p.tags);
+    listTypeFilter = p.type || 'both';
+    listVrFilter = p.vr || 'all';
+    Object.assign(listProviderFilter, { stashdb: true, theporndb: true }, p.providers || {});
+    listDateFrom = p.date_from || '';
+    listDateUntil = p.date_until || '';
+    sceneFilterState.search = p.search || '';
+    sceneFilterState.description = Boolean(p.description);
+    sceneFilterState.tags = Boolean(p.tags);
+    sceneFilterState.type = p.type || 'both';
+    sceneFilterState.vr = p.vr || 'all';
+    Object.assign(sceneFilterState.providers, { stashdb: true, theporndb: true }, p.providers || {});
+  }
+
   // Filter presets dropdown (2026-09-24, user request -- pick "PMV"
   // instead of retyping it; pairs with "Dismiss N shown" below the
   // bar). `getState()` returns the bar's current filter as a preset
@@ -486,13 +511,24 @@
     const select = el('select', { className: 'srw-filter-preset-select' });
     const deleteBtn = el('button', { className: 'srw-btn srw-btn-sm', textContent: '×', title: 'Delete selected preset' });
     const saveBtn = el('button', { className: 'srw-btn srw-btn-sm', textContent: 'Save preset' });
+    // "Default view" (v0.217.0): the preset marked `default: true` is applied when the Releases page opens (applyDefaultPreset). Kept inside the
+    // preset list itself, so no new setting is needed.
+    const defaultBtn = el('button', { className: 'srw-btn srw-btn-sm', textContent: '☆' });
 
     function fillSelect(selectedName) {
       select.innerHTML = '';
       select.appendChild(el('option', { value: '', textContent: filterPresets.length ? 'Presets…' : 'No presets' }));
-      filterPresets.forEach((p) => select.appendChild(el('option', { value: p.name, textContent: p.name })));
+      filterPresets.forEach((p) => select.appendChild(el('option', { value: p.name, textContent: p.default ? `★ ${p.name}` : p.name })));
       select.value = selectedName || '';
       deleteBtn.disabled = !select.value;
+      syncDefaultBtn();
+    }
+    function syncDefaultBtn() {
+      const p = filterPresets.find((x) => x.name === select.value);
+      defaultBtn.disabled = !p;
+      defaultBtn.textContent = p && p.default ? '★' : '☆';
+      defaultBtn.title = !p ? 'Pick a preset first, then make it the view the Releases page opens with'
+        : (p.default ? 'This preset is the default view -- click to remove that' : 'Open the Releases page with this preset (default view)');
     }
     async function persist(next, selectedName) {
       const result = await window.SRW.runOp('settings_set', { key: 'filter_presets', value: JSON.stringify(next) });
@@ -504,8 +540,17 @@
       fillSelect(selectedName);
     }
 
+    defaultBtn.addEventListener('click', async () => {
+      const name = select.value;
+      const p = filterPresets.find((x) => x.name === name);
+      if (!p) return;
+      const makeDefault = !p.default;
+      await persist(filterPresets.map((x) => ({ ...x, default: makeDefault && x.name === name ? true : undefined })), name);
+      window.SRW.notify('Default view', makeDefault ? `The Releases page now opens with “${name}”.` : 'No default view any more -- the Releases page opens unfiltered.', 'success');
+    });
     select.addEventListener('change', () => {
       deleteBtn.disabled = !select.value;
+      syncDefaultBtn();
       const preset = filterPresets.find((p) => p.name === select.value);
       if (preset) applyState(preset);
     });
@@ -524,7 +569,8 @@
         const name = nameInput.value.trim();
         if (!name) return;
         const next = filterPresets.filter((p) => p.name !== name);
-        next.push({ ...getState(), name });
+        const old = filterPresets.find((p) => p.name === name);
+        next.push({ ...getState(), name, ...(old && old.default ? { default: true } : {}) });
         next.sort((a, b) => a.name.localeCompare(b.name));
         await persist(next, name);
         close();
@@ -542,8 +588,14 @@
       nameInput.focus();
     });
 
-    fillSelect('');
-    wrap.append(select, deleteBtn, saveBtn);
+    // The dropdown shows the preset the bar's current filter equals (e.g. the default view just applied), else "Presets…".
+    const cur = getState();
+    const same = (p) => ['search', 'type', 'vr'].every((k) => (p[k] || (k === 'type' ? 'both' : k === 'vr' ? 'all' : '')) === (cur[k] || (k === 'type' ? 'both' : k === 'vr' ? 'all' : '')))
+      && Boolean(p.description) === Boolean(cur.description) && Boolean(p.tags) === Boolean(cur.tags)
+      && ['stashdb', 'theporndb'].every((k) => ((p.providers || {})[k] !== false) === ((cur.providers || {})[k] !== false));
+    const match = filterPresets.find((p) => same(p) && (!cur.date_from && !cur.date_until ? true : (p.date_from || '') === cur.date_from && (p.date_until || '') === cur.date_until));
+    fillSelect(match ? match.name : '');
+    wrap.append(select, defaultBtn, deleteBtn, saveBtn);
     return wrap;
   }
 
@@ -561,8 +613,17 @@
   // of `targets` -- the List view only has the current page loaded, so
   // it passes the server's total match count and a loader for ALL
   // matching scenes, called only once the user confirms.
+  // One entry per SCENE (v0.216.1): a scene that came in through two watched entities (studio + performer) has two release rows, but is one
+  // dismiss -- the buttons counted the rows ("Dismiss 10 on this page" next to "Dismiss all 9 matching").
+  function uniqueScenes(list) {
+    const seen = new Set();
+    return list.filter((r) => { const k = `${r.provider}\u0000${r.scene_stashdb_id}`; if (seen.has(k)) return false; seen.add(k); return true; });
+  }
+
   function buildBulkDismissSlot(targets, filterActive, container, opts = null) {
     const { el } = window.SRW;
+    targets = uniqueScenes(targets);
+    if (opts && opts.pageScenes) opts = { ...opts, pageScenes: uniqueScenes(opts.pageScenes) };
     const children = [];
     if (lastBulkDismiss) {
       const { scenes, count } = lastBulkDismiss;
@@ -1981,8 +2042,29 @@
           openBtn.dataset.provider = r.provider; openBtn.dataset.scene = r.scene_stashdb_id;
           openBtn.addEventListener('click', (e) => e.stopPropagation());
         }
+        // "Hide studio" from the Calendar (v0.215.2), same action and condition as the List view's button: only releases that came in through a
+        // watched STUDIO (the sub-studio of a watched network); the studio's other releases leave the Calendar and List, Undo brings them back.
+        let hideBtn = null;
+        if (r.status === 'new' && ((r.entity_types || []).includes('studio') || r.entity_type === 'studio') && !/^(upgrade|film):/.test(String(r.entity_stashdb_id || ''))) {
+          hideBtn = el('button', {
+            className: 'srw-cal-pill-dismiss', title: `Hide the studio “${r.studio_name || 'this studio'}” (its releases that came in through a watched studio)`,
+            'aria-label': 'Hide studio',
+          }, [window.SRW.icon('faEyeSlash', 'srw-cal-pill-hide-icon') || document.createTextNode('⊘')]);
+          hideBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            window.SRW.confirmInline(hideBtn,
+              `Hide the studio “${r.studio_name || '?'}”? Its releases that came in through a watched studio leave the Calendar and List (nothing is deleted; Undo or Settings > Hidden studios shows them again).`,
+              async () => {
+                const result = await window.SRW.runOp('muted_studios_mute', { provider: r.provider, scene_id: r.scene_stashdb_id });
+                if (result.error) { window.SRW.notify('Hide studio', result.error, 'error'); return; }
+                window.SRW.dismissedNotice('Studio hidden', `“${result.name || r.studio_name}” hidden (${result.hidden} release(s)).`,
+                  () => window.SRW.runOp('muted_studios_unmute', { studio_id: result.studio_id }), () => renderCalendarView(container));
+                await renderCalendarView(container);
+              });
+          });
+        }
         const actions = el('div', { className: 'srw-cal-pill-actions' },
-          [localLink, whisparrBtn, searchJumpBtn, openBtn, dismissBtn].filter(Boolean));
+          [localLink, whisparrBtn, searchJumpBtn, openBtn, hideBtn, dismissBtn].filter(Boolean));
         const pill = el('div', {
           className: `srw-cal-pill srw-cal-pill-${r.status}${stuckClass}${providerClass}`,
         }, [sceneLink, actions]);

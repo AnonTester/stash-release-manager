@@ -1660,6 +1660,7 @@
    download glyph (the button itself keeps the shared hit box/opacity). */
 .srw-cal-pill-search { font-size: 0; color: inherit; } /* the pill's own colour like the other icons (v0.130.1; was a fixed blue) */
 .srw-cal-pill-search-icon { width: 19px; height: 19px; }
+.srw-cal-pill-dismiss .srw-cal-pill-hide-icon { width: 19px; height: 19px; font-size: 0; } /* Hide studio (v0.215.2): eye-slash like the magnifier */
 
 /* "Missing from Catalog" year picker (2026-09-26): loaded years green
    with ✓, years outside the entity's date window greyed out. */

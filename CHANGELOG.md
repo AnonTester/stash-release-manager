@@ -6,6 +6,18 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.217.0
+- Default view for the Releases page: next to the filter presets dropdown a star button makes the selected preset the default -- the page (List and Calendar) then opens with that filter already applied (e.g. Non-VR + StashDB only). Click the star again to remove it.
+
+## 0.216.1
+- Bulk dismiss buttons count scenes, not release rows ("Dismiss 10 on this page" next to "Dismiss all 9 matching" was a scene with two rows).
+
+## 0.216.0
+- Dismiss streak per studio: after 10 dismisses of one (sub-)studio in a row without putting one of that studio on the wishlist in between, the Dismiss card offers to hide the studio instead. Without a yes the next offer comes after 10 more dismisses. Single dismisses of new/backlog releases that came in through a studio count; "Dismiss N shown", wishlist dismisses and performer hits do not. A wishlist add or import of the studio starts the count again; Undo takes one back.
+
+## 0.215.2
+- Calendar view: "Hide studio" (eye icon next to the dismiss cross on a pill) for a release that came in through a watched studio. Asks first, has Undo; same action as the button in the List view.
+
 ## 0.215.1
 - Cleaning the client's history also removes the entries of downloads this program rejected itself (blocklisted release names, quality-rejected downloads, other encodes of a blocked release) and of imported movies whose stored title ends in the NZB's first file name (".par2"). An entry marked as someone else's download by the post-processing script is never removed.
 

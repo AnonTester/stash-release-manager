@@ -31,7 +31,7 @@ GROUPS = [
                                                "muted_studio", "pending_favorite_decision"], True),
     ("releases", "Releases (new, dismissed, imported, on the wishlist)", ["release", "downloaded_release"], True),
     ("movies", "Movies wishlist (with the saved covers of deleted groups)", ["film_want"], True),
-    ("decisions", "Your decisions (Review marks, aliases, compare pairs)", ["review_mark", "scene_alias", "compare_pair", "inactive_review"], True),
+    ("decisions", "Your decisions (Review marks, aliases, compare pairs)", ["review_mark", "scene_alias", "compare_pair", "inactive_review", "studio_dismiss_streak"], True),
     ("settings", "Settings that are preferences (intervals, filters, scope; no URLs, keys, passwords or paths) and quality profiles",
      ["setting", "quality_profile"], True),
     ("checks", "Check results (VR, upgrade candidates, fingerprints, library check) -- saves asking again", ["upgrade_candidate", "vr_file_check",

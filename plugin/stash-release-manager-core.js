@@ -11,7 +11,7 @@
   // rule and the bug it caused when this drifted). Change this if you
   // install under a different folder name.
   // Must equal `version:` in stash-release-manager.yml (scripts/test_plugin_version.py checks it).
-  const PLUGIN_VERSION = '0.215.1';
+  const PLUGIN_VERSION = '0.217.0';
   const PLUGIN_ID = 'stash-release-manager';
   const PLUGIN_NAME = 'StashReleaseManager';
 
@@ -1090,7 +1090,35 @@
         ? runOp('releases_restore', { rows })
         : runOp('releases_undismiss', { provider: release.provider, scene_stashdb_id: release.scene_stashdb_id })),
       onChange);
+    if (result && result.suggest_hide) suggestHideNotice(result.suggest_hide, onChange);
     return true;
+  }
+
+  // After 10 dismisses of one studio in a row without a release of it on the wishlist (v0.216.0, dismiss_streak.py): offer to hide the studio instead.
+  // A "no" (Not now, the cross, or just ignoring the card) means the next offer comes after 10 more dismisses.
+  function suggestHideNotice(s, onChange) {
+    let host = document.getElementById('srw-notifications');
+    if (!host) { host = el('div', { id: 'srw-notifications', className: 'srw-notifications' }); document.body.appendChild(host); }
+    const hideBtn = el('button', { className: 'srw-btn srw-btn-primary', textContent: 'Hide studio' });
+    const card = el('div', { className: 'srw-notification srw-notification-info', role: 'status' }, [
+      el('button', { className: 'srw-notification-close', title: 'Close', textContent: '×', onClick: () => card.remove() }),
+      el('div', { className: 'srw-notification-title', textContent: `Hide “${s.name || 'this studio'}”?` }),
+      el('div', { className: 'srw-notification-message',
+        textContent: `You dismissed ${s.count} releases of this studio in a row without adding one to the wishlist. Hide the studio instead of dismissing the next ones? (Settings > Hidden studios brings it back.)` }),
+      el('div', { className: 'srw-notification-actions' }, [hideBtn, el('button', { className: 'srw-btn', textContent: 'Not now', onClick: () => card.remove() })]),
+    ]);
+    hideBtn.addEventListener('click', async () => {
+      hideBtn.disabled = true;
+      const result = await runOp('muted_studios_mute', { studio_id: s.studio_id, name: s.name, provider: 'stashdb' });
+      card.remove();
+      if (result.error) { notify('Hide studio', result.error, 'error'); return; }
+      dismissedNotice('Studio hidden', `“${result.name || s.name}” hidden (${result.hidden} release(s)).`,
+        () => runOp('muted_studios_unmute', { studio_id: s.studio_id }), () => { if (onChange) onChange(); });
+      if (onChange) await onChange();
+    });
+    host.appendChild(card);
+    while (host.children.length > MAX_NOTIFICATIONS) host.firstChild.remove();
+    return card;
   }
 
   // Standard notification for an "Add to Wishlist" result (the handoff

@@ -11,6 +11,7 @@ import import_progress
 import file_importer
 import release_repo
 from handoff import hand_off, fix_mismatched_download, fallback_to_whisparr, uses_whisparr
+import dismiss_streak
 import indexer_search
 import qbittorrent_client
 from qbittorrent_client import QbittorrentClient
@@ -585,6 +586,12 @@ def dismiss(provider: str, scene_stashdb_id: str):
     release_repo.set_status_for_scene(_db, provider, scene_stashdb_id, "dismissed")
     history.scene("info", "dismiss", "Dismissed", provider, scene_stashdb_id)
     out = {"ok": True, "previous": previous}
+    try:  # "dismissed 10 of this studio in a row": the card offers to hide the studio (dismiss_streak.py); never blocks the dismiss
+        suggest = dismiss_streak.on_dismiss(_db, provider, scene_stashdb_id, previous)
+        if suggest:
+            out["suggest_hide"] = suggest
+    except Exception:
+        logger.exception("dismiss: streak bookkeeping failed for %s", scene_stashdb_id)
     # A scene that was on the wishlist is registered in Whisparr (no file): when it is MONITORED there (only after "Search via Whisparr"),
     # Whisparr would keep searching for what the user just dismissed -- unmonitor it (v0.213.5). Best effort, never blocks the dismiss.
     if any(r.get("status") == "sent_to_whisparr" for r in previous) and uses_whisparr(_db, provider):
@@ -616,6 +623,11 @@ def restore_dismissed(body: RestoreRowsRequest):
     """The Undo of every release Dismiss (v0.104.0): puts each row back to the status it had BEFORE the dismiss (new / backlog /
     import_failed ...), unlike undismiss() which sets 'new'."""
     restored = release_repo.restore_rows(_db, [r.model_dump() for r in body.rows])
+    if restored:
+        try:
+            dismiss_streak.on_restore(_db, [r.model_dump() for r in body.rows])
+        except Exception:
+            logger.exception("restore: streak bookkeeping failed")
     if restored:
         history.event("info", "dismiss", f"Dismiss undone: {restored} release row(s) restored")
     return {"ok": True, "restored": restored}

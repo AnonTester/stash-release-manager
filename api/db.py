@@ -529,6 +529,7 @@ class Database:
         self._migrate_duration_check(conn)
         self._migrate_group_match_ignore(conn)
         self._migrate_downloaded_release(conn)
+        self._migrate_studio_dismiss_streak(conn)
 
     def _migrate_torrent_support(self, conn):
         """Torrent support (v0.133.0): download_client.type allows 'qbittorrent' (+ an `options` JSON column for the client's *arr-style settings),
@@ -831,6 +832,14 @@ class Database:
             conn.execute("ALTER TABLE upgrade_candidate ADD COLUMN provider_duration REAL")
         if "is_vr" not in cols:
             conn.execute("ALTER TABLE upgrade_candidate ADD COLUMN is_vr INTEGER")
+
+    def _migrate_studio_dismiss_streak(self, conn):
+        """v0.216.0: dismiss streak per studio (see dismiss_streak.py); a new table is filled once from the History."""
+        import dismiss_streak
+        existed = conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'studio_dismiss_streak'").fetchone()
+        dismiss_streak.ensure_table(conn)
+        if not existed:
+            dismiss_streak.seed_from_history(conn)
 
     def _migrate_downloaded_release(self, conn):
         """v0.215.0: the ledger of releases that were downloaded and whose entry was then removed from the download client's history

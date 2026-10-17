@@ -425,6 +425,9 @@ def restore_rows(db, rows):
 
 
 def _update_status(conn, where_clause, where_params, status):
+    if status in ("sent_to_whisparr", "imported"):  # the studio got something wanted: its dismiss streak starts again (dismiss_streak.py)
+        conn.execute(f"UPDATE studio_dismiss_streak SET count = 0, asked_at_count = 0 WHERE studio_id IN "
+                     f"(SELECT DISTINCT studio_id FROM release {where_clause} AND studio_id IS NOT NULL)", where_params)
     if status == "sent_to_whisparr":
         conn.execute(
             f"UPDATE release SET status = ?, handoff_at = datetime('now') {where_clause}",
@@ -997,6 +1000,7 @@ def mute_studio(db, studio_id, name, provider="stashdb", parent_id=None):
     with db.connect() as conn:
         conn.execute("INSERT OR REPLACE INTO muted_studio (studio_id, provider, name, parent_id) VALUES (?, ?, ?, ?)",
                      (studio_id, provider, name or "", parent_id))
+        conn.execute("DELETE FROM studio_dismiss_streak WHERE studio_id = ?", (studio_id,))
         cur = conn.execute(
             """UPDATE release SET muted_prev_status = status, status = 'dismissed', muted = 1, studio_id = ?
                WHERE entity_type = 'studio' AND entity_stashdb_id NOT LIKE 'upgrade:%' AND entity_stashdb_id NOT LIKE 'film:%' AND muted = 0
