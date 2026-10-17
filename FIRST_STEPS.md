@@ -98,7 +98,7 @@ On a release in the list view there are two buttons: **Add** puts it on the wish
 
 1. **Needs review**: a result that might be right but is not certain -- you decide. **Downloading & importing**: in progress. **Stuck**: searched, nothing usable found yet. **Source file missing** and **Import failed**: something to look at.
 2. **Search all stuck now**: one targeted indexer query for every stuck scene, once, right now (the normal schedule asks each scene daily in its first week, then weekly). It tells you how many queries it will send and asks first.
-3. Each row has a button group: **Now** runs the automatic search for this scene again right away; **Whisparr** hands it to Whisparr's own search; **Last** shows why a scene is stuck (no result, wrong title, quality ...); **Manual** lets you search by hand with your own words and pick a result yourself. **Dismiss** (red, set apart) takes the scene off the wishlist.
+3. Each row has a button group: **Now** runs the automatic search for this scene again right away; **Whisparr** (only when Whisparr does the searching, not in the default setup where this program searches and Whisparr only keeps the books) hands it to Whisparr's own search; **Last** shows why a scene is stuck (no result, wrong title, quality ...); **Manual** lets you search by hand with your own words and pick a result yourself. **Dismiss** (red, set apart) takes the scene off the wishlist.
 
 Nothing is downloaded twice: a scene that is already in your library, or already in the download client's history, is not fetched again.
 

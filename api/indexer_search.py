@@ -956,6 +956,16 @@ def parent_studio_names(db, provider, scene_stashdb_id, studio_name):
         return []
 
 
+def _viable_lead(releases, scene_title, scene_date, performer_names, rejected_titles, taken_titles):
+    """True when a result looks like this scene AND is not blocklisted / not already taken for another scene -- the only kind of lead that makes
+    the next, wider query unnecessary. (A plausible but blocklisted name used to end the search at the first query: 0.217.1.)"""
+    rejected = _split_rejected(rejected_titles)
+    taken_identities = {_review_identity(t) for t in taken_titles}
+    return any(_candidate_plausible(scene_title, scene_date, performer_names, r.get("title"))
+               and not _is_rejected(r.get("title"), rejected) and _review_identity(r.get("title")) not in taken_identities
+               for r in releases)
+
+
 def _build_queries(scene_title, performer_names, studio_name, scene_date, parent_names=()):
     """Staged queries for a sidecar-side search (2026-09-25, user
     report: an I Love POV scene "Exes and Oral" got "no indexer results"
@@ -968,6 +978,7 @@ def _build_queries(scene_title, performer_names, studio_name, scene_date, parent
        and long casts are often truncated in release names)
     3. studio name without spaces/punctuation + date as YY.MM.DD
        ("ILovePOV 26.09.22" -- matches the dotted date in the name)
+       (+ the same with the part of the name before a ":" subtitle, v0.217.1)
     4. the same with each PARENT studio's name (v0.103.0), see parent_studio_names()
     search_and_grab() only moves on to the next query while nothing
     plausible has turned up, to keep indexer API hits (and their daily
@@ -978,9 +989,17 @@ def _build_queries(scene_title, performer_names, studio_name, scene_date, parent
     names = [n for n in (performer_names or []) if n and n.strip()]
     if names:
         queries.append(" ".join(names[:2]))
-    studio_compact = re.sub(r"[^A-Za-z0-9]", "", studio_name or "")
-    if studio_compact and scene_date and re.match(r"\d{4}-\d{2}-\d{2}$", scene_date):
-        queries.append(f"{studio_compact} {scene_date[2:4]}.{scene_date[5:7]}.{scene_date[8:10]}")
+    # The studio's name as release names write it (v0.217.1): "Some Studio: The Series" is released as "FamilyStrokes.26.10.16...", so the part before
+    # a ":" / " - " subtitle is tried as well (after the full name, only while nothing plausible turned up).
+    studio_variants = [studio_name or ""]
+    base = re.split(r"\s*(?::|\s-\s)\s*", studio_name or "", maxsplit=1)[0]
+    if base and base != (studio_name or ""):
+        studio_variants.append(base)
+    if scene_date and re.match(r"\d{4}-\d{2}-\d{2}$", scene_date):
+        for variant in studio_variants:
+            studio_compact = re.sub(r"[^A-Za-z0-9]", "", variant)
+            if studio_compact:
+                queries.append(f"{studio_compact} {scene_date[2:4]}.{scene_date[5:7]}.{scene_date[8:10]}")
     if scene_date and re.match(r"\d{4}-\d{2}-\d{2}$", scene_date):
         for parent in parent_names or ():
             parent_compact = re.sub(r"[^A-Za-z0-9]", "", parent or "")
@@ -1096,6 +1115,10 @@ def search_and_grab(db, whisparr_client, movie_id, provider, scene_stashdb_id, s
         logger.warning("indexer_search: no quality profile configured, skipping movie %s", movie_id)
         return _finish(RESULT_NO_QUALITY_PROFILE)
 
+    # Read before the search (v0.217.1): the widening below must not stop at a lead that is blocklisted or belongs to another scene.
+    rejected_titles = release_repo.get_review_rejected_titles(db, provider, scene_stashdb_id)
+    taken_titles = list(release_repo.grabbed_titles_of_other_scenes(db, provider, scene_stashdb_id))
+
     try:
         if search_source is not None:
             if not search_source.available:
@@ -1119,9 +1142,8 @@ def search_and_grab(db, whisparr_client, movie_id, provider, scene_stashdb_id, s
                     if key not in seen:
                         seen.add(key)
                         releases.append(r)
-                if any(_candidate_plausible(scene_title, scene_date, performer_names, r.get("title"))
-                       for r in releases):
-                    break  # something plausible found, no need to widen the search
+                if _viable_lead(releases, scene_title, scene_date, performer_names, rejected_titles, taken_titles):
+                    break  # something that could really be taken found, no need to widen the search
             if queries_sent and all(q["error"] for q in queries_sent):
                 raise RuntimeError("; ".join(q["error"] for q in queries_sent))
             priorities = search_source.indexer_priorities()
@@ -1155,13 +1177,11 @@ def search_and_grab(db, whisparr_client, movie_id, provider, scene_stashdb_id, s
     # for the fallback, so _select_best() never excluded an already-
     # rejected/blocklisted title from the AUTOMATIC grab path at all;
     # see _select_best()'s own docstring for the real bug this fixes).
-    rejected_titles = release_repo.get_review_rejected_titles(db, provider, scene_stashdb_id)
     vr_rules = load_vr_rules(db) if is_vr else None
     # Unknown resolution: normal searches only -- an upgrade must PROVE it's
     # better, which a name without a resolution can't (2026-09-26).
     if allow_unknown_resolution is None:
         allow_unknown_resolution = candidate_filter is None
-    taken_titles = list(release_repo.grabbed_titles_of_other_scenes(db, provider, scene_stashdb_id))
     size_limits = load_size_limits(db)
     best = _select_best(releases, allowed_resolutions, priorities, scene_title, scene_date, performer_names,
                          require_vr=is_vr, rejected_titles=rejected_titles, vr_rules=vr_rules,

@@ -11,7 +11,7 @@
   // rule and the bug it caused when this drifted). Change this if you
   // install under a different folder name.
   // Must equal `version:` in stash-release-manager.yml (scripts/test_plugin_version.py checks it).
-  const PLUGIN_VERSION = '0.217.0';
+  const PLUGIN_VERSION = '0.217.1';
   const PLUGIN_ID = 'stash-release-manager';
   const PLUGIN_NAME = 'StashReleaseManager';
 
@@ -1381,7 +1381,9 @@
       // Only for releases Whisparr actually tracks (2026-09-25): StashDB
       // ones, and not under the 'no_whisparr' preset -- mirrors
       // handoff.uses_whisparr().
-      const whisparrTracked = r.provider === 'stashdb' && caps.scope_preset !== 'no_whisparr';
+      // Not under 'bookkeeping_only' either (v0.217.1): there Whisparr's indexers have search switched off (the sidecar searches), so its own search would
+      // find nothing -- the button did nothing. It stays for the presets in which Whisparr searches.
+      const whisparrTracked = r.provider === 'stashdb' && !['no_whisparr', 'bookkeeping_only'].includes(caps.scope_preset);
       if (caps.available && caps.available.whisparr && whisparrTracked) {
         const [btn, st] = buildWhisparrFallback(r);
         group.appendChild(btn);

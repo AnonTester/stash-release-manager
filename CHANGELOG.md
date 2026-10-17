@@ -6,6 +6,10 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.217.1
+- Search: two gaps found by running the wishlist through Whisparr's own search as a dry run: (1) the search stopped widening its queries at the first plausible-looking result even when that one was blocklisted or taken for another scene -- it now only stops at a result that could really be taken; (2) a studio called "Family Strokes: The Series" is released as "FamilyStrokes.26.10.16...", so the studio+date query is also tried with the name before the ":" (or " - ") subtitle.
+- The "Whisparr" search button is gone under the default "bookkeeping only" setting: Whisparr's indexers have search switched off there, so the button found nothing. It stays for the settings in which Whisparr searches.
+
 ## 0.217.0
 - Default view for the Releases page: next to the filter presets dropdown a star button makes the selected preset the default -- the page (List and Calendar) then opens with that filter already applied (e.g. Non-VR + StashDB only). Click the star again to remove it.
 
