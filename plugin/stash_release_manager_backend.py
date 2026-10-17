@@ -568,12 +568,22 @@ def main():
     elif mode == "import_apply":
         result = _post(sidecar_url, "/maintenance/import/apply",
                        {k: args.get(k) for k in ("root", "scene_ids", "picks", "ignore_renamers")}, timeout=3600)
+    elif mode == "import_add_check":
+        result = _get(sidecar_url, f"/maintenance/import/add-check?path={quote(str(args.get('path')))}", timeout=300)
+    elif mode == "import_add":
+        result = _post(sidecar_url, "/maintenance/import/add", {"path": args.get("path"), "confirm": True}, timeout=600)
+    elif mode == "import_remove":
+        result = _post(sidecar_url, "/maintenance/import/remove", {"root": args.get("root")}, timeout=60)
     elif mode == "import_finish_check":
         result = _get(sidecar_url, f"/maintenance/import/finish-check?root={quote(str(args.get('root')))}", timeout=300)
     elif mode == "import_finish":
         result = _post(sidecar_url, "/maintenance/import/finish", {"root": args.get("root"), "confirm": True}, timeout=600)
     elif mode == "movies_no_group":
         result = _get(sidecar_url, "/maintenance/movies/no-group", timeout=300)
+    elif mode == "movies_tpdb_search":
+        result = _post(sidecar_url, "/maintenance/movies/tpdb-search", {"q": args.get("q"), "minutes": args.get("minutes")}, timeout=60)
+    elif mode == "movies_link_tpdb":
+        result = _post(sidecar_url, "/maintenance/movies/link-tpdb", {"group_id": args.get("group_id"), "tpdb_id": args.get("tpdb_id")}, timeout=120)
     elif mode == "movies_create_group":
         result = _post(sidecar_url, "/maintenance/movies/create-group",
                        {k: args.get(k) for k in ("title", "scene_ids", "group_id", "scrape_url")}, timeout=300)

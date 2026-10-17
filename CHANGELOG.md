@@ -6,6 +6,22 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.227.2
+- Import folder > "Complete via ThePornDB...": "Preview" opens the movie's ThePornDB page (it opened the shop page ThePornDB lists as the source).
+
+## 0.227.1
+- Import folder: the analysis kept from the last visit is only shown while nothing has changed. Every analysis carries a signature of what it depends on (files, provider ids, Groups and their links, Organized); when the current one differs (a Group was made, a link added, a scene marked Organized ...) the analysis is made again by itself.
+
+## 0.227.0
+- NEW Import folder > "Complete via ThePornDB...": for a file whose Group exists (e.g. scraped from a shop page) but has no ThePornDB movie link yet. It searches the movie at ThePornDB (one request; each hit shows year, studio and length next to the file's length, "length matches" within 10 %); "Link this movie" adds the ThePornDB page to the Group's links -- the import takes a Group with that link for a confirmed film -- and fills the Group's EMPTY fields (date, length, director, synopsis, a local studio). Nothing that is set is changed, the name and the covers stay. `POST /maintenance/movies/tpdb-search`, `POST /maintenance/movies/link-tpdb`.
+
+## 0.226.1 - 0.226.3
+- Import folder: the analysis result is shown as tabs (Ready / Movies / Identified / Needs a look / Unknown, each with its count) like the other pages. The source list loads itself ("Refresh" instead of "Load sources") and the last analysis is kept in the browser. Files no fingerprint knows get the hand tools of the other pages: "Play in Stash", "Make a movie..." (create the film's Group from a title or scrape it from a page, the same panel as Maintenance > Movies & groups) and "Send to Identify Scene".
+
+## 0.226.0
+- Import folder: the source folders are yours to choose. "Add folder" opens Stash's own folder browser; "Check this folder" is a dry run (video count, problems: the library itself, a folder that holds it, an unreadable or empty folder); "Add as import source" puts the folder on the list and, when no Stash library covers it, adds it to Stash's libraries (the old list is saved first) and starts a scan with phashes -- so folders Stash never saw can be imported too. "Remove from list" only takes a folder off the list; "Finish source" removes the finished folder from it as well. The fixed default folders are gone: a new installation starts with none. `POST /maintenance/import/add` (confirm), `GET /import/add-check`, `POST /import/remove`.
+- Import folder, duplicates: a file whose provider scene another local scene already holds shows both sizes in the review text ("1920x1080 8.2 Mbit/s here, 1280x720 3.1 Mbit/s held: this one looks better"). A hint only; nothing is moved or deleted by it.
+
 ## 0.225.5
 - Releases page (list view and calendar) and the Movies lists: Type (All types / Studios / Performer) and VR (VR + Non-VR / VR / Non-VR) are drop-downs now, like the other lists' filter bars. Presets keep working. (Plugin only.)
 

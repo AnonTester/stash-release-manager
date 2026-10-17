@@ -1308,12 +1308,88 @@
       const r = await window.SRW.runOp('import_sources');
       if (r.error) { status.textContent = ` error: ${r.error}`; return; }
       status.textContent = '';
+      restoreAnalysis(r.sources || []);
       sourcesSlot.replaceChildren(el('ul', { className: 'srw-release-list' }, (r.sources || []).map((s) => el('li', { className: 'srw-release-item' }, [
         el('strong', { textContent: s.root }),
         el('span', { className: 'srw-release-date', textContent: s.exists ? `${s.scenes} scene(s) in Stash · ${s.with_id} already identified` : 'folder not found' }),
         s.exists ? el('button', { className: 'srw-btn srw-btn-sm', textContent: 'Analyse', onClick: () => analyse(s.root) }) : null,
         s.exists ? el('button', { className: 'srw-btn srw-btn-sm', textContent: 'Finish source', onClick: () => finishSource(s.root) }) : null,
+        el('button', {
+          className: 'srw-btn srw-btn-sm', textContent: 'Remove from list',
+          title: 'Only takes the folder off this list; Stash\'s libraries and the files stay as they are',
+          onClick: async (e) => {
+            const rm = await window.SRW.runOp('import_remove', { root: s.root });
+            if (rm.error || rm.removed === false) { status.textContent = ` error: ${rm.error || 'not removed'}`; return; }
+            resultSlot.replaceChildren();
+            forgetAnalysis(s.root);
+            loadSources();
+          },
+        }),
       ]))));
+      if (!(r.sources || []).length) sourcesSlot.appendChild(el('p', { className: 'srw-hint', textContent: 'No source folder yet. "Add folder" picks one.' }));
+    }
+
+    // Add folder (v0.226.0): browse Stash's own folder tree (the picker of Maintenance's library scope), dry run, then add.
+    const addSlot = el('div');
+    function openAddFolder() {
+      if (addSlot.childNodes.length) { addSlot.replaceChildren(); return; }
+      const browserWrap = el('div', { className: 'srw-maintenance-browser' });
+      const checkSlot = el('div');
+      addSlot.appendChild(el('div', { className: 'srw-maintenance-selective' }, [
+        el('div', { className: 'srw-hint', textContent: 'Pick the folder (as Stash sees it) and press "Check this folder".' }), browserWrap, checkSlot]));
+      let current = null;
+
+      async function check(path) {
+        checkSlot.replaceChildren(el('span', { className: 'srw-hint', textContent: 'Checking…' }));
+        const r = await window.SRW.runOp('import_add_check', { path });
+        if (r.error) { checkSlot.replaceChildren(el('p', { textContent: `Error: ${r.error}` })); return; }
+        const addStatus = el('span', { className: 'srw-key-status' });
+        checkSlot.replaceChildren(el('div', {}, [
+          el('p', {
+            className: 'srw-hint',
+            textContent: `${r.path}: ${r.videos} video file(s). ` + (r.can_add
+              ? (r.will_add_library ? 'Stash gets this folder as a library path (the old list is saved first) and scans it.'
+                : `Stash already scans it (library ${r.covered_by}); only a scan of this folder is started.`)
+              : ''),
+          }),
+          (r.problems || []).length ? el('ul', {}, r.problems.map((p) => el('li', { textContent: p }))) : null,
+          r.can_add ? el('div', { className: 'srw-toolbar' }, [
+            el('button', {
+              className: 'srw-btn srw-btn-primary', textContent: 'Add as import source',
+              onClick: (e) => confirmInline(e.currentTarget, `Add ${r.path} as an import source${r.will_add_library ? ' and as a Stash library path' : ''}, then scan it?`, async () => {
+                addStatus.textContent = ' working…';
+                const f = await window.SRW.runOp('import_add', { path: r.path });
+                if (f.error || !f.done) { addStatus.textContent = ` not done: ${f.error || (f.problems || []).join('; ')}`; return; }
+                addSlot.replaceChildren();
+                status.textContent = ' added -- Stash is scanning it; "Refresh" shows the scenes as they appear';
+                loadSources();
+              }),
+            }),
+            addStatus,
+          ]) : null,
+        ]));
+      }
+
+      async function browseTo(path) {
+        browserWrap.replaceChildren(el('span', { className: 'srw-hint', textContent: 'Loading…' }));
+        const res = await window.SRW.runOp('maintenance_directory_browse', path ? { path } : {});
+        if (res.error) { browserWrap.replaceChildren(el('span', { className: 'srw-release-mismatch-warning', textContent: `Failed to browse: ${res.error}` })); return; }
+        current = res.path;
+        const pathBox = el('input', { type: 'text', readOnly: true });
+        pathBox.value = current || '';
+        const list = el('ul', { className: 'srw-maintenance-browse-list' });
+        if (res.parent) list.appendChild(el('li', {}, [el('button', { className: 'srw-btn srw-btn-sm', textContent: '↑ Up a directory', onClick: () => browseTo(res.parent) })]));
+        (res.directories || []).forEach((d) => list.appendChild(el('li', {}, [
+          el('button', { className: 'srw-btn srw-btn-sm', textContent: `📁 ${d.split('/').filter(Boolean).pop() || d}`, onClick: () => browseTo(d) })])));
+        browserWrap.replaceChildren(
+          el('div', { className: 'srw-maintenance-browse-row' }, [pathBox,
+            el('button', { className: 'srw-btn srw-btn-sm', textContent: 'Check this folder', onClick: () => check(current) })]),
+          list);
+      }
+      (async () => {
+        const libs = await window.SRW.runOp('maintenance_library_paths');
+        browseTo(((libs && libs.paths) || [])[0] || null);
+      })();
     }
 
     async function finishSource(root) {
@@ -1339,7 +1415,7 @@
                 doneStatus.textContent = ' working…';
                 const f = await window.SRW.runOp('import_finish', { root });
                 doneStatus.textContent = f.error ? ` error: ${f.error}` : f.done ? ' done -- the folder is in the recycle bin, the old library list is saved' : ` not done: ${(f.problems || []).join('; ')}`;
-                if (f.done) loadSources();
+                if (f.done) { forgetAnalysis(root); resultSlot.replaceChildren(); loadSources(); }
               }),
           }),
           doneStatus,
@@ -1351,19 +1427,53 @@
       if (!keepStatus) resultSlot.replaceChildren(el('p', { className: 'srw-hint', textContent: `Analysing ${root} (fingerprint lookups at StashDB and ThePornDB, this takes a minute or two)…` }));
       const r = await window.SRW.runOp('import_analyse', { root });
       if (r.error) { resultSlot.replaceChildren(el('p', { textContent: `Error: ${r.error}` })); return; }
+      const at = Date.now();
+      rememberAnalysis(root, r, at);
+      renderAnalysis(root, r, at);
+    }
+
+    // The last analysis is kept in this browser (v0.226.2) and shown again when the page is opened; "Analyse" makes a new one.
+    const LAST_KEY = 'srw:import-last-analysis';
+    function rememberAnalysis(root, r, at) {
+      try { window.localStorage.setItem(LAST_KEY, JSON.stringify({ root, r, at })); } catch (e) { /* too big or blocked: just not remembered */ }
+    }
+    function forgetAnalysis(root) {
+      try {
+        const last = JSON.parse(window.localStorage.getItem(LAST_KEY) || 'null');
+        if (last && last.root === root) window.localStorage.removeItem(LAST_KEY);
+      } catch (e) { /* ignore */ }
+    }
+    function restoreAnalysis(sources) {
+      try {
+        const last = JSON.parse(window.localStorage.getItem(LAST_KEY) || 'null');
+        const src = last && last.r && sources.find((x) => x.root === last.root && x.exists);
+        if (!src || resultSlot.childNodes.length) return;
+        if (src.signature && last.r.signature === src.signature) { renderAnalysis(last.root, last.r, last.at); return; }
+        // Something changed since (a Group, a link, Organized, files): the saved analysis is out of date, so it is made again.
+        analyse(last.root);
+      } catch (e) { /* ignore */ }
+    }
+
+    function renderAnalysis(root, r, at) {
       const c = r.counts || {};
+      const tab = (kind, short, pane) => ({ key: kind, label: `${short} (${c[kind] || 0})`, pane });
+      const panes = [
+        tab('ready', 'Ready', group('Ready to import', r.items.filter((x) => x.kind === 'ready'), 'ready', root,
+          'The scene already has a provider id and the fingerprints match. Import = apply the provider\'s metadata (title, date, studio, performers; VR tag for VR files), move to the naming scheme, keep .funscript/.srt/.vtt, junk to the recycle bin.')),
+        tab('movie', 'Movies', group('Movie scenes (grouped)', r.items.filter((x) => x.kind === 'movie'), 'movie', root,
+          'The scene is in one Stash group that has a ThePornDB movie link (or you marked the scene Organized). It goes to Movies/<Title> (<Year>)/<Title> (<Year>) [- part N] <Quality> -- the layout of the film import; title and year come from the group. Nothing is looked up at the providers and the scene keeps the metadata you gave it. A scene in a group without a link stays under Unknown until you mark it Organized in Stash.')),
+        tab('identify', 'Identified', group('Identified by fingerprint', r.items.filter((x) => x.kind === 'identify'), 'identify', root,
+          'No id yet, but the provider knows this exact file.')),
+        tab('review', 'Needs a look', group('Needs a look', r.items.filter((x) => x.kind === 'review'), 'review', root,
+          'Not touched: ambiguous, target name taken, several files in the scene, or a near match of a file older than the release.')),
+        tab('unknown', 'Unknown', group('Unknown — name suggestions', r.items.filter((x) => x.kind === 'unknown'), 'unknown', root,
+          'No fingerprint match. "Suggest" searches StashDB and ThePornDB with words from the file name; nothing is imported unless you pick a match. Old films with CD parts belong to the movie handling, not here.')),
+      ];
       resultSlot.replaceChildren(
         el('h4', { textContent: `${root} — ${c.ready || 0} ready · ${c.movie || 0} movies · ${c.identify || 0} identified by fingerprint · ${c.review || 0} to review · ${c.unknown || 0} unknown` }),
-        group('Ready to import', r.items.filter((x) => x.kind === 'ready'), 'ready', root,
-          'The scene already has a provider id and the fingerprints match. Import = apply the provider\'s metadata (title, date, studio, performers; VR tag for VR files), move to the naming scheme, keep .funscript/.srt/.vtt, junk to the recycle bin.'),
-        group('Movie scenes (grouped)', r.items.filter((x) => x.kind === 'movie'), 'movie', root,
-          'The scene is in one Stash group that has a ThePornDB movie link (or you marked the scene Organized). It goes to Movies/<Title> (<Year>)/<Title> (<Year>) [- part N] <Quality> -- the layout of the film import; title and year come from the group. Nothing is looked up at the providers and the scene keeps the metadata you gave it. A scene in a group without a link stays under Unknown until you mark it Organized in Stash.'),
-        group('Identified by fingerprint', r.items.filter((x) => x.kind === 'identify'), 'identify', root,
-          'No id yet, but the provider knows this exact file.'),
-        group('Needs a look', r.items.filter((x) => x.kind === 'review'), 'review', root,
-          'Not touched: ambiguous, target name taken, several files in the scene, or a near match of a file older than the release.'),
-        group('Unknown — name suggestions', r.items.filter((x) => x.kind === 'unknown'), 'unknown', root,
-          'No fingerprint match. "Suggest" searches StashDB and ThePornDB with words from the file name; nothing is imported unless you pick a match. Old films with CD parts belong to the movie handling, not here.'),
+        el('p', { className: 'srw-hint', textContent: `Analysed ${new Date(at).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })} (kept from the last visit, nothing has changed since; "Analyse" on the folder makes a new one).` }),
+        window.SRW.buildPaneTabs(panes, 'srw:import-tab', ['ready', 'movie', 'identify', 'review', 'unknown'].find((k) => c[k])),
+        ...panes.map((x) => x.pane),
       );
     }
 
@@ -1383,6 +1493,103 @@
         el('span', { textContent: ` ${c.studio || ''} — ${c.title || ''} (${c.date || '?'}${c.minutes ? `, ${c.minutes} min` : ''}) ${c.performers.join(', ')}` }),
         btn,
       ]);
+    }
+
+    // The hand tools for a file no fingerprint knows (v0.226.3) are the ones of the other Maintenance pages, not a second set:
+    // a MOVIE gets its Group like on Movies & groups ("Make a movie…": create it from a title, or scrape it from a page, e.g. a shop
+    // page; movies_create_group), a single SCENE goes to Review: Identify Scene (the tag of Unidentified scenes' "Send to Identify Scene").
+    function manualTools(x, rowStatus) {
+      const { confirmInline } = window.SRW;
+      const guess = (x.title || '').replace(/\.[a-z0-9]{2,4}$/i, '').replace(/[._-]+/g, ' ')
+        .replace(/\b(\d{3,4}p|[248]k|hevc|x26[45]|web ?dl|xxx)\b/gi, ' ').replace(/\s+/g, ' ').trim();
+      const panel = el('div', { className: 'srw-manual-search-panel' });
+      const doneSlot = el('span');
+      const doCreate = async (body) => {
+        rowStatus.textContent = ' working…';
+        let r;
+        try { r = await window.SRW.runOp('movies_create_group', { scene_ids: [x.scene_id], ...body }); } catch (e) { r = { error: e.message }; }
+        if (r.error) { rowStatus.textContent = ` error: ${r.error}`; return; }
+        rowStatus.textContent = '';
+        panel.replaceChildren();
+        makeBtn.remove(); identBtn.remove();
+        doneSlot.replaceChildren(
+          el('a', { className: 'srw-btn srw-btn-primary', href: `/groups/${r.group_id}`, target: '_blank', rel: 'noopener noreferrer', textContent: `Open group "${r.title}"` }),
+          el('span', { className: 'srw-key-status', textContent: ' The scene is in the group. It counts as a movie here once the group has a ThePornDB movie link or you mark the scene Organized in Stash; then Analyse again.' }));
+      };
+      const titleInput = el('input', { type: 'text', value: guess, className: 'srw-input' });
+      const makeBtn = el('button', {
+        className: 'srw-btn srw-btn-sm', textContent: 'Make a movie…',
+        title: 'A film, not a single scene: create its Group (from a title or scraped from a page), like on Movies & groups',
+        onClick: () => {
+          if (panel.childNodes.length) { panel.replaceChildren(); return; }
+          panel.replaceChildren(
+            el('div', { className: 'srw-toolbar' }, [titleInput,
+              el('button', {
+                className: 'srw-btn srw-btn-sm', textContent: 'Create group',
+                onClick: (e) => confirmInline(e.currentTarget, `Create the group "${titleInput.value}" with this scene?`, () => doCreate({ title: titleInput.value, group_id: null })),
+              })]),
+            buildGroupScrape(titleInput.value, doCreate));
+        },
+      });
+      const identBtn = el('button', {
+        className: 'srw-btn srw-btn-sm', textContent: 'Send to Identify Scene',
+        title: 'A single scene: adds the tag “Review: Identify Scene” (nothing else changes); the tools to identify it are in Maintenance > Review: Identify Scene',
+        onClick: async (e) => {
+          const res = await window.SRW.runOp('compare_review_add', { scene_id: x.scene_id });
+          if (res.error) { rowStatus.textContent = ` error: ${res.error}`; return; }
+          e.target.disabled = true; makeBtn.disabled = true;
+          rowStatus.textContent = ' sent to Review: Identify Scene (the file stays here until it is identified; then Analyse again)';
+        },
+      });
+      return [window.SRW.buildStashLink('scene', x.scene_id, 'Play in Stash'), makeBtn, identBtn, doneSlot, panel];
+    }
+
+    // A file whose Group exists (e.g. scraped from a shop page) but has no ThePornDB movie link yet (v0.227.0): search the movie at ThePornDB and
+    // link it -- the link makes the Group a confirmed film for the import; the Group's empty fields are filled from it, nothing that is set changes.
+    function tpdbTools(x, rowStatus, root) {
+      const { confirmInline } = window.SRW;
+      const panel = el('div', { className: 'srw-manual-search-panel' });
+      const input = el('input', { type: 'search', className: 'srw-search-input', value: x.title || '' });
+      const results = el('div');
+      const searchStatus = el('span', { className: 'srw-key-status' });
+      async function search() {
+        const q = input.value.trim();
+        if (!q) return;
+        searchStatus.textContent = ' searching…';
+        results.replaceChildren();
+        const res = await window.SRW.runOp('movies_tpdb_search', { q, minutes: x.minutes });
+        if (res.error) { searchStatus.textContent = ` error: ${res.error}`; return; }
+        searchStatus.textContent = '';
+        if (!(res.results || []).length) { results.appendChild(el('p', { className: 'srw-hint', textContent: 'ThePornDB found nothing. Try fewer words.' })); return; }
+        res.results.forEach((c) => results.appendChild(el('div', { className: 'srw-manual-search-result' }, [
+          el('span', { className: 'srw-release-title', textContent: c.title || '?' }),
+          el('span', { className: 'srw-review-candidate-meta', textContent: [c.year || '?', c.site, c.minutes ? `${c.minutes} min` : 'no length', `file ${x.minutes} min`, c.length_ok ? '✓ length matches' : null].filter(Boolean).join(' · ') }),
+          c.url ? el('a', { className: 'srw-btn srw-btn-sm', href: c.url, target: '_blank', rel: 'noopener noreferrer', textContent: 'Preview' }) : null,
+          el('button', {
+            className: 'srw-btn srw-btn-sm srw-btn-primary', textContent: 'Link this movie',
+            title: 'Adds the ThePornDB page to the Group and fills the Group fields that are empty; nothing that is set changes',
+            onClick: (e) => confirmInline(e.currentTarget, `Link the Group "${x.title}" to the ThePornDB movie "${c.title}" (${c.year || '?'})?`, async () => {
+              rowStatus.textContent = ' linking…';
+              const r = await window.SRW.runOp('movies_link_tpdb', { group_id: x.group_id, tpdb_id: c.id });
+              if (r.error) { rowStatus.textContent = ` error: ${r.error}`; return; }
+              rowStatus.textContent = ` linked${(r.filled || []).length ? ` (filled: ${r.filled.join(', ')})` : ''} -- analysing again…`;
+              analyse(root, true);
+            }),
+          }),
+        ])));
+      }
+      input.addEventListener('keydown', (e) => { if (e.key === 'Enter') search(); });
+      const btn = el('button', {
+        className: 'srw-btn srw-btn-sm', textContent: 'Complete via ThePornDB…',
+        title: 'Search the movie at ThePornDB and link it to this Group; the import then takes the Group for a confirmed film',
+        onClick: () => {
+          if (panel.childNodes.length) { panel.replaceChildren(); return; }
+          panel.replaceChildren(el('span', {}, [input, el('button', { className: 'srw-btn srw-btn-sm', textContent: 'Go', onClick: search }), searchStatus]), results);
+          search();
+        },
+      });
+      return [window.SRW.buildStashLink('scene', x.scene_id, 'Play in Stash'),
+        window.SRW.buildStashLink('group', x.group_id, 'Open group'), btn, panel];
     }
 
     function itemRow(x, kind, root) {
@@ -1423,13 +1630,13 @@
           }), rowStatus);
         }
         parts.push(sugSlot);
+        if (x.file_id) parts.push(...(x.group_id ? (x.kind === 'unknown' ? tpdbTools(x, rowStatus, root) : []) : manualTools(x, rowStatus)));
       }
       return el('li', { className: 'srw-release-item' }, parts);
     }
 
     function group(label, items, kind, root, hint) {
-      const g = el('details', { className: 'srw-date-group' }, [el('summary', { textContent: `${label} — ${items.length}` })]);
-      window.SRW.rememberOpen(g, `import:${kind}`, kind === 'ready');
+      const g = el('div', { className: 'srw-import-pane' });
       if (hint) g.appendChild(el('p', { className: 'srw-hint', textContent: hint }));
       const bulkStatus = el('span', { className: 'srw-key-status' });
       if ((kind === 'ready' || kind === 'identify' || kind === 'movie') && items.length) {
@@ -1480,18 +1687,21 @@
       el('h3', { textContent: 'Import folder' }),
       el('p', {
         className: 'srw-hint',
-        textContent: 'Brings the files of the temporary source folders (/data/Scenes, /data/import, /data/_VR) into the library: '
+        textContent: 'Brings the files of the temporary source folders (the list below; "Add folder" picks one, also a folder Stash does not know yet) into the library: '
           + 'identify by fingerprint at StashDB/ThePornDB, apply the provider\'s metadata (VR files get the "Virtual Reality" tag), '
           + 'move to the naming scheme. Only .funscript/.srt/.vtt move along; jpg/nfo/txt/url/rar go to the recycle bin (7 days); '
           + 'empty folders are removed, the source folder itself stays. Files no fingerprint knows stay put until you pick a match.',
       }),
       el('div', { className: 'srw-toolbar' }, [
-        el('button', { className: 'srw-btn', textContent: 'Load sources', onClick: loadSources }),
+        el('button', { className: 'srw-btn', textContent: 'Refresh', onClick: loadSources }),
+        el('button', { className: 'srw-btn', textContent: 'Add folder', onClick: openAddFolder }),
         status,
       ]),
+      addSlot,
       sourcesSlot,
       resultSlot,
     ]);
+    loadSources(); // the list loads itself; the last analysis comes back with it
     return section;
   }
 

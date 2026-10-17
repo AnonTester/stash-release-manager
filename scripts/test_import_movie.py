@@ -39,6 +39,7 @@ TPDB = ["https://theporndb.net/movies/some-film"]
 
 root = tempfile.mkdtemp()
 imp = object.__new__(Importer)
+imp.db = imp.stashdb = imp.theporndb = imp.get_whisparr = None
 imp._root = lambda: "/data"
 imp.to_local = lambda p: p.replace("/data", root, 1)
 imp.roots = lambda: ["/data/Scenes"]

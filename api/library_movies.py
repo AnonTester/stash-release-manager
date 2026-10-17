@@ -291,7 +291,7 @@ class Movies:
             logger.exception("movies: image download failed: %s", url)
             return None
 
-    def tpdb_group_input(self, movie, studio_index):
+    def tpdb_group_input(self, movie, studio_index, images=True):
         """GroupCreateInput fields from a ThePornDB /movies/{id} record -- GROUP data only (name, date, length, director, synopsis, urls,
         studio when a local one exists, front/back cover). Returns (input, notes)."""
         notes = []
@@ -320,6 +320,8 @@ class Movies:
             inp["studio_id"] = ids[0]
         else:
             notes.append(f"studio {site!r}: " + ("no local studio of that name" if not ids else f"ambiguous ({len(ids)} local studios)"))
+        if not images:
+            return inp, notes
         poster = movie.get("poster")
         front = self._data_url(poster) if isinstance(poster, str) and poster.startswith("http") else None
         if front:
@@ -340,6 +342,49 @@ class Movies:
         group_id = self.stash._graphql("mutation($i: GroupCreateInput!) { groupCreate(input: $i) { id } }", {"i": inp})["groupCreate"]["id"]
         self.create_group(inp["name"], scene_ids, group_id=group_id)
         return {"group_id": group_id, "name": inp["name"], "notes": notes, "studio": bool(inp.get("studio_id"))}
+
+    # ---------- complete an existing Group with its ThePornDB movie (v0.227.0) ----------
+
+    @staticmethod
+    def tpdb_search(client, query, minutes=None):
+        """ThePornDB movie search (one request): [{id, title, year, minutes, site, performers, length_ok, url}]. `minutes` = the length
+        of the film's file(s); a hit within 10 % of it is marked length_ok."""
+        resp = client._get("/movies", params={"q": query, "per_page": 10})
+        resp.raise_for_status()
+        out = []
+        for d in resp.json().get("data") or []:
+            dm = (d.get("duration") or 0) / 60
+            out.append({"id": d["id"], "title": d.get("title"), "year": int((d.get("date") or "0")[:4] or 0), "minutes": round(dm, 1),
+                        "site": (d.get("site") or {}).get("name"), "performers": len(d.get("performers") or []),
+                        "length_ok": bool(dm and minutes and abs(dm / minutes - 1) <= 0.10),
+                        "url": f"https://theporndb.net/movies/{d['slug']}" if d.get("slug") else d.get("url"), "source_url": d.get("url")})
+        return out
+
+    def link_group_to_tpdb(self, movie, group_id):
+        """Adds the ThePornDB movie page to the Group's links (the import takes a Group with that link for a confirmed film) and
+        fills what the Group lacks: date, length, director, synopsis, studio (only a local one). Nothing that is set is changed, the name
+        stays, no cover is touched. Returns {"group_id", "name", "link", "filled", "notes"}."""
+        g = self.stash._graphql("query($id: ID!) { findGroup(id: $id) { id name date duration director synopsis urls studio { id } } }",
+                                {"id": str(group_id)})["findGroup"]
+        if not g:
+            raise ValueError("group not found")
+        inp, notes = self.tpdb_group_input(movie, self.local_studio_index(), images=False)
+        link = next((u for u in inp["urls"] if "theporndb.net/movies/" in u), None)
+        if not link:
+            raise ValueError("ThePornDB gave no page for this movie")
+        upd = {"id": str(group_id)}
+        have = {u.rstrip("/").lower() for u in g.get("urls") or []}
+        upd["urls"] = list(g.get("urls") or []) + ([] if link.rstrip("/").lower() in have else [link])
+        filled = []
+        for field in ("date", "duration", "director", "synopsis"):
+            if inp.get(field) and not g.get(field):
+                upd[field] = inp[field]
+                filled.append(field)
+        if inp.get("studio_id") and not g.get("studio"):
+            upd["studio_id"] = inp["studio_id"]
+            filled.append("studio")
+        self.stash._graphql("mutation($i: GroupUpdateInput!) { groupUpdate(input: $i) { id } }", {"i": upd})
+        return {"group_id": str(group_id), "name": g["name"], "link": link, "filled": filled, "notes": notes}
 
     # ---------- performers without scenes ----------
 

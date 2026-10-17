@@ -21,6 +21,7 @@ import threading
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+import history
 import library_check
 import library_check_repo
 import release_repo
@@ -188,7 +189,7 @@ def organize_movies_apply(body: dict):
                                      ignore_renamers=bool(body.get("ignore_renamers")))
 
 
-# --- Folder import: /data/Scenes, /data/import, /data/_VR ... (2026-09-29, library_import.py) ---
+# --- Folder import: the source folders of the setting import_sources (2026-09-29, library_import.py) ---
 
 @router.get("/import/sources")
 def import_sources():
@@ -224,6 +225,25 @@ def import_organized_hook(body: dict):
     return importer.organized_scene(scene_id, (importer.setting("organized_hook") or "off").strip())
 
 
+@router.get("/import/add-check")
+def import_add_check(path: str):
+    """Dry run of "add this folder as an import source" (v0.226.0): problems, video count, whether Stash gets a new library path."""
+    return _importer().add_check(path)
+
+
+@router.post("/import/add")
+def import_add(body: dict):
+    if body.get("confirm") is not True:
+        raise HTTPException(status_code=400, detail="confirm=true required")
+    importer = _importer()
+    return importer.add_source(body.get("path") or "", importer.backup_dir)
+
+
+@router.post("/import/remove")
+def import_remove(body: dict):
+    return _importer().remove_source(body.get("root") or "")
+
+
 @router.get("/import/finish-check")
 def import_finish_check(root: str):
     return _importer().finish_check(root)
@@ -254,6 +274,41 @@ def movies_create_group(body: dict):
                                       scrape_url=body.get("scrape_url"))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/movies/tpdb-search")
+def movies_tpdb_search(body: dict):
+    """ThePornDB movie search for a Group that still lacks the link (Import folder > "Complete via ThePornDB")."""
+    client = _get_provider_client("theporndb") if _get_provider_client else None
+    if client is None:
+        raise HTTPException(status_code=400, detail="ThePornDB is not configured")
+    q = (body.get("q") or "").strip()
+    if not q:
+        raise HTTPException(status_code=400, detail="q is required")
+    try:
+        return {"query": q, "results": _movies().tpdb_search(client, q, body.get("minutes"))}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"ThePornDB did not answer: {type(e).__name__}: {str(e)[:200]}")
+
+
+@router.post("/movies/link-tpdb")
+def movies_link_tpdb(body: dict):
+    """The chosen ThePornDB movie becomes the Group's link; empty fields of the Group are filled (library_movies.link_group_to_tpdb)."""
+    client = _get_provider_client("theporndb") if _get_provider_client else None
+    if client is None:
+        raise HTTPException(status_code=400, detail="ThePornDB is not configured")
+    if not body.get("group_id") or not body.get("tpdb_id"):
+        raise HTTPException(status_code=400, detail="group_id and tpdb_id are required")
+    movie = client._get(f"/movies/{body['tpdb_id']}").json().get("data")
+    if not movie:
+        raise HTTPException(status_code=404, detail="ThePornDB does not know this movie")
+    try:
+        res = _movies().link_group_to_tpdb(movie, body["group_id"])
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    history.add("info", "history", "movies", f"Group {res['name']!r} linked to ThePornDB movie {movie.get('title')!r}"
+                + (f" (filled: {', '.join(res['filled'])})" if res["filled"] else ""), details={"group": res["group_id"], "tpdb": body["tpdb_id"]})
+    return res
 
 
 @router.get("/movies/compare-groups")

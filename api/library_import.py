@@ -1,5 +1,5 @@
 """Folder import (2026-09-29): brings the files of the temporary source
-folders (/data/Scenes, /data/import, /data/_VR) into the library.
+folders (the setting `import_sources`; added and removed in Maintenance > Import folder) into the library.
 
 The sources are Stash library paths, so Stash already knows their files
 (fingerprints included). What is left is to IDENTIFY them, adopt the provider's
@@ -93,6 +93,8 @@ class Importer(Organizer):
     # ---------- sources / scope ----------
 
     def roots(self):
+        """The source folders. A saved list (even an empty one) is used as it is; before the first save the old default
+        folders count, but only those that exist, so a new installation starts with none."""
         raw = self.setting("import_sources")
         if isinstance(raw, str) and raw.strip():
             try:
@@ -100,7 +102,86 @@ class Importer(Organizer):
                 raw = json.loads(raw)
             except ValueError:
                 raw = [x.strip() for x in raw.split(",") if x.strip()]
-        return [r.rstrip("/") for r in (raw or DEFAULT_SOURCES)]
+        if isinstance(raw, list):
+            return [r.rstrip("/") for r in raw if str(r).strip()]
+        return [r for r in DEFAULT_SOURCES if os.path.isdir(self.to_local(r))]
+
+    def save_roots(self, roots):
+        import json
+        value = json.dumps(sorted({r.rstrip("/") for r in roots}))
+        with self.db.connect() as conn:
+            conn.execute("""INSERT INTO setting (key, value) VALUES ('import_sources', ?)
+                            ON CONFLICT (key) DO UPDATE SET value = excluded.value""", (value,))
+
+    # ---------- add / remove a source folder (v0.226.0) ----------
+
+    def add_check(self, path):
+        """What adding `path` as a source would do, and what stands in the way. Changes nothing."""
+        path = (path or "").rstrip("/")
+        report = {"path": path, "problems": [], "videos": 0, "covered_by": None, "will_add_library": False, "can_add": False}
+        if not path.startswith("/") or path == "":
+            report["problems"].append("not an absolute folder path")
+            return report
+        if path in self.roots():
+            report["problems"].append("already an import source")
+        library = self._root() + "/scenes"
+        protected = [library, *self.movie_roots()]
+        for p in protected:
+            if path == p or path.startswith(p + "/"):
+                report["problems"].append(f"{p} is the library itself, never an import source")
+            elif p.startswith(path + "/"):
+                report["problems"].append(f"the folder contains the library folder {p}")
+        local = self.to_local(path)
+        if not os.path.isdir(local):
+            report["problems"].append("the sidecar cannot see this folder (check the media mount)")
+        else:
+            report["videos"] = sum(1 for _, _, fs in os.walk(local) for f in fs if os.path.splitext(f)[1].lower() in VIDEO_EXT)
+            if not report["videos"]:
+                report["problems"].append("no video files in the folder")
+        libs = [x["path"].rstrip("/") for x in self.stash.library_config()]
+        covered = next((x for x in libs if path == x or path.startswith(x + "/")), None)
+        inside = [x for x in libs if x.startswith(path + "/") and x not in protected]
+        if inside:
+            report["problems"].append(f"Stash already lists folders below it as libraries ({inside[0]}); add those one by one")
+        report["covered_by"] = covered
+        report["will_add_library"] = covered is None
+        report["can_add"] = not report["problems"]
+        return report
+
+    def add_source(self, path, backup_dir):
+        """Makes `path` an import source: Stash gets it as a library path when it has none covering it (the old list is saved first), then
+        Stash scans it (with phashes). Nothing is moved; Analyse is the next step."""
+        report = self.add_check(path)
+        if not report["can_add"]:
+            return {**report, "done": False}
+        path = report["path"]
+        backup = None
+        if report["will_add_library"]:
+            import json
+            libs = self.stash.library_config()
+            os.makedirs(backup_dir, exist_ok=True)
+            backup = os.path.join(backup_dir, f"stash_libraries_before_add_{int(time.time())}.json")
+            with open(backup, "w") as f:
+                json.dump(libs, f, indent=1)
+            wanted = libs + [{"path": path, "excludeVideo": False, "excludeImage": True}]
+            after = self.stash.set_library_config(wanted)
+            if not any(x["path"].rstrip("/") == path for x in after) or len(after) != len(wanted):
+                raise RuntimeError(f"Stash's library list looks wrong after adding {path}; the old list is in {backup}")
+        self.save_roots([*self.roots(), path])
+        job = self.stash.scan_paths([path])
+        history.add("info", "history", "import", f"Source folder added: {path} ({report['videos']} video file(s)); "
+                    + ("added to Stash's libraries, " if report["will_add_library"] else f"already in Stash's library {report['covered_by']}, ")
+                    + "scan started", details={"backup": backup, "scan_job": job})
+        return {**report, "done": True, "backup": backup, "scan_job": job}
+
+    def remove_source(self, root):
+        """Takes the folder off the list. Stash's library list and the files stay as they are."""
+        root = root.rstrip("/")
+        if root not in self.roots():
+            return {"removed": False, "error": "not an import source"}
+        self.save_roots([r for r in self.roots() if r != root])
+        history.add("info", "history", "import", f"Source folder removed from the list: {root} (Stash's libraries and the files are untouched)")
+        return {"removed": True}
 
     def _in_scope(self, path):
         return any(path.startswith(r + "/") for r in self.roots())
@@ -174,7 +255,7 @@ class Importer(Organizer):
         for root in self.roots():
             mine = [s for s in scenes if any(f["path"].startswith(root + "/") for f in s["files"])]
             out.append({"root": root, "scenes": len(mine), "with_id": sum(1 for s in mine if s["stash_ids"]),
-                        "exists": os.path.isdir(self.to_local(root))})
+                        "exists": os.path.isdir(self.to_local(root)), "signature": self.signature(mine)})
         return out
 
     def _identify(self, scenes):
@@ -255,10 +336,25 @@ class Importer(Organizer):
         cache[key] = (detail, name or studio.get("name"))
         return cache[key]
 
+    @staticmethod
+    def signature(scenes):
+        """A short fingerprint of everything an analysis depends on locally (files, ids, groups and their links, Organized), so a saved
+        analysis can be told stale without running it again."""
+        import hashlib
+        parts = sorted(
+            (str(s["id"]), tuple(sorted(f["path"] for f in s["files"])), bool(s.get("organized")),
+             tuple(sorted(x["stash_id"] for x in s["stash_ids"])),
+             tuple(sorted((e["group"]["id"], e.get("scene_index"), tuple(sorted(e["group"].get("urls") or []))) for e in s.get("groups") or [])))
+            for s in scenes)
+        return hashlib.sha1(repr(parts).encode()).hexdigest()[:16]
+
     def analyse(self, root):
         """Per-file classification of one source folder (see the module docstring)."""
         root = root.rstrip("/")
-        return self._analyse_scenes(root, self._scenes_in(root))
+        scenes = self._scenes_in(root)
+        out = self._analyse_scenes(root, scenes)
+        out["signature"] = self.signature(scenes)
+        return out
 
     def _analyse_scenes(self, root, candidates, identify=True):
         """The classification itself, over the given scenes (a source folder's, or the one scene of the "Organized" hook, which skips the
@@ -343,7 +439,34 @@ class Importer(Organizer):
                 continue
             if other and str(other["id"]) != str(i["scene_id"]):
                 i.update(kind="review", how=f"the provider scene is already held by local scene {other['id']} "
-                                             f"\"{other.get('title')}\" -- a duplicate?")
+                                             f"\"{other.get('title')}\" -- a duplicate?"
+                                             + self._held_note(i, other["id"]))
+
+    _HELD_FILES_QUERY = "query($id: ID!) { findScene(id: $id) { files { width height bit_rate } } }"
+
+    @staticmethod
+    def _quality_key(f):
+        return ((f.get("width") or 0) * (f.get("height") or 0), f.get("bit_rate") or 0)
+
+    def _held_note(self, item, held_id):
+        """' (1920x1080 8.2 Mbit/s here, 1280x720 3.1 Mbit/s held: this one looks better)': pixels first, the bit rate for equal sizes.
+        Empty when either side has no size. Only a hint, nothing is decided by it."""
+        try:
+            def files(scene_id):
+                return (self.stash._graphql(self._HELD_FILES_QUERY, {"id": str(scene_id)}).get("findScene") or {}).get("files") or []
+            mine = [f for f in files(item["scene_id"]) if f.get("width")]
+            held = [f for f in files(held_id) if f.get("width")]
+        except Exception:
+            return ""
+        if not mine or not held:
+            return ""
+        a, b = max(mine, key=self._quality_key), max(held, key=self._quality_key)
+
+        def fmt(f):
+            return f"{f['width']}x{f['height']}" + (f" {f['bit_rate'] / 1e6:.1f} Mbit/s" if f.get("bit_rate") else "")
+        verdict = ("this one looks better" if self._quality_key(a) > self._quality_key(b)
+                   else "this one is not better" if self._quality_key(a) < self._quality_key(b) else "equal quality")
+        return f" ({fmt(a)} here, {fmt(b)} held: {verdict})"
 
     def _plan_movie(self, item, scene, file):
         """A scene in exactly one group (see the module docstring): kind 'movie' with its target path, or 'unknown'/'review' with the reason."""
@@ -351,6 +474,8 @@ class Importer(Organizer):
         group = entry["group"]
         item["how"] = f"group \"{group['name']}\""
         tpdb_link = any(re.search(r"theporndb\.net/movies/", u or "") for u in group.get("urls") or [])
+        item["group_id"] = group["id"]
+        item["minutes"] = round((file.get("duration") or 0) / 60, 1)
         if not (tpdb_link or scene.get("organized")):
             item["how"] += " has no ThePornDB movie link and the scene is not marked Organized -- mark it Organized to confirm"
             return
@@ -478,6 +603,7 @@ class Importer(Organizer):
         if any(s["path"].rstrip("/") == root for s in after) or len(after) != len(remaining):
             raise RuntimeError(f"Stash's library list looks wrong after removing {root}; the old list is in {backup}")
         self.recycle(local)  # the empty folder itself
+        self.save_roots([r for r in self.roots() if r != root])
         history.add("info", "history", "import", f"Source folder finished: {root} removed from Stash's libraries, "
                     f"the empty folder is in the recycle bin", details={"backup": backup, "junk_recycled": len(report["junk"])})
         return {**report, "done": True, "backup": backup, "libraries_left": [s["path"] for s in after]}
