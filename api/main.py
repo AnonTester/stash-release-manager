@@ -184,6 +184,22 @@ def _studio_parent_names(studio_id, studio_name):
 indexer_search.set_parent_resolver(_studio_parent_names)
 
 
+def _scene_site_urls(provider, scene_id):
+    """The scene's provider links for the indexer search (v0.230.0): stored per scene (release.scene_urls), fetched once from StashDB at the
+    first search. ThePornDB scenes name their site themselves (studio), so nothing is asked there."""
+    cached = release_repo.get_scene_urls(db, provider, scene_id)
+    if cached is not None:
+        return cached
+    if provider != "stashdb":
+        return []
+    urls = get_stashdb_client().get_scene_urls(scene_id)  # a failure propagates: nothing is stored, the next search asks again
+    release_repo.set_scene_urls_for_scene(db, provider, scene_id, urls)
+    return urls
+
+
+indexer_search.set_site_resolver(_scene_site_urls)
+
+
 def get_whisparr_client():
     return WhisparrClient(
         get_setting_value(db, "whisparr_url", settings.whisparr_url),

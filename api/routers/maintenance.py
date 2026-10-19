@@ -211,7 +211,7 @@ def import_apply(body: dict):
     if root not in importer.roots():
         raise HTTPException(status_code=400, detail="not an import source")
     return importer.apply(root, body.get("scene_ids") or [], picks=body.get("picks") or {}, force=bool(body.get("force")),
-                          ignore_renamers=bool(body.get("ignore_renamers")))
+                          ignore_renamers=bool(body.get("ignore_renamers")), trust=body.get("trust") or [])
 
 
 @router.post("/import/organized-hook")

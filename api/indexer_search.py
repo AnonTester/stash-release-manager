@@ -1056,6 +1056,64 @@ def parent_studio_names(db, provider, scene_stashdb_id, studio_name):
         return []
 
 
+# The SITE behind a scene (v0.230.0). StashDB often credits a performer-named creator as the studio ("Some Creator") while the release carries
+# the site's name ("ExampleSite.Jane.Roe.Title.Words..."); the scene's "Studio" link (https://www.examplesite.com/watch/...) names it.
+# `_site_resolver(provider, scene_id)` -> [{"url", "site"}] is set by main.py (cached in release.scene_urls, one provider request per scene).
+_site_resolver = None
+
+
+def set_site_resolver(fn):
+    global _site_resolver
+    _site_resolver = fn
+
+
+def _brand_from_url(url):
+    """'examplesite' from https://www.examplesite.com/watch/...; '' when the host has no usable name."""
+    from urllib.parse import urlparse
+    try:
+        host = (urlparse(url).hostname or "").lower()
+    except ValueError:
+        return ""
+    labels = [x for x in host.split(".") if x and x != "www"]
+    if len(labels) < 2:
+        return ""
+    name = labels[-3] if len(labels) >= 3 and labels[-2] in ("co", "com", "org", "net") else labels[-2]
+    return re.sub(r"[^a-z0-9]", "", name)
+
+
+def studio_site_names(db, provider, scene_stashdb_id, *known_names):
+    """Site names of the scene's "Studio" links that differ from the studio names we search anyway (`known_names`: the studio and its parents)."""
+    if _site_resolver is None:
+        return []
+    try:
+        urls = _site_resolver(provider, scene_stashdb_id) or []
+    except Exception:
+        logger.warning("indexer_search: site lookup failed for %s scene %s", provider, scene_stashdb_id, exc_info=True)
+        return []
+    known = {re.sub(r"[^a-z0-9]", "", str(n or "").lower()) for names in known_names for n in (names if isinstance(names, (list, tuple)) else [names])}
+    out = []
+    for u in urls:
+        if (u.get("site") or "").strip().lower() != "studio":
+            continue
+        brand = _brand_from_url(u.get("url") or "")
+        # not when it is the studio's own name or a part of it ("brazzers" for "Brazzers Exxtra"): the queries by studio name cover that
+        if brand and brand not in out and not any(k and (brand in k or k in brand) for k in known):
+            out.append(brand)
+    return out
+
+
+def _title_without_cast(scene_title, performer_names):
+    """'Quiet student reads late' from 'Quiet student reads late - Jane Roe & John Doe': a title that
+    ends in ' - <cast>' never appears like that in a release name, and the indexers AND every word of the query."""
+    m = re.match(r"^(.*\S)\s+[-\u2013]\s+([^-\u2013]+)$", (scene_title or "").strip())
+    if not m:
+        return ""
+    tail = m.group(2).lower()
+    if any(str(n).lower() in tail for n in primary_names(performer_names) if n and len(str(n)) > 2):
+        return m.group(1).strip()
+    return ""
+
+
 def _viable_lead(releases, scene_title, scene_date, performer_names, rejected_titles, taken_titles):
     """True when a result looks like this scene AND is not blocklisted / not already taken for another scene -- the only kind of lead that makes
     the next, wider query unnecessary. (A plausible but blocklisted name used to end the search at the first query: 0.217.1.)"""
@@ -1066,7 +1124,7 @@ def _viable_lead(releases, scene_title, scene_date, performer_names, rejected_ti
                for r in releases)
 
 
-def _build_queries(scene_title, performer_names, studio_name, scene_date, parent_names=()):
+def _build_queries(scene_title, performer_names, studio_name, scene_date, parent_names=(), site_names=()):
     """Staged queries for a sidecar-side search (2026-09-25, user
     report: an I Love POV scene "Exes and Oral" got "no indexer results"
     while 7 correct releases existed). Many studios name releases
@@ -1080,15 +1138,22 @@ def _build_queries(scene_title, performer_names, studio_name, scene_date, parent
        ("ILovePOV 26.09.22" -- matches the dotted date in the name)
        (+ the same with the part of the name before a ":" subtitle, v0.217.1)
     4. the same with each PARENT studio's name (v0.103.0), see parent_studio_names()
+    5. (v0.230.0) the title without a trailing " - <cast>" (right after the full title), and the SITE of the scene's "Studio" link with the
+       first performer ("examplesite Jane Roe") and with the date -- see studio_site_names()
     search_and_grab() only moves on to the next query while nothing
     plausible has turned up, to keep indexer API hits (and their daily
     limits) low. Empty/duplicate queries are skipped."""
     queries = []
     if scene_title and scene_title.strip():
         queries.append(scene_title.strip())
+        bare = _title_without_cast(scene_title, performer_names)
+        if bare:
+            queries.append(bare)
     names = [str(n) for n in primary_names(performer_names) if n and n.strip()]
     if names:
         queries.append(" ".join(names[:2]))
+        for brand in site_names or ():
+            queries.append(f"{brand} {names[0]}")
     # The studio's name as release names write it (v0.217.1): "Some Studio: The Series" is released as "FamilyStrokes.26.10.16...", so the part before
     # a ":" / " - " subtitle is tried as well (after the full name, only while nothing plausible turned up).
     studio_variants = [studio_name or ""]
@@ -1096,7 +1161,7 @@ def _build_queries(scene_title, performer_names, studio_name, scene_date, parent
     if base and base != (studio_name or ""):
         studio_variants.append(base)
     if scene_date and re.match(r"\d{4}-\d{2}-\d{2}$", scene_date):
-        for variant in studio_variants:
+        for variant in [*studio_variants, *(site_names or ())]:
             studio_compact = re.sub(r"[^A-Za-z0-9]", "", variant)
             if studio_compact:
                 queries.append(f"{studio_compact} {scene_date[2:4]}.{scene_date[5:7]}.{scene_date[8:10]}")
@@ -1237,8 +1302,9 @@ def search_and_grab(db, whisparr_client, movie_id, provider, scene_stashdb_id, s
                 return _finish(RESULT_SEARCH_BACKEND_UNAVAILABLE)
             releases = []
             seen = set()
-            for q in _build_queries(scene_title, performer_names, studio_name, scene_date,
-                                    parent_studio_names(db, provider, scene_stashdb_id, studio_name)):
+            parents = parent_studio_names(db, provider, scene_stashdb_id, studio_name)
+            for q in _build_queries(scene_title, performer_names, studio_name, scene_date, parents,
+                                    studio_site_names(db, provider, scene_stashdb_id, studio_name, parents)):
                 try:
                     batch = search_source.search(q)
                 except Exception as e:

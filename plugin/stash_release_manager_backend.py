@@ -567,7 +567,7 @@ def main():
         result = _get(sidecar_url, f"/maintenance/import/analyse?root={quote(str(args.get('root')))}", timeout=1800)
     elif mode == "import_apply":
         result = _post(sidecar_url, "/maintenance/import/apply",
-                       {k: args.get(k) for k in ("root", "scene_ids", "picks", "ignore_renamers")}, timeout=3600)
+                       {k: args.get(k) for k in ("root", "scene_ids", "picks", "ignore_renamers", "trust")}, timeout=3600)
     elif mode == "import_add_check":
         result = _get(sidecar_url, f"/maintenance/import/add-check?path={quote(str(args.get('path')))}", timeout=300)
     elif mode == "import_add":

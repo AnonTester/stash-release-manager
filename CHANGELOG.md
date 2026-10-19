@@ -6,6 +6,22 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.230.0
+- Indexer search: a scene whose StashDB studio is a performer-named creator but whose release carries the SITE's name ("Site.Performer.Title.Words...") is found now. (1) The scene's "Studio" link names the site (`https://www.example-site.com/watch/...` -> `examplesite`): the queries "<site> <first performer>" and "<site> YY.MM.DD" are added after the existing ones, except when the site is the studio's own name or part of it. The links are fetched from StashDB once per scene at its first search and stored; ThePornDB scenes are not asked. (2) A title that ends in " - <cast>" is also searched without that tail, right after the full title: no release name carries it and the indexers want every word. The queries stay staged: the search stops at the first plausible lead.
+
+## 0.228.5
+- Import folder: a scene that was sent to Review: Identify Scene shows "in Review: Identify Scene" instead of the "Send to Identify Scene" button, also after a reload or a new analysis.
+
+## 0.228.4
+- Import folder: "Refresh" also checks the analysis on screen and makes it again when the folder changed since (a file that was moved meanwhile no longer stays in the list).
+
+## 0.228.3
+- Maintenance > Unidentified scenes: "Park in _UNMATCHED" on every row moves the file of a scene no provider knows to `scenes/_UNMATCHED/<its folders>`, like Review: Identify Scene's "Move to _UNMATCHED". The Stash scene and its data stay; a backup is made.
+
+## 0.228.0 - 0.228.2
+- Import folder > Needs a look: "Import anyway (I checked it)" for a scene that has a provider id but whose file the provider cannot confirm by fingerprint (no fingerprints stored there, they differ, no local phash yet, the lookup failed, or a near match of a file older than the release date). After you looked at the file it is placed like a verified one; History records that you confirmed it. A provider scene another scene already holds, several files and a taken name are not overruled.
+- Before the provider's data is written over a scene (every import, "Import anyway" included) the scene's metadata -- title, date, studio, performers, tags, ids, links, groups -- is saved as a JSON file in the backups folder; History names it. The confirm of "Import anyway" shows the scene's title next to what the provider says and states that the provider's data replaces the scene's.
+
 ## 0.227.2
 - Import folder > "Complete via ThePornDB...": "Preview" opens the movie's ThePornDB page (it opened the shop page ThePornDB lists as the source).
 

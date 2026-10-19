@@ -19,7 +19,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 
 import release_repo
-from indexer_search import _build_queries, alias_variants, parent_studio_names, search_and_grab, RESULT_PROVIDER_LOOKUP_FAILED
+from indexer_search import _build_queries, alias_variants, parent_studio_names, search_and_grab, studio_site_names, RESULT_PROVIDER_LOOKUP_FAILED
 from routers.settings import resolve_whisparr_scope_preset
 from whisparr_client import MovieAlreadyExistsError, WhisparrLookupEmpty
 
@@ -151,9 +151,10 @@ def feed_has_lead(db, provider, scene_stashdb_id, release, search_source):
     up when the feed has at least a lead for it. True for every other search source."""
     if getattr(search_source, "name", "") != "feed":
         return True
+    parents = parent_studio_names(db, provider, scene_stashdb_id, release["studio_name"])
     return any(search_source.search(q) for q in
-               _build_queries(release["title"], [], release["studio_name"], release["scene_date"],
-                              parent_studio_names(db, provider, scene_stashdb_id, release["studio_name"])))
+               _build_queries(release["title"], [], release["studio_name"], release["scene_date"], parents,
+                              studio_site_names(db, provider, scene_stashdb_id, release["studio_name"], parents)))
 
 
 def refresh_scene_from_provider(db, provider, scene_stashdb_id, title, scene_date, get_provider_client, write=True):

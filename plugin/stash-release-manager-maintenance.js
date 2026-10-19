@@ -1308,6 +1308,10 @@
       const r = await window.SRW.runOp('import_sources');
       if (r.error) { status.textContent = ` error: ${r.error}`; return; }
       status.textContent = '';
+      // "Refresh" also checks the analysis on screen: a changed folder (Organized, a move, a new Group) means it is made again (v0.228.4)
+      const src = shown && (r.sources || []).find((x) => x.root === shown.root);
+      if (shown && !src) { resultSlot.replaceChildren(); shown = null; }
+      else if (src && src.signature && src.signature !== shown.signature && !analysing) analyse(shown.root, true);
       restoreAnalysis(r.sources || []);
       sourcesSlot.replaceChildren(el('ul', { className: 'srw-release-list' }, (r.sources || []).map((s) => el('li', { className: 'srw-release-item' }, [
         el('strong', { textContent: s.root }),
@@ -1425,7 +1429,9 @@
 
     async function analyse(root, keepStatus) {
       if (!keepStatus) resultSlot.replaceChildren(el('p', { className: 'srw-hint', textContent: `Analysing ${root} (fingerprint lookups at StashDB and ThePornDB, this takes a minute or two)…` }));
-      const r = await window.SRW.runOp('import_analyse', { root });
+      analysing = true;
+      let r;
+      try { r = await window.SRW.runOp('import_analyse', { root }); } finally { analysing = false; }
       if (r.error) { resultSlot.replaceChildren(el('p', { textContent: `Error: ${r.error}` })); return; }
       const at = Date.now();
       rememberAnalysis(root, r, at);
@@ -1434,6 +1440,14 @@
 
     // The last analysis is kept in this browser (v0.226.2) and shown again when the page is opened; "Analyse" makes a new one.
     const LAST_KEY = 'srw:import-last-analysis';
+    // keeps the saved analysis in step with a click that changed a scene (the next visit shows it as it is now)
+    function markReviewed(sceneId) {
+      try {
+        const last = JSON.parse(window.localStorage.getItem(LAST_KEY) || 'null');
+        const hit = last && (last.r.items || []).find((i) => String(i.scene_id) === String(sceneId));
+        if (hit) { hit.in_review = true; window.localStorage.setItem(LAST_KEY, JSON.stringify(last)); }
+      } catch (e) { /* ignore */ }
+    }
     function rememberAnalysis(root, r, at) {
       try { window.localStorage.setItem(LAST_KEY, JSON.stringify({ root, r, at })); } catch (e) { /* too big or blocked: just not remembered */ }
     }
@@ -1454,7 +1468,10 @@
       } catch (e) { /* ignore */ }
     }
 
+    let shown = null; // {root, signature} of the analysis on screen
+    let analysing = false;
     function renderAnalysis(root, r, at) {
+      shown = { root, signature: r.signature };
       const c = r.counts || {};
       const tab = (kind, short, pane) => ({ key: kind, label: `${short} (${c[kind] || 0})`, pane });
       const panes = [
@@ -1531,14 +1548,18 @@
             buildGroupScrape(titleInput.value, doCreate));
         },
       });
-      const identBtn = el('button', {
+      // already sent (the scene carries the tag): a badge instead of a button that would be clicked again (v0.228.5)
+      const inReviewBadge = () => el('span', { className: 'srw-history-category', textContent: 'in Review: Identify Scene', title: 'The scene carries the tag; identify it there (Maintenance > Review: Identify Scene)' });
+      const identBtn = x.in_review ? inReviewBadge() : el('button', {
         className: 'srw-btn srw-btn-sm', textContent: 'Send to Identify Scene',
         title: 'A single scene: adds the tag “Review: Identify Scene” (nothing else changes); the tools to identify it are in Maintenance > Review: Identify Scene',
         onClick: async (e) => {
           const res = await window.SRW.runOp('compare_review_add', { scene_id: x.scene_id });
           if (res.error) { rowStatus.textContent = ` error: ${res.error}`; return; }
-          e.target.disabled = true; makeBtn.disabled = true;
-          rowStatus.textContent = ' sent to Review: Identify Scene (the file stays here until it is identified; then Analyse again)';
+          x.in_review = true;
+          markReviewed(x.scene_id);
+          e.target.replaceWith(inReviewBadge());
+          rowStatus.textContent = ' sent (the file stays here until it is identified; then Analyse again)';
         },
       });
       return [window.SRW.buildStashLink('scene', x.scene_id, 'Play in Stash'), makeBtn, identBtn, doneSlot, panel];
@@ -1592,6 +1613,29 @@
         window.SRW.buildStashLink('group', x.group_id, 'Open group'), btn, panel];
     }
 
+    // The provider has this id but cannot confirm the FILE by fingerprint (no fingerprints stored there, or they differ): after looking at it
+    // yourself you can import it anyway (v0.228.0); it is placed like a verified one and History records that you confirmed it.
+    function trustButton(x, rowStatus, root) {
+      const provider = window.SRW.providerLabel(x.provider);
+      const meta = [x.provider_studio, x.provider_date].filter(Boolean).join(', ');
+      const writes = x.provider_title ? `${provider} says: "${x.provider_title}"${meta ? ` (${meta})` : ''}. ` : '';
+      return el('button', {
+        className: 'srw-btn srw-btn-sm', textContent: 'Import anyway (I checked it)',
+        title: `The check says: ${x.how}. Only if you have looked at the file and it is this scene.`,
+        onClick: (e) => window.SRW.confirmInline(e.currentTarget,
+          `${x.how}. The scene is "${x.title}". ${writes}Import applies the ${provider} title, date, studio and performers of the id this scene carries now -- they REPLACE what the scene has (a copy of the current data is saved first) -- and moves the file. Only if that id is the right one.`
+          + (/older than/.test(x.how) ? ' A file older than the release can be another release of the scene or another scene.' : ''),
+          async () => {
+            rowStatus.textContent = ' working…';
+            const r = await window.SRW.runOp('import_apply', { root, scene_ids: [x.scene_id], trust: [x.scene_id] });
+            const failed = (r.failed || [])[0];
+            const moved = (r.done || []).length;
+            rowStatus.textContent = r.error ? ` error: ${r.error}` : failed ? ` failed: ${failed.reason}` : moved ? ' done' : ' not moved (the plan changed: analyse again)';
+            if (!r.error && !failed && moved) analyse(root, true);
+          }),
+      });
+    }
+
     function itemRow(x, kind, root) {
       const rowStatus = el('span', { className: 'srw-key-status' });
       const sugSlot = el('ul', { className: 'srw-release-list' });
@@ -1630,6 +1674,7 @@
           }), rowStatus);
         }
         parts.push(sugSlot);
+        if (x.can_trust) parts.push(trustButton(x, rowStatus, root));
         if (x.file_id) parts.push(...(x.group_id ? (x.kind === 'unknown' ? tpdbTools(x, rowStatus, root) : []) : manualTools(x, rowStatus)));
       }
       return el('li', { className: 'srw-release-item' }, parts);
@@ -1776,7 +1821,22 @@
               if (one.error) { rowStatus.textContent = ` error: ${one.error}`; return; }
               delete results[x.id]; remove();
             }) }) : null,
-          review, rowStatus,
+          review,
+          // A scene that will not be identified (no provider has it) and lies in the wrong folder: park the file like Review's
+          // "Move to _UNMATCHED" (v0.228.3). The tag it needs for that is added and taken off by the move itself.
+          /\/_UNMATCHED\//.test(`${x.folder}/`) ? null : el('button', {
+            className: 'srw-btn srw-btn-sm', textContent: 'Park in _UNMATCHED',
+            title: 'Moves the file to scenes/_UNMATCHED/<its folders> until it can be identified; the Stash scene and its data stay (a backup is made)',
+            onClick: (e) => confirmInline(e.currentTarget, `Move the file of "${x.title || x.file}" to scenes/_UNMATCHED? The scene and its data stay; a backup is made.`, async () => {
+              rowStatus.textContent = ' parking…';
+              const tagged = await window.SRW.runOp('compare_review_add', { scene_id: x.id });
+              if (tagged.error) { rowStatus.textContent = ` error: ${tagged.error}`; return; }
+              const res = await window.SRW.runOp('compare_review_unmatched', { scene_id: x.id });
+              if (res.error) { rowStatus.textContent = ` error: ${res.error} (the scene now carries the tag "Review: Identify Scene"; Review: Identify Scene has "Move to _UNMATCHED" too)`; return; }
+              remove();
+            }),
+          }),
+          rowStatus,
         ]);
       })),
     });

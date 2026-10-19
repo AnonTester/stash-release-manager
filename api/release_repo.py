@@ -1031,6 +1031,20 @@ def studio_of_scene(db, provider, scene_stashdb_id):
     return (r["studio_id"], r["studio_name"]) if r else (None, None)
 
 
+def get_scene_urls(db, provider, scene_stashdb_id):
+    """[{url, site}] stored for this scene, or None when they were never fetched."""
+    with db.connect() as conn:
+        r = conn.execute("SELECT scene_urls FROM release WHERE provider = ? AND scene_stashdb_id = ? AND scene_urls IS NOT NULL LIMIT 1",
+                         (provider, scene_stashdb_id)).fetchone()
+    return json.loads(r["scene_urls"]) if r else None
+
+
+def set_scene_urls_for_scene(db, provider, scene_stashdb_id, urls):
+    with db.connect() as conn:
+        conn.execute("UPDATE release SET scene_urls = ? WHERE provider = ? AND scene_stashdb_id = ?",
+                     (json.dumps(urls or []), provider, scene_stashdb_id))
+
+
 # ---------- tags backfill (v0.92.0) ----------
 
 def list_scenes_missing_tags(db, provider, statuses=("new",), limit=None, images=False):

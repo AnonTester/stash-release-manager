@@ -73,6 +73,11 @@ def _with_retry(fn, *args, attempts=4):
                 continue
             raise
 
+# Reasons of a failed fingerprint check that the user may overrule after looking at the file (v0.228.0); the other review reasons
+# (a provider scene another scene holds, several files, name taken) are not about the check. "A near phash match, but the file is older
+# than the release" (v0.228.1) is the user's call too: the item carries can_trust itself (see _plan_target).
+_TRUSTABLE = ("the provider has no fingerprints", "fingerprints don't match", "no local phash", "fingerprint lookup failed", "no exact fingerprint")
+REVIEW_TAG = "Review: Identify Scene"  # scene_compare.REVIEW_TAG (that module imports this one)
 DEFAULT_SOURCES = ["/data/Scenes", "/data/import", "/data/_VR"]
 KEEP_EXTS = {".funscript", ".srt", ".vtt"}
 JUNK_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".nfo", ".txt", ".url", ".rar", ".sfv", ".nzb",
@@ -343,7 +348,7 @@ class Importer(Organizer):
         import hashlib
         parts = sorted(
             (str(s["id"]), tuple(sorted(f["path"] for f in s["files"])), bool(s.get("organized")),
-             tuple(sorted(x["stash_id"] for x in s["stash_ids"])),
+             tuple(sorted(x["stash_id"] for x in s["stash_ids"])), any((t.get("name") or "") == REVIEW_TAG for t in s.get("tags") or []),
              tuple(sorted((e["group"]["id"], e.get("scene_index"), tuple(sorted(e["group"].get("urls") or []))) for e in s.get("groups") or [])))
             for s in scenes)
         return hashlib.sha1(repr(parts).encode()).hexdigest()[:16]
@@ -372,13 +377,23 @@ class Importer(Organizer):
             f = s["files"][0]
             item = {"scene_id": s["id"], "file_id": f["id"], "title": s["title"] or os.path.basename(f["path"]),
                     "path": f["path"], "new_path": None, "kind": "unknown", "how": "", "stashdb_id": None,
-                    "provider": None, "provider_id": None, "vr": self._is_vr(s, f, root)}
+                    "provider": None, "provider_id": None, "vr": self._is_vr(s, f, root),
+                    "in_review": any((t.get("name") or "") == REVIEW_TAG for t in s.get("tags") or [])}
             if s in movie_scenes:
                 self._plan_movie(item, s, f)
             elif s in with_id:
                 ok, how = verified.get(f["id"], (False, "not checked"))
                 item["how"] = how
                 item["kind"] = "ready" if ok else "review"
+                # the provider cannot confirm the file by fingerprint: you may confirm it yourself ("Import anyway")
+                item["can_trust"] = (not ok) and how.startswith(_TRUSTABLE)
+                if item["can_trust"]:  # what the override would write over the scene, for the confirm
+                    try:
+                        detail, studio_name = self._provider_scene(s)
+                        if detail:
+                            item.update(provider_title=detail.get("title"), provider_studio=studio_name, provider_date=detail.get("date"))
+                    except Exception:
+                        logger.exception("import: provider lookup for the override hint failed (scene %s)", s["id"])
                 item["provider"], item["provider_id"] = self._provider_of(s)
                 if item["provider"] == "stashdb":
                     item["stashdb_id"] = item["provider_id"]
@@ -522,7 +537,8 @@ class Importer(Organizer):
         how = item["how"]
         if how.startswith("phash") and not how.startswith("phash (distance 0)") \
                 and _older_than_release(file, detail["date"]):
-            item.update(kind="review", how=f"{how}, but the file is older than the scene's release date")
+            item.update(kind="review", how=f"{how}, but the file is older than the scene's release date", can_trust=True,
+                        provider_title=detail["title"], provider_studio=studio, provider_date=detail["date"])
             return
         item["title"] = detail["title"]
         item["studio"] = studio
@@ -698,10 +714,30 @@ class Importer(Organizer):
 
     # ---------- apply ----------
 
+    _SCENE_BACKUP_QUERY = """query($id: ID!) { findScene(id: $id) { id title code date details urls rating100 organized
+        studio { id name } performers { id name } tags { id name } stash_ids { endpoint stash_id }
+        groups { scene_index group { id name } } files { path } } }"""
+
+    def _backup_scene(self, scene_id, why):
+        """The scene's metadata as it is BEFORE the provider's data is applied (v0.228.2: an "Import anyway" overwrote a hand-made
+        title/performer set and nothing could bring it back). One JSON file per scene and time in the backups folder; its path goes to
+        History. Never stops the import: a failed backup is logged and the import goes on only when `why` is not a user override."""
+        backup_dir = getattr(self, "backup_dir", None)
+        if not backup_dir:
+            return None
+        scene = self.stash._graphql(self._SCENE_BACKUP_QUERY, {"id": str(scene_id)}).get("findScene")
+        os.makedirs(backup_dir, exist_ok=True)
+        path = os.path.join(backup_dir, f"scene_{scene_id}_before_{why}_{int(time.time())}.json")
+        import json
+        with open(path, "w") as f:
+            json.dump(scene, f, indent=1, ensure_ascii=False)
+        return path
+
     def _adopt(self, item):
         """Applies the provider's metadata (title/date/studio/performers/ids) and, for VR
-        files, the VR tag. Idempotent for scenes that already carry the right id."""
+        files, the VR tag. Idempotent for scenes that already carry the right id. The scene's metadata is saved first (_backup_scene)."""
         scene_id = item["scene_id"]
+        item["backup"] = self._backup_scene(scene_id, "import-trusted" if item.get("trusted_reason") else "import")
         endpoint = self.stash.stashdb_endpoint if item["provider"] == "stashdb" else self.stash.theporndb_endpoint
         library_check.apply_fix(self.stash, scene_id, item["provider_id"], create_missing_performers=True,
                                 endpoint=endpoint, keep_other_endpoints=True)
@@ -714,11 +750,13 @@ class Importer(Organizer):
                 self.stash._graphql("mutation($i: SceneUpdateInput!) { sceneUpdate(input: $i) { id } }",
                                     {"i": {"id": str(scene_id), "tag_ids": ids + [str(tag_id)]}})
 
-    def apply(self, root, scene_ids, picks=None, force=False, ignore_renamers=False):
+    def apply(self, root, scene_ids, picks=None, force=False, ignore_renamers=False, trust=None):
         """Re-analyses (never trusts the browser), then adopts + moves the requested
         ready/identify scenes. `picks` = {scene_id: {"provider", "provider_id"}}: matches YOU
         confirmed from the name suggestions for files no fingerprint identified. Returns
-        {done, failed, leftovers}."""
+        {done, failed, leftovers}. `trust` = scene ids YOU checked by hand although the provider cannot confirm the file by
+        fingerprint (v0.228.0, "Import anyway"): such a scene (a provider id on it, a failed fingerprint check as the only problem)
+        is placed like a verified one and the waiver is written to History."""
         busy = self.queue_guard(force)
         if busy:
             return busy
@@ -741,9 +779,30 @@ class Importer(Organizer):
                             how="confirmed by you (name match)")
                 self._plan_target(item, s, s["files"][0])
                 wanted.add(str(item["scene_id"]))
+        trusted = []
+        if trust:
+            by_id = {str(s["id"]): s for s in self._scenes_in(plan["root"])}
+            for item in plan["items"]:
+                sid = str(item["scene_id"])
+                if sid not in {str(t) for t in trust} or not item.get("can_trust") or item["kind"] != "review" or sid not in by_id:
+                    continue
+                reason = item["how"]
+                item.update(kind="ready", how="confirmed by you (fingerprint not verified)", trusted_reason=reason)
+                self._plan_target(item, by_id[sid], by_id[sid]["files"][0])
+                if item["kind"] == "ready" and item["new_path"]:
+                    wanted.add(sid)
+                    trusted.append(item)
         items = [i for i in plan["items"] if i["kind"] in ("ready", "identify", "movie")
                  and str(i["scene_id"]) in wanted and i["new_path"]]
-        return self._apply_items(plan["root"], items)
+        result = self._apply_items(plan["root"], items)
+        done_ids = {str(i["scene_id"]) for i in result.get("done", [])}
+        for item in trusted:
+            if str(item["scene_id"]) in done_ids:
+                history.add("warning", "history", "import",
+                            f"Imported without fingerprint check (you confirmed it): {item['path'].rsplit('/', 1)[1]} -- {item['trusted_reason']}",
+                            scene_title=item["title"], details={"stash_scene": item["scene_id"], "provider": item.get("provider"),
+                                                                "provider_id": item.get("provider_id"), "backup": item.get("backup")})
+        return result
 
     def _apply_items(self, root_label, items):
         """Adopts (not for movie scenes) and moves the planned items, scans, records. Returns {done, failed, leftovers}."""

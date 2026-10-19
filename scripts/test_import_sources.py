@@ -107,6 +107,8 @@ grp = lambda urls: {"scene_index": None, "group": {"id": "5", "urls": urls}}  # 
 check("signature: same state, same value", Importer.signature(sc()) == Importer.signature(sc()))
 check("signature: a Group changes it", Importer.signature(sc()) != Importer.signature(sc([grp([])])))
 check("signature: a ThePornDB link changes it", Importer.signature(sc([grp([])])) != Importer.signature(sc([grp(["https://theporndb.net/movies/x"])])))
+tagged = sc(); tagged[0]["tags"] = [{"name": "Review: Identify Scene"}]
+check("signature: the review tag changes it (the row then shows it)", Importer.signature(sc()) != Importer.signature(tagged))
 check("signature: Organized changes it", Importer.signature(sc()) != Importer.signature(sc(org=True)))
 
 print("\nFAILED: " + ", ".join(FAILS) if FAILS else "\nall ok")

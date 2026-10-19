@@ -505,6 +505,7 @@ class Database:
         self._migrate_provider_check_constraint(conn)
         self._migrate_release_import_error(conn)
         self._migrate_release_search_details(conn)
+        self._migrate_release_scene_urls(conn)
         self._migrate_release_details(conn)
         self._migrate_release_late_addition(conn)
         self._migrate_release_upgrade_of(conn)
@@ -949,6 +950,13 @@ class Database:
         cols = {r["name"] for r in conn.execute("PRAGMA table_info(release)").fetchall()}
         if "last_search_details" not in cols:
             conn.execute("ALTER TABLE release ADD COLUMN last_search_details TEXT")
+
+    def _migrate_release_scene_urls(self, conn):
+        """Adds `release.scene_urls` (v0.230.0): JSON list [{url, site}] of the scene's provider links, NULL = not fetched yet. Filled lazily by the
+        first indexer search of a StashDB scene (indexer_search.studio_site_names) so the site behind a performer-named studio is asked once."""
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(release)").fetchall()}
+        if "scene_urls" not in cols:
+            conn.execute("ALTER TABLE release ADD COLUMN scene_urls TEXT")
 
     def _migrate_release_import_error(self, conn):
         """Adds `release.import_error_code`/`import_error_detail`

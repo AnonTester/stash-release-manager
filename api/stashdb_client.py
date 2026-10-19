@@ -80,6 +80,12 @@ query($id: ID!) {
 }
 """
 
+# The links of one scene with their site type ("Studio" = the studio's own page for the scene, StashDB's convention). Backs the indexer search:
+# a scene whose StashDB studio is a performer-named creator ("Some Creator") is released under the SITE's name ("ExampleSite.Jane.Roe...").
+FIND_SCENE_URLS_QUERY = """
+query($id: ID!) { findScene(id: $id) { id urls { url site { name } } } }
+"""
+
 FIND_SCENES_BY_FINGERPRINTS_QUERY = """
 query($fps: [[FingerprintQueryInput!]!]!) {
   findScenesBySceneFingerprints(fingerprints: $fps) { id title }
@@ -648,6 +654,16 @@ class StashDBClient:
         if data.get("errors"):
             raise RuntimeError(str(data["errors"]))
         return data["data"]["findScene"]
+
+    def get_scene_urls(self, scene_id):
+        """[{"url", "site"}] of one scene (site = the link type, e.g. "Studio"). Raises on a failed request; [] for an unknown scene."""
+        resp = self._post({"query": FIND_SCENE_URLS_QUERY, "variables": {"id": scene_id}})
+        resp.raise_for_status()
+        data = resp.json()
+        if data.get("errors"):
+            raise RuntimeError(str(data["errors"]))
+        scene = data["data"]["findScene"] or {}
+        return [{"url": u.get("url") or "", "site": (u.get("site") or {}).get("name") or ""} for u in scene.get("urls") or []]
 
     def get_child_studios(self, studio_id):
         """Sub-studios of a studio, with their own children (one request): [{"id", "name", "parent_id"}] -- v0.93.0, backs the studio
