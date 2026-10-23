@@ -371,6 +371,10 @@
    compact inline variant of .srw-progress-track/.srw-progress-fill
    (the page-level scan-progress bar), sized to sit inline within a
    release row's own flex-wrap line instead of spanning full width. */
+/* A download that waits for a re-encode nobody is doing (the encode worker is offline): amber and fully visible, not a quiet bar */
+.srw-download-progress[data-warn="1"] { opacity: 1; font-weight: 600; color: #d69e2e; }
+.srw-download-progress[data-warn="1"] .srw-download-progress-fill { background: #d69e2e; }
+
 .srw-download-progress {
   display: inline-flex;
   align-items: center;
@@ -564,15 +568,9 @@
 .srw-btn-group .srw-btn:hover { position: relative; z-index: 1; }
 .srw-rr-actions .srw-btn-dismiss { margin-left: 0.8rem; }
 
-.srw-btn.srw-btn-dismiss {
-  background: #8c4040;
-  color: #f6e9e9;
-  border-color: #a15555;
-}
-.srw-btn.srw-btn-dismiss:hover:not(:disabled) {
-  background: #9d4a4a;
-  border-color: #b36464;
-}
+/* Dismiss buttons use Stash's own button classes (v0.235.8): "Dismiss" = btn-outline-danger, "Dismiss & Delete" = btn-danger, the same red as
+   Stash's Delete button, so a theme that restyles them carries over. .srw-btn-fit gives them the size of the plugin's other buttons. */
+.btn.srw-btn-fit { padding: 0.25rem 0.6rem; font-size: 1em; line-height: inherit; border-radius: 4px; }
 
 /* Backlog panel's year picker (2026-09-13) -- one checkbox per year
    with its scene count, so several (possibly non-contiguous) years can
@@ -1698,6 +1696,8 @@
 .srw-upgrade-reason-vr_mono { background: #6f42c1; }
 .srw-upgrade-reason-vr_low_quality { background: #d29922; color: #111; }
 .srw-upgrade-reason-below_cutoff { background: #4a90d9; }
+.srw-upgrade-reason-dur_short { background: #c77d1a; }
+.srw-upgrade-reason-dur_long { background: #6f42c1; }
 
 /* History page (2026-09-28, v0.79.0) */
 .srw-history-entry { flex-wrap: wrap; }
@@ -1931,12 +1931,27 @@
 .srw-rr-actions { display: flex; flex-wrap: nowrap; align-items: center; gap: 0.4rem; white-space: nowrap; justify-content: flex-end; }
 .srw-rr-actions .srw-search-actions { display: inline-flex; flex-wrap: nowrap; align-items: center; gap: 0.4rem; }
 .srw-rr-actions:empty { display: none; }
+/* Result texts of the row's buttons: own line in the text column, hidden while all of them are empty. */
+.srw-rr-status { display: flex; flex-wrap: wrap; gap: 0.2rem 0.6rem; min-width: 0; overflow-wrap: anywhere; }
+.srw-rr-status:not(:has(.srw-key-status:not(:empty))) { display: none; }
 
 .srw-release-studio-link { color: inherit; text-decoration: none; }
 .srw-release-studio-link:hover { text-decoration: underline; }
 
 /* A search panel opened from a release row spans all columns, under the row's three areas. */
 .srw-release-row > .srw-manual-search-panel { grid-column: 1 / -1; order: 0; white-space: normal; }
+
+/* Narrow screens (phones): the buttons no longer sit in a column of their own next to the text (they took half the width and squeezed the
+   title to a letter per line) but in a wrapping line under the thumbnail and text; the thumbnail gets smaller; dates stay in one piece. */
+@media (max-width: 700px) {
+  .srw-release-row { grid-template-columns: auto minmax(0, 1fr); }
+  .srw-release-row.srw-release-row-nothumb { grid-template-columns: minmax(0, 1fr); }
+  .srw-release-row > .srw-rr-actions { grid-column: 1 / -1; flex-wrap: wrap; white-space: normal; justify-content: flex-start; }
+  .srw-release-row .srw-rr-actions .srw-search-actions { flex-wrap: wrap; }
+  .srw-release-row .srw-release-thumb { width: 112px; height: 63px; }
+  .srw-release-row .srw-release-thumb.srw-movie-cover { width: auto; height: 100px; max-width: 96px; }
+  .srw-rr-meta .srw-release-date { white-space: nowrap; }
+}
 
 /* History: the Log and Imported sections are tabs (headings hidden, they carry the numbers into the tab labels). */
 .srw-history-tabbed details.srw-panel-flat > summary { display: none; }
@@ -2109,8 +2124,6 @@ a.srw-cal-pill-open { text-decoration: none; color: inherit; cursor: pointer; }
 .srw-search-tag-scenes { margin-top: 0.75rem; }
 a.srw-btn { text-decoration: none; display: inline-block; text-align: center; }
 
-/* Duration mismatch: a file shorter than the scene is the usual sample / cut case */
-.srw-duration-short { background: rgba(214, 158, 46, 0.25); }
 
 /* Yes / Cancel of an inline question stay together on one line; only the text wraps (v0.209.2) */
 .srw-inline-confirm-buttons { display: inline-flex; flex: 0 0 auto; flex-wrap: nowrap; align-items: center; gap: 0.4rem; white-space: nowrap; }
@@ -2127,3 +2140,40 @@ a.srw-btn { text-decoration: none; display: inline-block; text-align: center; }
   padding: 0.15rem 0.3rem;
 }
 #srw-plugin-root .srw-filter-select option { background: #1e1e1e; color: #e0e0e0; }
+
+/* API keys and passwords: plain text inputs shown as dots (see el() in core.js; a password field makes Firefox offer to save it as a login) */
+.srw-secret { -webkit-text-security: disc; text-security: disc; }
+
+/* Torrents the monitor flags (Activity > Stuck, v0.231.0) */
+.srw-torrent-block { margin: 0 0 12px; }
+.srw-torrent-problems { list-style: none; margin: 6px 0 0; padding: 0; }
+.srw-torrent-problem { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 6px 0; border-top: 1px solid rgba(128, 128, 128, .25); }
+.srw-torrent-problem .srw-manual-search-panel { flex: 1 1 100%; }
+
+
+/* Small spinner in front of a status text while a search runs (v0.234.5). */
+.srw-spinner {
+  display: inline-block;
+  width: 0.85em;
+  height: 0.85em;
+  vertical-align: -0.1em;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  opacity: 0.7;
+  animation: srw-spin 0.8s linear infinite;
+}
+@keyframes srw-spin { to { transform: rotate(360deg); } }
+
+/* Icon-only buttons (v0.235.2): normal height, narrower; the icon sheds its text margin. */
+.srw-btn-icon { display: inline-flex; align-items: center; justify-content: center; padding-left: 0.6rem; padding-right: 0.6rem; }
+.srw-btn-icon .srw-icon { margin-right: 0; }
+
+/* The question of a button in a release row: an overlay at the buttons' place (like in a calendar pill, v0.129.4), so nothing moves (v0.235.8). */
+.srw-release-row { position: relative; }
+.srw-release-row .srw-rr-actions .srw-inline-confirm {
+  position: absolute; right: 0; top: 50%; transform: translateY(-50%); z-index: 5;
+  max-width: min(46rem, 100%); flex-wrap: wrap; justify-content: flex-end;
+  background: #161b22; border-color: rgba(224, 176, 80, 0.7);
+}
+.srw-release-row .srw-rr-actions .srw-inline-confirm-text, .srw-release-row .srw-rr-actions .srw-inline-confirm-text.srw-inline-confirm-long { white-space: normal; max-width: 100%; }

@@ -45,7 +45,7 @@ import release_repo
 import transcode
 from library_organize import PHASH_TOLERANCE
 from sabnzbd_client import SabnzbdClient
-from verification import verify_downloaded_file
+from verification import verify_downloaded_file, phash_distance
 
 logger = logging.getLogger(__name__)
 
@@ -717,6 +717,7 @@ def _write_marker(db, provider, stash_id, source_file, info, dst, hw, codec, sec
 def finish_remote_encode(provider, stash_id, worker, ok, error=None, seconds=None, hw=False, codec="h265"):
     """An encode worker reports its result (routers/encode_worker.py). The sidecar checks the file itself before it trusts it -- in the
     background: decoding the whole file takes minutes on a NAS and the worker's request would time out (found 2026-10-17)."""
+    encode_queue.adopt(provider, stash_id, worker)  # a restart queued the job again unclaimed while this worker kept encoding it
     job = encode_queue.get(provider, stash_id)
     if not job or job["claimed_by"] != worker:
         return {"error": "this encode is not (or no longer) assigned to this worker"}
@@ -1004,6 +1005,52 @@ def confirm_mismatched_file(db, stash_client, stashdb_client, provider, stash_id
                 logger.exception("confirm_mismatched_file: fingerprint submission for scene %s failed", scene["id"])
                 result["submit_error"] = f"{type(e).__name__}: {e}"
         return result
+
+
+def recheck_failed_import(db, stash_client, stashdb_client, provider, stash_id, get_provider_client=None):
+    """"Re-check fingerprints" on an Import-failed row (v0.235.0, 'fingerprint_mismatch'): asks the provider again for the scene's fingerprints
+    -- somebody may have submitted ones since the download was judged -- and compares them with the file's. An exact match imports the file
+    like a verified one (the normal verification path, incl. tagging). Anything else changes nothing and says what was found: how many
+    fingerprints the provider has now and how close the nearest perceptual hash is (0 = identical; up to PHASH_TOLERANCE bits is how another
+    encode of the same video looks -- reported as a hint only, the import needs an exact match), so the user can decide on "File is correct" with facts.
+    Returns {"result": "verified" | "still_mismatch" | "no_fingerprints" | "unknown", "message", ...} or {"error"}."""
+    with _finalize_lock:
+        row = next((r for r in release_repo.list_rows_for_scene(db, provider, stash_id)
+                    if r.get("import_error_code") == "fingerprint_mismatch" and r.get("pending_import_path")), None)
+        if row is None:
+            return {"error": "no failed import with a recorded file for this release"}
+        if row.get("upgrade_of"):
+            return {"error": "this is an upgrade download -- it is handled in Upgrade wanted / Activity > Needs review"}
+        path = row["pending_import_path"]
+        client = _provider_client(provider, stashdb_client, get_provider_client)
+        verified, found_title = verify_downloaded_file(stash_client, client, stash_id, path)
+        if verified is True:
+            result = _finalize_verification(db, stash_client, client, provider, stash_id, path)
+            history.scene("info", "import", "Verified on a re-check (fingerprints are on the provider now)", provider, stash_id,
+                          details={"path": path})
+            return {"result": "verified", "message": "The file matches the provider's fingerprints now -- imported.",
+                    "status": (result or {}).get("status")}
+        remote = {(fp["algorithm"].lower(), fp["hash"]) for fp in (client.get_scene_fingerprints(stash_id) or []) if fp.get("hash")}
+        scene = stash_client.find_scene_by_path(path)
+        matching = next((f for f in (scene or {}).get("files", []) if f["path"] == path), None)
+        local = {(fp["type"].lower(), fp["value"]) for fp in (matching or {}).get("fingerprints", []) if fp.get("value")}
+        bits = phash_distance(local, remote) if local and remote else 99
+        bits = None if bits == 99 else bits
+        info = {"remote_fingerprints": len(remote), "closest_phash_bits": bits}
+        if verified is False:
+            near = ""
+            likely = bits is not None and bits <= PHASH_TOLERANCE
+            if bits is not None:
+                near = f"; the closest perceptual hash is {bits} bits away (0 = identical)"
+            if likely:
+                near += (f". {bits} of 64 bits is very likely the same video in another encode, but only an exact match imports it "
+                         "automatically -- if you have looked at the file and it is the scene, use \"File is correct\"")
+            return {"result": "still_mismatch", **info, "likely_same_video": likely,
+                    "message": f"Still no exact match: {_provider_label(provider)} has {len(remote)} fingerprint(s) for this scene{near}."}
+        if not remote:
+            return {"result": "no_fingerprints", **info,
+                    "message": f"{_provider_label(provider)} still has no fingerprints for this scene."}
+        return {"result": "unknown", **info, "message": "Not decidable yet (Stash has not finished fingerprinting the file, or the lookup failed)."}
 
 
 def verify_created_scene(db, stash_client, stashdb_client, scene_id, get_provider_client=None):

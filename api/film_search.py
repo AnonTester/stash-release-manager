@@ -223,11 +223,18 @@ def _norm(name):
     return re.sub(r"[^a-z0-9]+", "", (name or "").lower())
 
 
+def _release_hash(r):
+    import indexer_search
+    return indexer_search.release_hash(r)
+
+
 def search_film(db, film, source, upgrade=None):
     """One movie, up to three queries. Returns {"result": 'needs_review' | 'no_match' | 'error', "candidate", "queries", "judged"}. Writes
     the outcome to the movie row (candidate / result / time). `upgrade` = {"min_res", "owned_height"}: a movie that is owned below the quality
     profile (Movies > Upgrade); only releases that are better than the owned file count."""
     rejected = {_norm(t) for t in (film.get("rejected_titles") or [])}
+    # "hash:<info hash>" entries (v0.231.0): a torrent given up as dead; another torrent of the same name stays eligible
+    dead_hashes = {str(t)[5:].strip().lower() for t in (film.get("rejected_titles") or []) if str(t).startswith("hash:")}
     asked, judged, best = [], [], None
     try:
         for q in queries(film):
@@ -235,7 +242,7 @@ def search_film(db, film, source, upgrade=None):
             results = source.search(q)
             plausible = []
             for r in results:
-                if _norm(r.get("title")) in rejected:
+                if _norm(r.get("title")) in rejected or (dead_hashes and _release_hash(r) in dead_hashes):
                     continue
                 ok, score, reason = judge_upgrade(film, r, upgrade.get("min_res"), upgrade.get("owned_height"), upgrade.get("owned_width", 0)) if upgrade else judge(film, r)
                 judged.append({"title": r.get("title"), "ok": ok, "score": score, "reason": reason})

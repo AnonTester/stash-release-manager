@@ -230,7 +230,7 @@ def list_releases(db, status="new", entity_type=None, entity_stashdb_id=None, li
     # PERFORMER needs the performer's name for the List view's entity
     # link -- `studio_name` alone can't provide that.
     query = """
-        SELECT release.*, watchlist.local_id AS entity_local_id, watchlist.name AS entity_name
+        SELECT {cols}, watchlist.local_id AS entity_local_id, watchlist.name AS entity_name
         FROM release
         LEFT JOIN watchlist
             ON watchlist.provider = release.provider
@@ -248,12 +248,26 @@ def list_releases(db, status="new", entity_type=None, entity_stashdb_id=None, li
     query += " ORDER BY release.scene_created DESC LIMIT ? OFFSET ?"
     params += [limit, offset]
     with db.connect() as conn:
-        rows = conn.execute(query, params).fetchall()
-        return [dict(r) for r in rows]
+        rows = conn.execute(query.replace("{cols}", _list_columns(conn)), params).fetchall()
+        return [_listed(r) for r in rows]
+
+
+def _list_columns(conn):
+    """`release.*` without the search log: the SELECT list of the listings, so the log is not even read from the database (see _listed())."""
+    cols = [r["name"] for r in conn.execute("PRAGMA table_info(release)") if r["name"] != "last_search_details"]
+    return ", ".join(f"release.{c}" for c in cols)
+
+
+def _listed(row):
+    """A release row as the listings hand it out: without the search log (`last_search_details`, up to a few hundred results per scene). The
+    page asks for it on demand (GET /releases/<provider>/<scene>/last-search); in every row of every list it would be megabytes."""
+    d = dict(row)
+    d.pop("last_search_details", None)
+    return d
 
 
 _RELEASE_WITH_ENTITY = """
-    SELECT release.*, watchlist.local_id AS entity_local_id, watchlist.name AS entity_name
+    SELECT {cols}, watchlist.local_id AS entity_local_id, watchlist.name AS entity_name
     FROM release
     LEFT JOIN watchlist
         ON watchlist.provider = release.provider
@@ -350,8 +364,9 @@ def query_releases(db, statuses=("new",), q="", search_description=False, entity
         # itself -- NOT an "(provider = ? AND scene = ?) OR ..." chain: a
         # whole Calendar month (per_page=0, hundreds of scenes) blew
         # SQLite's expression-depth limit that way (found live 2026-09-26).
+        release_select = _RELEASE_WITH_ENTITY.replace("{cols}", _list_columns(conn))
         rows = conn.execute(
-            f"""{_RELEASE_WITH_ENTITY}
+            f"""{release_select}
                 JOIN ({page_sql}) AS page_scene
                   ON page_scene.provider = release.provider
                  AND page_scene.scene_stashdb_id = release.scene_stashdb_id
@@ -359,7 +374,7 @@ def query_releases(db, statuses=("new",), q="", search_description=False, entity
                 ORDER BY release.scene_created DESC""",
             page_params + params,
         ).fetchall()
-    return {"total": total, "rows": [dict(r) for r in rows]}
+    return {"total": total, "rows": [_listed(r) for r in rows]}
 
 
 def get_release(db, provider, scene_stashdb_id, entity_type, entity_stashdb_id):
@@ -956,10 +971,11 @@ def adopt_imported_status(db, provider, scene_stashdb_id):
 _WISHLIST_STATE_ORDER = ("imported", "sent_to_whisparr", "import_failed", "dismissed")
 
 
-def wishlist_states(db, provider, scene_ids):
+def wishlist_states(db, provider, scene_ids, include_open=False):
     """{scene id: 'imported' | 'sent_to_whisparr' | 'import_failed' | 'dismissed'} for the scenes of `scene_ids` this program already knows,
     one query (v0.206.0, Search page: a scene that is on the wishlist is shown as such). A scene with several rows (one per watched studio /
-    performer) gets the most advanced state; scenes that are only 'new' / 'backlog' / 'late' are left out."""
+    performer) gets the most advanced state; scenes that are only 'new' / 'backlog' / 'late' are left out, unless `include_open`
+    (the userscript, v0.233.2): then they come back as 'known' (found by a scan, not sent to the wishlist yet)."""
     ids = [str(i) for i in scene_ids if i]
     out = {}
     if not ids:
@@ -970,10 +986,14 @@ def wishlist_states(db, provider, scene_ids):
             marks = ",".join("?" for _ in chunk)
             for r in conn.execute(f"SELECT scene_stashdb_id, status FROM release WHERE provider = ? AND scene_stashdb_id IN ({marks})",
                                   [provider] + chunk):
-                if r["status"] in _WISHLIST_STATE_ORDER:
+                status = r["status"]
+                if include_open and status in ("new", "backlog", "late"):
+                    status = "known"
+                if status in _WISHLIST_STATE_ORDER or status == "known":
                     cur = out.get(r["scene_stashdb_id"])
-                    if cur is None or _WISHLIST_STATE_ORDER.index(r["status"]) < _WISHLIST_STATE_ORDER.index(cur):
-                        out[r["scene_stashdb_id"]] = r["status"]
+                    rank = _WISHLIST_STATE_ORDER + ("known",)
+                    if cur is None or rank.index(status) < rank.index(cur):
+                        out[r["scene_stashdb_id"]] = status
     return out
 
 

@@ -3,7 +3,8 @@
 The importers used to ask SABnzbd's history directly. `job_state()` answers the same question for SABnzbd and qBittorrent in one shape, so
 the scene importer (download_sources.py), the movie importer (film_import.py) and the failure handling stay client-agnostic:
 
-    {"state": "downloading" | "post_processing" | "completed" | "failed" | "missing" | "unknown",
+    {"state": "downloading" | "post_processing" | "completed" | "failed" | "missing" | "unknown" | "problem" (a torrent in error / gone from the
+       client, v0.231.0: owned by torrent_health.py, the importers leave it alone),
      "name": job name, "storage": the finished output path in the CLIENT's own namespace (None until known),
      "fail_message": str | None,
      "keep_source": True for torrents (the files keep seeding: hard-linked or copied into the library, never moved/removed),
@@ -48,10 +49,12 @@ def job_state(client_row, job_id):
     if client_row["type"] == "qbittorrent":
         t = torrent_client(client_row).find_torrent(job_id)
         if t is None:
-            return {"state": "missing"}  # removed from qBittorrent by hand (or a wrong hash)
+            # removed from qBittorrent by hand (or a wrong hash): a problem the torrent monitor (torrent_health.py) flags and handles; the importers wait
+            return {"state": "problem", "problem": "missing", "keep_source": True}
         status = qbittorrent_client.status_of(t)
         if status == "error":
-            return {"state": "failed", "name": t.get("name"), "fail_message": f"qBittorrent state: {t.get('state')}", "keep_source": True, "client": "qBittorrent"}
+            return {"state": "problem", "problem": "error", "name": t.get("name"), "fail_message": f"qBittorrent state: {t.get('state')}",
+                    "keep_source": True, "client": "qBittorrent"}
         if (t.get("progress") or 0) >= 1 and status in ("seeding", "done") and t.get("content_path"):
             opts = client_row.get("options") or {}
             return {"state": "completed", "name": t.get("name"), "storage": t["content_path"], "keep_source": True,

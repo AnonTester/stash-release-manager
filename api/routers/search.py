@@ -275,10 +275,9 @@ def handoff_scene(provider: str, body: dict, search: bool = True):
             whisparr_quality_profile_id, whisparr_vr_quality_profile_id, _settings.whisparr_root_folder_path,
             quality_profile, vr_search_enabled, search_source=_get_search_source(),
             get_provider_client=_get_provider_client, get_stash_client=_get_stash_client, search=search,
+            on_start=lambda already_sent: history.scene("info", "wishlist", "Added to the wishlist (Search page)", provider, body["id"],
+                                                        scene_title=body.get("title")),
         )
     except ValueError as e:
         raise HTTPException(404, str(e))
-    if not result.get("already_in_library"):
-        history.scene("info", "wishlist", "Added to the wishlist (Search page)", provider, body["id"],
-                      scene_title=body.get("title"))
     return result

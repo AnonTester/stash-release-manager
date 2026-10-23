@@ -233,7 +233,7 @@
       }
       if (searchActions) items.push(searchActions);
       items.push(el('button', {
-        className: 'srw-btn srw-btn-dismiss',
+        className: 'btn btn-outline-danger srw-btn-fit srw-btn-dismiss',
         textContent: 'Dismiss',
         onClick: () => dismissRelease(r, onDone),
       }));

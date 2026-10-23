@@ -61,6 +61,19 @@ def call(base, path, body=None, timeout=30):
         return json.loads(resp.read() or b"{}")
 
 
+def call_retry(base, path, body, tries=30, wait=30):
+    """A call that must get through (the result of an encode that took an hour): the sidecar may be restarting, or may not have queued the job
+    again yet (HTTP 409) -- tried again every `wait` seconds, `tries` times (v0.232.3)."""
+    for n in range(tries):
+        try:
+            return call(base, path, body)
+        except (urllib.error.URLError, OSError, ValueError) as e:
+            if n == tries - 1:
+                raise
+            print(f"[{time.strftime('%H:%M:%S')}] sidecar did not take {path} ({e}); trying again in {wait} s", flush=True)
+            time.sleep(wait)
+
+
 def translate(path, maps):
     for remote, local in maps:
         if path == remote or path.startswith(remote.rstrip("/") + "/"):
@@ -77,7 +90,7 @@ def run_job(base, name, job, maps, status):
         return
     print(f"[{time.strftime('%H:%M:%S')}] encoding {os.path.basename(src)}", flush=True)
     last = [0.0]
-    status.set(state="encoding", file=os.path.basename(src), percent=0, speed_x=None, seconds_left=None, started_at=time.time(),
+    status.set(state="encoding", file=os.path.basename(src), percent=0, speed_x=None, seconds_left=None, started_at=time.time(), error=None,
                method=transcode.method_label(job["hw_mode"], job["codec"]))
 
     def progress(pct, speed, left):
@@ -87,7 +100,10 @@ def run_job(base, name, job, maps, status):
         if time.time() - last[0] < 5:
             return
         last[0] = time.time()
-        reply = call(base, "/encode-worker/progress", {**key, "percentage": pct, "speed_x": speed, "seconds_left": left, "method": method[0]})
+        try:
+            reply = call(base, "/encode-worker/progress", {**key, "percentage": pct, "speed_x": speed, "seconds_left": left, "method": method[0]})
+        except (urllib.error.URLError, OSError, ValueError):
+            return  # the sidecar is away (a restart): keep encoding, the next report goes through (v0.232.3; before, a restart ended the encode)
         if not reply.get("ok"):
             raise transcode.StopEncode()
 
@@ -104,7 +120,7 @@ def run_job(base, name, job, maps, status):
         status.idle(last_result={"ok": False, "text": "stopped", "file": os.path.basename(src), "at": time.time()})
         return
     body = {**key, "ok": res["ok"], "error": res.get("error"), "seconds": int(time.time() - started), "hw": res.get("hw", False), "codec": res.get("codec", job["codec"])}
-    call(base, "/encode-worker/done", body)
+    call_retry(base, "/encode-worker/done", body)
     status.idle(last_result={"ok": res["ok"], "text": "done" if res["ok"] else str(res.get("error")), "file": os.path.basename(src),
                              "seconds": body["seconds"], "at": time.time()})
     print(f"  {'done' if res['ok'] else 'failed: ' + str(res.get('error'))} after {body['seconds']} s ({method[0]})", flush=True)

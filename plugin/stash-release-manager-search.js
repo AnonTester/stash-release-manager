@@ -122,7 +122,9 @@
       const term = termInput.value.trim();
       if (!term) { resultsArea.innerHTML = ''; return; }
       resultsArea.innerHTML = '';
-      resultsArea.appendChild(el('p', { className: 'srw-hint', textContent: 'Searching…' }));
+      const searching = el('p', { className: 'srw-hint' });
+      window.SRW.setBusy(searching, 'Searching…');
+      resultsArea.appendChild(searching);
       try {
         if (type === 'tags') { await runTagSearch(term); return; }
         const response = type === 'movies' ? await window.SRW.runOp('films_search_tpdb', { q: term, limit: 40 })
@@ -492,7 +494,7 @@
       const sceneOp = (mode, extra = {}) => window.SRW.runOp(mode, { provider, scene_stashdb_id: scene.id, ...extra });
       // Add (search = false) / Add + search / Search now: all go through the one hand-off.
       const handoff = async (search) => {
-        status.textContent = search ? ' adding and searching...' : ' adding...';
+        window.SRW.setBusy(status, search ? 'adding and searching...' : 'adding...');
         try {
           const result = await window.SRW.runOp('search_handoff_scene', { provider, scene, ...(search ? {} : { search: false }) });
           if (result.error) {
@@ -508,7 +510,7 @@
           status.textContent = ` error: ${err.message}`;
         }
       };
-      const button = (text, cls, titleText, onClick) => el('button', { className: `srw-btn ${cls}`.trim(), textContent: text, title: titleText, onClick });
+      const button = (text, cls, titleText, onClick) => el('button', { className: cls.startsWith('btn ') ? cls : `srw-btn ${cls}`.trim(), textContent: text, title: titleText, onClick });
       const confirmed = (text, cls, titleText, question, run) => {
         const b = button(text, cls, titleText);
         b.addEventListener('click', () => window.SRW.confirmInline(b, question, run));
@@ -537,7 +539,7 @@
         } else if (state === 'sent_to_whisparr') {
           buttons.push(
             button('Search now', 'srw-btn-whisparr', 'Ask the indexers for it right now', () => handoff(true)),
-            button('Dismiss', 'srw-btn-dismiss', 'Take it off the wishlist (Restore brings it back)', async () => {
+            button('Dismiss', 'btn btn-outline-danger srw-btn-fit srw-btn-dismiss', 'Take it off the wishlist (Restore brings it back)', async () => {
               status.textContent = ' dismissing...';
               const r = await sceneOp('releases_dismiss');
               if (r.error) { status.textContent = ` error: ${r.error}`; return; }
@@ -547,7 +549,7 @@
         } else if (state === 'in_library' && scene.stash_scene_id) {
           // Fetch it again although a file exists (a sample, a cut or a wrong file): v0.209.0. The old file is replaced after a verified download.
           const readd = async (search) => {
-            status.textContent = search ? ' re-adding and searching...' : ' re-adding...';
+            window.SRW.setBusy(status, search ? 're-adding and searching...' : 're-adding...');
             try {
               const r = await window.SRW.runOp('search_readd_scene', { provider, scene, ...(search ? {} : { search: false }) });
               if (r.error) { status.textContent = ` error: ${r.error}`; return; }

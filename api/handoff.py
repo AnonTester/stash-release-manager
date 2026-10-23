@@ -34,10 +34,14 @@ def uses_whisparr(db, provider):
     return provider == "stashdb" and resolve_whisparr_scope_preset(db) != "no_whisparr"
 
 
+_FULL_WHISPARR_MESSAGE = ("Releases from '{provider}' can't be handled while the Whisparr scope is \"Full Whisparr management\" -- "
+                          "Whisparr can only track StashDB scenes. Pick another preset under Settings.")
+
+
 def hand_off(db, whisparr_client, provider, scene_stashdb_id, entity_type, entity_stashdb_id,
              whisparr_quality_profile_id, whisparr_vr_quality_profile_id, root_folder_path,
              quality_profile, vr_search_enabled, search_source=None, get_provider_client=None,
-             get_stash_client=None, search=True):
+             get_stash_client=None, search=True, on_start=None):
     """The single "Add to Wishlist" entry point (2026-09-25) -- every
     caller (Releases page, Search page, automatic favorite hand-off)
     goes through here. Whisparr-tracked releases take the unchanged
@@ -48,10 +52,19 @@ def hand_off(db, whisparr_client, provider, scene_stashdb_id, entity_type, entit
     `search=False` (v0.205.0, "Add" without "Add + search"): only puts the release on the wishlist, the scheduled search finds it later
     (Whisparr-tracked StashDB releases always search: Whisparr's own add does that).
     `get_stash_client` (2026-09-28): enables the "already imported via
-    another provider" check, see link_imported_equivalent()."""
+    another provider" check, see link_imported_equivalent().
+    `on_start(already_sent)` (v0.230.1): called once the release is known to go on the wishlist, BEFORE the search starts, so the caller's
+    "Added to the wishlist" History entry comes before the search's own entries ("Grab failed", ...) and not after them."""
     if get_stash_client is not None and link_imported_equivalent(db, provider, scene_stashdb_id, get_stash_client):
         return {"already_sent": False, "grabbed": None, "search_result": "already_in_library",
                 "already_in_library": True}
+    if on_start is not None:
+        release = release_repo.get_release(db, provider, scene_stashdb_id, entity_type, entity_stashdb_id)
+        if release is None:
+            raise ValueError(f"No release found for scene {scene_stashdb_id} / {entity_type} {entity_stashdb_id}")
+        if not uses_whisparr(db, provider) and resolve_whisparr_scope_preset(db) == "full_whisparr":
+            raise ValueError(_FULL_WHISPARR_MESSAGE.format(provider=provider))
+        on_start(release["status"] == "sent_to_whisparr")
     if uses_whisparr(db, provider):
         return send_to_whisparr(db, whisparr_client, provider, scene_stashdb_id, entity_type, entity_stashdb_id,
                                 whisparr_quality_profile_id, whisparr_vr_quality_profile_id, root_folder_path,
@@ -122,10 +135,7 @@ def send_to_sidecar(db, provider, scene_stashdb_id, entity_type, entity_stashdb_
     same way. Rejected under 'full_whisparr': that preset leaves import
     to Whisparr, which can't handle a release it doesn't track."""
     if resolve_whisparr_scope_preset(db) == "full_whisparr":
-        raise ValueError(
-            f"Releases from '{provider}' can't be handled while the Whisparr scope is \"Full Whisparr "
-            "management\" -- Whisparr can only track StashDB scenes. Pick another preset under Settings."
-        )
+        raise ValueError(_FULL_WHISPARR_MESSAGE.format(provider=provider))
     release = release_repo.get_release(db, provider, scene_stashdb_id, entity_type, entity_stashdb_id)
     if release is None:
         raise ValueError(f"No release found for scene {scene_stashdb_id} / {entity_type} {entity_stashdb_id}")
@@ -200,14 +210,14 @@ def _lookup_failed(db, provider, scene_stashdb_id):
 
 
 def attempt_sidecar_search(db, provider, scene_stashdb_id, release, quality_profile, vr_search_enabled,
-                           search_source, get_provider_client):
+                           search_source, get_provider_client, exclude_hashes=(), replace_job=False):
     """search_and_grab() without Whisparr (2026-09-25) -- shared by
     send_to_sidecar() and main.py's periodic run_indexer_search().
     Performer names come from the provider itself (Whisparr's
     `performerNames` isn't available here); if that lookup fails, the
     search still runs, the title/date checks just lose the performer
     signal. Best-effort like _attempt_search(): always returns
-    {"result", "grab"}, never raises."""
+    {"result", "grab"}, never raises. `exclude_hashes` / `replace_job`: switching away from a dead torrent (torrent_health.py)."""
     if not feed_has_lead(db, provider, scene_stashdb_id, release, search_source):
         return {"result": None, "grab": None, "no_lead": True}
     title, scene_date, performer_names, ok = refresh_scene_from_provider(db, provider, scene_stashdb_id, release["title"],
@@ -218,7 +228,7 @@ def attempt_sidecar_search(db, provider, scene_stashdb_id, release, quality_prof
         return search_and_grab(db, None, None, provider, scene_stashdb_id, title, scene_date,
                                performer_names, quality_profile, is_vr=bool(release["is_vr"]),
                                vr_enabled=vr_search_enabled, search_source=search_source,
-                               studio_name=release["studio_name"])
+                               studio_name=release["studio_name"], exclude_hashes=exclude_hashes, replace_job=replace_job)
     except Exception:
         logger.exception("sidecar hand-off: search failed for %s scene %s", provider, scene_stashdb_id)
         return {"result": None, "grab": None}

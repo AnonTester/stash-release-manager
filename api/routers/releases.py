@@ -2,14 +2,17 @@ import json
 import logging
 import os
 import time
+from urllib.parse import quote
 import history
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 import download_client_repo
+import encode_queue
 import import_progress
 import file_importer
 import release_repo
+import torrent_health
 from handoff import hand_off, fix_mismatched_download, fallback_to_whisparr, uses_whisparr
 import dismiss_streak
 import indexer_search
@@ -157,7 +160,8 @@ def _client_slots(client_row):
                     continue
                 out[t["hash"]] = {"status": qbittorrent_client.status_of(t).capitalize(), "percentage": str(int((t.get("progress") or 0) * 100)),
                                   "timeleft": _eta(t.get("eta")), "mb": str(round((t.get("size") or 0) / 1e6, 2)),
-                                  "mbleft": str(round((t.get("amount_left") or 0) / 1e6, 2))}
+                                  "mbleft": str(round((t.get("amount_left") or 0) / 1e6, 2)),
+                                  "_torrent": t}  # the client's own numbers, for the live swarm / stall display (_overlay_torrent_health)
             return out
     except Exception:
         return {}
@@ -201,7 +205,7 @@ def download_progress():
         scene_id = release["scene_stashdb_id"]
         slot = queues_by_client[client_id].get(release["download_job_id"])
         if scene_id in live:
-            result[scene_id] = _import_phase(live[scene_id])
+            result[scene_id] = _import_phase(live[scene_id], scene_id)
         elif slot is None:
             # Gone from the client's live queue: finished (or post-
             # processing) and not picked up by an import run yet.
@@ -244,16 +248,53 @@ def download_progress():
         result.setdefault(release["scene_stashdb_id"], {"phase": "verifying"})
     # Import phases of releases the queries above don't cover.
     for scene_id, entry in live.items():
-        result.setdefault(scene_id, _import_phase(entry))
+        result.setdefault(scene_id, _import_phase(entry, scene_id))
+    _overlay_torrent_health(result, queues_by_client)
     return result
 
 
-def _import_phase(entry):
+def _overlay_torrent_health(result, queues_by_client=None):
+    """What the torrent monitor knows (v0.231.0): a torrent that is stalled / stuck gets its note and swarm numbers; one in error or gone from the
+    client is no longer shown as "waiting for the import"."""
+    try:
+        now, cfg, interval = time.time(), torrent_health.load_cfg(_db), torrent_health.check_interval_s(_db)
+        for r in torrent_health.list_rows(_db):
+            key = r["scene_id"] if r["kind"] == "scene" else f"film:{r['film_id']}"
+            # The client's numbers of this moment (the poll that feeds the progress bars, no extra request); without them the stored look's note
+            # is carried on by the time since that look.
+            slot = ((queues_by_client or {}).get(r["client_id"]) or {}).get(r["job_id"]) or {}
+            live = torrent_health.live_view(r, slot.get("_torrent"), now, cfg)
+            if live:
+                r = {**r, **{k: live[k] for k in ("state", "detail", "seeds", "peers", "availability", "raw_state")}}
+            else:
+                r["detail"] = torrent_health.live_detail(r, now, cfg, interval)
+            entry = result.get(key)
+            if entry is None or entry.get("phase") not in ("downloading", "waiting_import"):
+                continue
+            info = {"health": r["state"], "health_detail": r["detail"], "seeds": r["seeds"], "peers": r["peers"], "availability": r["availability"]}
+            if r["state"] in (torrent_health.MISSING, torrent_health.ERROR):
+                result[key] = {"phase": "torrent_problem", **info}
+            elif live or r["state"] != torrent_health.OK or r["detail"]:
+                entry.update(info)  # with the client's live numbers the swarm (seeds / peers) is always shown
+    except Exception:
+        logger.exception("download_progress: torrent health skipped")
+
+
+def _import_phase(entry, scene_id=None):
     """import_progress entry -> the progress shape the plugin renders."""
     out = {"phase": entry["phase"]}
     for key in ("method", "can_local", "percentage", "bytes_done", "bytes_total", "speed_bps", "speed_x", "seconds_left"):
         if entry.get(key) is not None:
             out[key] = entry[key]
+    if entry["phase"] == "waiting_encode":
+        # Who is expected to encode, and since when it waits (v0.232.1): the row says "waiting for the encode worker -- offline" instead of
+        # looking like a stuck import. Constant values only (queued_at, online, name), so the live push does not fire every few seconds.
+        worker = encode_queue.worker_status()
+        out["worker_online"] = bool(worker["online"])
+        if worker["name"]:
+            out["worker_name"] = worker["name"]
+        queued = encode_queue.queued_at(scene_id) if scene_id else None
+        out["queued_at"] = int(queued if queued else entry.get("since") or 0) or None
     return out
 
 
@@ -274,6 +315,7 @@ def reviews():
                 continue
             seen.add(key)
             row = dict(r)
+            row.pop("last_search_details", None)  # the search log is loaded when "Last" is opened, not with every row
             try:
                 row["review_candidate"] = json.loads(row["review_candidate"])
             except (TypeError, ValueError):
@@ -317,13 +359,13 @@ def handoff(provider: str, entity_type: str, entity_stashdb_id: str, scene_stash
             whisparr_quality_profile_id, whisparr_vr_quality_profile_id, _settings.whisparr_root_folder_path,
             quality_profile, vr_search_enabled, search_source=_get_search_source(),
             get_provider_client=_get_provider_client, get_stash_client=_get_stash_client, search=search,
+            on_start=lambda already_sent: history.scene(
+                "info", "wishlist", "Search now (searched again)" if already_sent and search
+                else ("Added to the wishlist (search follows by schedule)" if not search else "Added to the wishlist"),
+                provider, scene_stashdb_id),
         )
     except ValueError as e:
         raise HTTPException(404, str(e))
-    if not result.get("already_in_library"):
-        history.scene("info", "wishlist", "Search now (searched again)" if result.get("already_sent") and search
-                      else ("Added to the wishlist (search follows by schedule)" if not search else "Added to the wishlist"),
-                      provider, scene_stashdb_id)
     return result
 
 
@@ -396,8 +438,12 @@ def manual_search(provider: str, scene_stashdb_id: str, body: dict):
     except Exception as e:
         raise HTTPException(502, f"{name} search failed: {e}")
     priorities = source.indexer_priorities()
-    results.sort(key=lambda r: (priorities.get(r["indexerId"], 25), r["age"] if r["age"] is not None else float("inf"),
-                                 -(r["size"] or 0)))
+    results.sort(key=lambda r: (priorities.get(r["indexerId"], 25), -(r.get("seeders") or 0),
+                                 r["age"] if r["age"] is not None else float("inf"), -(r["size"] or 0)))
+    # Torrents (v0.231.0): the resolution judged from the scene's length when the name has none, and a size that cannot be right for it
+    duration_s = indexer_search.scene_duration(provider, scene_stashdb_id) if not str(scene_stashdb_id).startswith("film-") else None
+    for r in results:
+        r.update(indexer_search.torrent_facts(r, duration_s))
     # Releases this scene has been through already (declined in Needs review, a download that failed) are marked, so they are not picked
     # again. Only the release's own name counts: its other encodes (another resolution) were never tried.
     blocked = {indexer_search._exact_key(t[len(indexer_search.EXACT_PREFIX):] if str(t).startswith(indexer_search.EXACT_PREFIX) else t)
@@ -411,12 +457,19 @@ def manual_search(provider: str, scene_stashdb_id: str, body: dict):
             film_blocked = {indexer_search._exact_key(t) for t in (json.loads(film["rejected_titles"]) if film and film["rejected_titles"] else [])}
         except ValueError:
             film_blocked = set()
+    dead_hashes = {str(t)[len(indexer_search.HASH_PREFIX):].lower() for t in release_repo.get_review_rejected_titles(_db, provider, scene_stashdb_id)
+                   if str(t).startswith(indexer_search.HASH_PREFIX)}
+    for r in results:  # a torrent given up before (dead): marked, so it is not picked again by mistake
+        if dead_hashes and indexer_search.release_hash(r) in dead_hashes:
+            r["tried"] = "this torrent was given up before (no progress)"
     if blocked or film_blocked:
         with _db.connect() as conn:
             events = conn.execute("SELECT at, message FROM history WHERE provider = ? AND scene_id = ? ORDER BY at DESC",
                                   (provider, scene_stashdb_id)).fetchall()
         for r in results:
             key = indexer_search._exact_key(r.get("title"))
+            if r.get("tried"):
+                continue
             if key in blocked:
                 r["tried"] = _tried_reason(r.get("title"), events)
             elif key in film_blocked:
@@ -435,10 +488,62 @@ def manual_search_grab(provider: str, scene_stashdb_id: str, body: dict):
     candidate = body.get("candidate") or {}
     if not indexer_search.candidate_url(candidate):
         raise HTTPException(400, "candidate.downloadUrl is required")
-    result = grab_candidate(_db, provider, scene_stashdb_id, candidate)
+    # "replace": the flagged torrent of this scene is replaced by the picked one (v0.231.0); only when the monitor knows such a torrent
+    old = torrent_health.row_for_scene(_db, provider, scene_stashdb_id) if body.get("replace") else None
+    result = grab_candidate(_db, provider, scene_stashdb_id, candidate, replace_job=old is not None)
     if result.get("grab"):
         history.scene("info", "grab", f"Picked by hand from the manual search: {candidate.get('title')}",
                       provider, scene_stashdb_id)
+        if old is not None:
+            torrent_health.finish_replacement(_db, old)
+    return result
+
+
+@router.post("/{provider}/{scene_stashdb_id}/last-search/grab")
+def last_search_grab(provider: str, scene_stashdb_id: str, body: dict):
+    """Picks a result of the search log ("Last") by hand, also while another download of the scene is running (v0.231.3). The log keeps no
+    download links (they carry the indexer's key), so the result is found again by asking the indexers the logged queries and matching
+    title + indexer (+ size). A running torrent of the scene is replaced: removed with its data and never used again (its hash is
+    blocklisted); a running Usenet download is left alone and the grab is refused."""
+    title, indexer, size = body.get("title"), body.get("indexer"), body.get("size")
+    if not title:
+        raise HTTPException(400, "title is required")
+    details = release_repo.get_search_details_for_scene(_db, provider, scene_stashdb_id)
+    if details is None:
+        raise HTTPException(404, "no search logged for this release yet")
+    queries = [q.get("query") for q in (details.get("queries") or []) if q.get("query")]
+    if not queries and details.get("query"):
+        queries = [details["query"]]
+    sources = _get_manual_search_sources()
+    source = sources.get(details.get("backend")) or next(iter(sources.values()), None)
+    if source is None or not queries:
+        raise HTTPException(400, "this search cannot be repeated (no indexer search source or no logged query)")
+    found = None
+    for query in queries:
+        try:
+            results = source.search(query)
+        except Exception as e:
+            logger.warning("last-search grab: %r failed: %s", query, e)
+            continue
+        found = next((r for r in results if r.get("title") == title and (indexer is None or r.get("indexer") == indexer)
+                      and (size is None or r.get("size") in (None, size))), None)
+        if found:
+            break
+    info_hash = str(body.get("info_hash") or "").lower()
+    if found is None and indexer_search._HEX40_RE.match(info_hash):
+        # a torrent the indexers do not list (or do not answer for): added from its info hash as a magnet link, which needs no indexer
+        magnet = f"magnet:?xt=urn:btih:{info_hash}&dn={quote(str(title), safe='')}"
+        found = {"title": title, "indexer": indexer, "protocol": "torrent", "size": size, "infoHash": info_hash, "magnetUrl": magnet, "downloadUrl": magnet}
+    if found is None:
+        raise HTTPException(404, "the indexers no longer list this result (run the search again or use Manual)")
+    old = torrent_health.current_for_scene(_db, provider, scene_stashdb_id)
+    if old is not None and indexer_search.release_hash(found) == str(old["job_id"]).lower():
+        raise HTTPException(400, "this is the torrent that is downloading already")
+    result = grab_candidate(_db, provider, scene_stashdb_id, found, replace_job=old is not None)
+    if result.get("grab"):
+        history.scene("info", "grab", f"Picked by hand from the search log: {found.get('title')}", provider, scene_stashdb_id)
+        if old is not None:
+            torrent_health.finish_replacement(_db, old)
     return result
 
 
@@ -536,6 +641,17 @@ def confirm_file(provider: str, scene_stashdb_id: str, body: dict = None):
         _db, _get_stash_client(), _get_stashdb_client(), provider, scene_stashdb_id, get_provider_client=_get_provider_client,
         submit=bool((body or {}).get("submit")),
         upload_enabled=get_setting_value(_db, "fingerprint_upload_enabled", "false") == "true")
+    if result.get("error"):
+        raise HTTPException(400, result["error"])
+    return result
+
+
+@router.post("/{provider}/{scene_stashdb_id}/recheck-fingerprints")
+def recheck_fingerprints(provider: str, scene_stashdb_id: str):
+    """"Re-check fingerprints" on an Import-failed row: asks the provider again, imports on an exact match, otherwise only reports what it found
+    -- see file_importer.recheck_failed_import()."""
+    result = file_importer.recheck_failed_import(_db, _get_stash_client(), _get_stashdb_client(), provider, scene_stashdb_id,
+                                                 get_provider_client=_get_provider_client)
     if result.get("error"):
         raise HTTPException(400, result["error"])
     return result

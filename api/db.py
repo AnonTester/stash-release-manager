@@ -533,6 +533,7 @@ class Database:
         self._migrate_group_match_ignore(conn)
         self._migrate_downloaded_release(conn)
         self._migrate_studio_dismiss_streak(conn)
+        self._migrate_torrent_health(conn)
 
     def _migrate_torrent_support(self, conn):
         """Torrent support (v0.133.0): download_client.type allows 'qbittorrent' (+ an `options` JSON column for the client's *arr-style settings),
@@ -851,6 +852,35 @@ class Database:
             conn.execute("ALTER TABLE upgrade_candidate ADD COLUMN provider_duration REAL")
         if "is_vr" not in cols:
             conn.execute("ALTER TABLE upgrade_candidate ADD COLUMN is_vr INTEGER")
+
+    def _migrate_torrent_health(self, conn):
+        """v0.231.0: what the torrent monitor (torrent_health.py) knows about each running torrent download. One row per client + torrent hash.
+        Times are epoch seconds. Additive table: an older version simply ignores it."""
+        conn.execute("""CREATE TABLE IF NOT EXISTS torrent_health (
+            client_id               INTEGER NOT NULL,
+            job_id                  TEXT NOT NULL,
+            kind                    TEXT NOT NULL DEFAULT 'scene',
+            provider                TEXT,
+            scene_id                TEXT,
+            film_id                 INTEGER,
+            title                   TEXT NOT NULL DEFAULT '',
+            state                   TEXT NOT NULL DEFAULT 'ok',
+            detail                  TEXT NOT NULL DEFAULT '',
+            progress                REAL NOT NULL DEFAULT 0,
+            max_progress            REAL NOT NULL DEFAULT 0,
+            first_seen_at           REAL NOT NULL,
+            last_checked_at         REAL NOT NULL,
+            last_progress_change_at REAL NOT NULL,
+            stalled_since           REAL,
+            stalled_s               REAL NOT NULL DEFAULT 0,
+            last_alt_search_at      REAL,
+            keep_until              REAL,
+            seeds                   INTEGER,
+            peers                   INTEGER,
+            availability            REAL,
+            raw_state               TEXT,
+            PRIMARY KEY (client_id, job_id)
+        )""")
 
     def _migrate_studio_dismiss_streak(self, conn):
         """v0.216.0: dismiss streak per studio (see dismiss_streak.py); a new table is filled once from the History."""

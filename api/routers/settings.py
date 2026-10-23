@@ -349,6 +349,14 @@ DEFAULTS = {
     "sab_archive_purge_days": "30",
     # Size cap for non-VR releases (2026-09-28, see indexer_search's
     # DEFAULT_SIZE_LIMITS for the library numbers behind them), GB; 0 = none.
+    # Torrents (v0.231.0): choice by seeders, and the health check of running torrents (torrent_health.py)
+    "torrent_min_seeders": "1",            # fewer seeders than this = last resort
+    "torrent_plenty_seeders": "10",        # the best resolution is taken without comparison when it has at least this many
+    "torrent_lower_res_factor": "3",       # a lower resolution wins when it has this many times the seeders of the best one
+    "torrent_health_minutes": "30",        # how often the running torrents are checked (0 = never)
+    "torrent_stall_hours": "1",            # no progress for this long = stalled
+    "torrent_real_progress_percent": "5",  # a stalled torrent with at least this much is never given up
+    "torrent_alt_search_hours": "6",       # a stuck torrent looks for an alternative at most this often
     "max_file_gb": "8",
     "max_file_gb_2160": "12",
     # Back-catalogue additions (2026-09-26): a scene the scan finds whose
@@ -722,6 +730,16 @@ def set_one(key: str, body: dict):
         raise HTTPException(400, f"late_addition_days must be a whole number between 0 and 3650, got {value!r}")
     if key == "list_view_page_size" and not (value.isdigit() and 20 <= int(value) <= 1000):
         raise HTTPException(400, f"list_view_page_size must be a whole number between 20 and 1000, got {value!r}")
+    _torrent_ranges = {"torrent_min_seeders": (0, 1000), "torrent_plenty_seeders": (1, 100000), "torrent_lower_res_factor": (1, 1000),
+                       "torrent_health_minutes": (0, 1440), "torrent_stall_hours": (0.5, 720),
+                       "torrent_real_progress_percent": (0, 100), "torrent_alt_search_hours": (0.5, 720)}
+    if key in _torrent_ranges:
+        low, high = _torrent_ranges[key]
+        try:
+            if not low <= float(value) <= high:
+                raise ValueError
+        except ValueError:
+            raise HTTPException(400, f"{key} must be a number between {low} and {high}, got {value!r}")
     if key in ("max_file_gb", "max_file_gb_2160"):
         try:
             if not 0 <= float(value) <= 1000:

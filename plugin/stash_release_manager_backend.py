@@ -147,6 +147,8 @@ def main():
     elif mode == "releases_confirm_file":
         result = _post(sidecar_url, f"/releases/{args.get('provider')}/{args.get('scene_stashdb_id')}/confirm-file",
                        {"submit": bool(args.get("submit"))}, timeout=180)
+    elif mode == "releases_recheck_fingerprints":
+        result = _post(sidecar_url, f"/releases/{args.get('provider')}/{args.get('scene_stashdb_id')}/recheck-fingerprints", {}, timeout=180)
     elif mode == "films_list":
         keys = ("statuses", "q", "page", "per_page", "order")
         qs = "&".join(f"{k}={quote(str(args[k]))}" for k in keys if args.get(k) not in (None, ""))
@@ -727,7 +729,21 @@ def main():
         # Same generous timeout class as releases_handoff -- a real
         # download-client add round trip.
         path = f"/releases/{args.get('provider')}/{args.get('scene_stashdb_id')}/manual-search/grab"
-        result = _post(sidecar_url, path, {"candidate": args.get("candidate") or {}}, timeout=60)
+        result = _post(sidecar_url, path, {"candidate": args.get("candidate") or {}, "replace": bool(args.get("replace"))}, timeout=60)
+    elif mode == "releases_last_search_grab":
+        # Re-finds a result of the search log by title + indexer + size and grabs it (replacing a running torrent), v0.231.3
+        path = f"/releases/{args.get('provider')}/{args.get('scene_stashdb_id')}/last-search/grab"
+        c = args.get("candidate") or {}
+        result = _post(sidecar_url, path, {"title": c.get("title"), "indexer": c.get("indexer"), "size": c.get("size"), "info_hash": c.get("info_hash")}, timeout=120)
+    elif mode == "torrents_health":
+        # The torrent monitor's list (stalled / stuck / error / missing torrents), v0.231.0
+        result = _get(sidecar_url, "/torrent-health", timeout=15)
+    elif mode == "torrents_check_now":
+        result = _post(sidecar_url, "/torrent-health/check-now", {}, timeout=15)
+    elif mode in ("torrents_switch", "torrents_remove", "torrents_readd", "torrents_keep"):
+        # A search for another torrent can take a while (several indexer queries + the grab)
+        result = _post(sidecar_url, "/torrent-health/" + mode.split("_", 1)[1],
+                       {"client_id": args.get("client_id"), "job_id": args.get("job_id")}, timeout=90 if mode == "torrents_switch" else 30)
     elif mode == "quality_profiles_list":
         result = _get(sidecar_url, "/quality-profiles", timeout=15)
     elif mode == "quality_profiles_create":

@@ -14,7 +14,7 @@ Details that matter:
 import base64
 import hashlib
 import re
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urljoin, urlparse
 
 import requests
 
@@ -196,7 +196,17 @@ class QbittorrentClient:
             files = None
         else:
             try:
-                resp = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=self.timeout, allow_redirects=True)
+                # Redirects are followed by hand: Prowlarr's download link often answers 302 -> magnet:?..., which requests cannot follow
+                # (InvalidSchema); such a redirect is added as the magnet link instead (v0.230.1).
+                resp = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=self.timeout, allow_redirects=False)
+                for _ in range(5):
+                    location = resp.headers.get("Location") if resp.is_redirect else None
+                    if not location:
+                        break
+                    if location.strip().lower().startswith("magnet:"):
+                        return self.add(location.strip(), name=name, category=category, recent=recent)
+                    resp = requests.get(urljoin(resp.url, location), headers={"User-Agent": USER_AGENT}, timeout=self.timeout,
+                                        allow_redirects=False)
             except requests.RequestException as e:
                 raise QbittorrentError(f"{type(e).__name__} fetching the torrent file") from None
             if not resp.ok:
@@ -238,6 +248,10 @@ class QbittorrentClient:
         if category:
             params["category"] = category
         return self._call("GET", "torrents/info", params=params).json()
+
+    def transfer_info(self):
+        """Global transfer state; `connection_status` is 'connected', 'firewalled' or 'disconnected'."""
+        return self._call("GET", "transfer/info").json()
 
     def find_torrent(self, info_hash):
         found = self.get_torrents(hashes=[info_hash], category="")

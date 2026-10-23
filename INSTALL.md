@@ -169,6 +169,15 @@ Usenet and torrents use the same search and import pipeline; torrents need two m
 
 When both a usenet and a torrent result are found for the same release, usenet is preferred (like the *arr default).
 
+**Torrents are watched.** A torrent can stall, lose its sources or vanish from the client, so the sidecar checks the running ones every 30 minutes (*Settings > Search & Quality > Torrents*):
+
+* Among torrents, the one with the most seeders is taken; the best resolution wins when it has plenty of seeders (default 10), otherwise a lower resolution with at least 3 times as many seeders. A torrent nobody seeds is a last resort.
+* A release name without a resolution is judged from the scene's length and the size (H.264 assumed unless the name says HEVC/Xvid/MPEG-2/WMV). A size that cannot fit the length is a last resort too.
+* A torrent with no progress for an hour and almost nothing downloaded is replaced by another torrent, if the search finds one: the old one is removed from qBittorrent **with its partial data** and never used again (it is blocked by its hash, not its name). Without another torrent it shows as *stuck* in *Activity > Stuck* and the search is repeated every 6 hours.
+* Only time the sidecar actually observed counts: when the sidecar or qBittorrent was not running (or qBittorrent had no network connection), nothing is concluded from the silence, and the clock starts again at the next look. A torrent you paused or stopped is listed as *stalled* with a note and never replaced; queued or checking torrents are just waiting.
+* A torrent with real progress (5 % or more) that stalls, an error state, or a torrent gone from the client is only flagged there, never deleted. The buttons: *Find another*, *Alternatives* (manual search), *Re-add*, *Keep waiting*, *Remove*. A flagged torrent that moves again returns to *Downloading*.
+* Movies are flagged only; *Remove* puts the movie back on the wishlist.
+
 ## Hardware encoding for 2160p downloads (optional)
 
 For an older scene (default: 10 days after its release date) that exists only in 2160p, the sidecar can take that release and scale it down to 1080p HEVC before the import (Settings > Quality, "Last resort for older scenes"). The encode uses a quality target (variable bitrate). It runs on the CPU; on a machine with an Intel or AMD graphics chip (VAAPI) it is much faster when the container gets the render device: in `docker-compose.yml` add
@@ -194,6 +203,17 @@ python3 worker/srm_encode_worker.py --sidecar http://NAS:6961 --map /downloads=/
 ```
 
 The worker asks the sidecar every 30 seconds for waiting encodes, encodes with the settings from the sidecar (quality, format, CPU speed, hardware) and reports progress and the result. The machine can be off: the jobs wait. Switch it on and start the worker again. When the worker is done, the sidecar checks the file itself and imports it. There is no login on the sidecar's address (like the rest of it): use it only in your own network.
+
+## Browser userscript for stash-box sites (optional)
+
+A userscript (Tampermonkey or Violentmonkey) adds buttons to StashDB's pages, so a scene can be put on the wishlist without leaving the site. The sidecar serves the script itself.
+
+1. Install the script from `<your sidecar address>/userscript/srm.user.js` (open that address in the browser with the userscript manager installed; the sidecar address is filled into the script). Allow the connection to the sidecar when the manager asks.
+2. On a **scene page** and on **scene cards** you get: *Send to wishlist* (searched by the schedule), *Send and search now*, *Open in Stash* (for every scene your Stash has, not only the wishlist) and *Copy Stash-ID*. On a card only a status dot shows until the pointer is on it. Two chips on a scene page: *Stash* (green = Stash has the scene) and *SRM* (the colour of the scene's state in the Release Calendar: green imported, purple on the wishlist, blue found by a scan, red import failed, grey dismissed).
+3. On a **performer or studio page**: the same two chips and an eye button. *Watch* puts the entry on the watchlist (it is created in Stash first when missing: the Favorite flag or the watchlist tag, as set in the plugin); the crossed-out eye takes it off again (only the mark is removed, nothing is deleted in Stash).
+4. Another stash-box added under *Connections* works after you add an `// @match` line with its address to the script (the sidecar finds the provider by the site's address).
+
+The script is updated through the manager's update check (the sidecar sends the current file); the sidecar needs to be rebuilt after an update of this project for the script to change.
 
 ## Moving to another machine (or a fresh install) with your data
 

@@ -30,12 +30,29 @@
   // only the newest one gets to put its result on the page.
   let renderSeq = 0;
 
+  // Asks for the download status once (set by the page that is showing); called when the browser tab becomes visible again.
+  let refreshProgress = null;
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && refreshProgress && document.querySelector('.srw-activity-page')) refreshProgress();
+  });
+
   let uploadEnabled = false; // Settings > fingerprint_upload_enabled, set by render(), read by buildSection()'s Import failed rows
 
   async function render(container) {
     const { el } = window.SRW;
     const mySeq = ++renderSeq;
-    if (liveDetach) { liveDetach(); liveDetach = null; }
+    // The old subscription is dropped only once the new one is attached (below): with no listener left in between, the live connection
+    // closes and has to be opened again, and the status only arrives after that.
+    const previousDetach = liveDetach;
+    liveDetach = null;
+    // The status of the downloads is asked for right away, in parallel with building the page, and put on the rows as soon as they exist.
+    const progressRequest = window.SRW.runOp('releases_download_progress').catch(() => null);
+    // The same for what the Stuck tab adds.
+    const stuckExtras = Promise.all([
+      window.SRW.runOp('indexer_search_stuck_preview').catch(() => null),
+      window.SRW.runOp('films_stuck_preview').catch(() => null),
+      window.SRW.runOp('torrents_health').catch(() => null),
+    ]);
     // Built off-page and swapped in at the end -- a re-render keeps the
     // current content visible until the new one is ready (no flicker).
     const root = el('div');
@@ -132,28 +149,34 @@
     // request) -- before: wishlist ones only inside the Releases page's
     // collapsed "On Wishlist" rows, upgrade ones nowhere at all.
     const progressElements = new Map();
-    const sections = [
-      ['review', 'Needs review', buildNeedsReview(reviews, container, filmsReview)],
-      ['downloading', 'Downloading & importing', await buildSection('Downloading & importing', downloading, {
-        emptyText: 'Nothing downloading or importing right now.',
-        showProgress: true, progressElements, movieRows: movieRows(filmsDownloading, progressElements, container),
-      })],
-      ['stuck', 'Stuck', await withStuckToolbar(await buildSection('Stuck (searched, nothing usable found)', stuck, {
+    // Built side by side (each one asks the sidecar for its own bits), the downloads first in the list.
+    const stuckSection = (async () => {
+      const [scenesPreview, moviesPreview, torrents] = await stuckExtras;
+      return withTorrentProblems(withStuckToolbar(await buildSection('Stuck (searched, nothing usable found)', stuck, {
         emptyText: 'Nothing stuck right now.',
         showSearchStatus: true, showSearchActions: true, showImportError: true, sortBy: 'last_search_at', onChanged: () => render(container),
         movieRows: movieRows(filmsStuck, progressElements, container),
-      }))],
-      ['missing', 'Source file missing', await buildSection('Source file missing (still retrying automatically)', sourceMissing, {
+      }), scenesPreview, moviesPreview), container, torrents);
+    })();
+    const sectionPromises = [
+      ['review', 'Needs review', buildNeedsReview(reviews, container, filmsReview)],
+      ['downloading', 'Downloading & importing', buildSection('Downloading & importing', downloading, {
+        emptyText: 'Nothing downloading or importing right now.',
+        showProgress: true, progressElements, movieRows: movieRows(filmsDownloading, progressElements, container),
+      })],
+      ['stuck', 'Stuck', stuckSection],
+      ['missing', 'Source file missing', buildSection('Source file missing (still retrying automatically)', sourceMissing, {
         emptyText: 'Nothing missing right now.',
         showImportError: true, showSearchActions: true, sortBy: 'discovered_at', onChanged: () => render(container),
         movieRows: movieRows(filmsMissing, progressElements, container),
       })],
-      ['failed', 'Import failed', await buildSection('Import failed', window.SRW.groupByScene(failed), {
+      ['failed', 'Import failed', buildSection('Import failed', window.SRW.groupByScene(failed), {
         emptyText: 'No failed imports.',
         showImportError: true, showFixWrongDownload: true, sortBy: 'discovered_at', onChanged: () => render(container),
         movieRows: movieRows(filmsFailed, progressElements, container),
       })],
     ];
+    const sections = await Promise.all(sectionPromises.map(async ([key, short, group]) => [key, short, await group]));
     // The sections are tabs (v0.102.2), like on the Releases page: [Needs review (4)] [Downloading & importing (0)] ...
     // Their long headings stay on the sections themselves (hidden by CSS) and carry the live numbers into the tab labels.
     sections.forEach(([, , g]) => { g.open = true; g.classList.add('srw-panel-flat'); });
@@ -181,17 +204,19 @@
       pollMs: progressElements.size > 0 ? 5000 : 10000,
       hint,
     });
+    if (previousDetach) previousDetach();
+    // The status asked for at the start goes on the rows now; coming back to the tab asks again (a hidden tab gets no pushes).
+    refreshProgress = () => updateDownloadProgress(progressElements, container);
+    progressRequest.then((data) => {
+      if (data && !data.error && mySeq === renderSeq) applyProgressData(progressElements, container, data);
+    });
   }
 
   // "Search all stuck scenes / movies" (v0.201.0; split in two v0.224.0): ONE targeted indexer query for every stuck scene release, or the movie
   // search for every stuck movie, once, on request (the normal modes only ask a release daily in its first week, then weekly). The sidecar lists
   // what it would query first (dry run) and the click confirms it.
-  async function withStuckToolbar(group, container) {
+  function withStuckToolbar(group, scenes, movies) {
     const { el, confirmInline } = window.SRW;
-    let scenes = null;
-    let movies = null;
-    try { scenes = await window.SRW.runOp('indexer_search_stuck_preview'); } catch (e) { scenes = null; }
-    try { movies = await window.SRW.runOp('films_stuck_preview'); } catch (e) { movies = null; }
     const nScenes = scenes && !scenes.error ? scenes.count || 0 : 0;
     const nMovies = movies && !movies.error ? movies.count || 0 : 0;
     if (!nScenes && !nMovies) return group;
@@ -230,6 +255,79 @@
     const bar = el('div', { className: 'srw-toolbar' }, [...buttons, status]);
     const summary = group.querySelector(':scope > summary');
     if (summary) summary.after(bar); else group.prepend(bar);
+    return group;
+  }
+
+  // Torrents that need a look (v0.231.0, torrent_health.py): stalled, stuck, in error or gone from the download client. They sit at the top of
+  // the Stuck tab (and count in its label) and go back to "Downloading" by themselves when they move again.
+  const HEALTH_LABELS = { stalled: 'Stalled', stuck: 'Stuck', error: 'Error', missing: 'Missing' };
+
+  async function withTorrentProblems(group, container, data) {
+    const { el, confirmInline } = window.SRW;
+    const rows = data && !data.error ? data.rows || [] : [];
+    if (!rows.length) return group;
+    const summary = group.querySelector(':scope > summary');
+    if (summary) { // the tab label reads the number after the dash
+      const m = summary.textContent.match(/^(.*—\s*)(\d+)\s*$/);
+      if (m) summary.textContent = `${m[1]}${Number(m[2]) + rows.length}`;
+    }
+    const caps = await window.SRW.getSearchCapabilities().catch(() => null);
+    const sources = caps && !caps.error ? caps.manual_sources || [] : [];
+    const list = el('ul', { className: 'srw-torrent-problems' });
+    const status = el('span', { className: 'srw-key-status' });
+    const refresh = () => render(container);
+    const act = (btn, mode, row, ask) => {
+      const run = async () => {
+        window.SRW.setBusy(status, 'working...');
+        try {
+          const r = await window.SRW.runOp(mode, { client_id: row.client_id, job_id: row.job_id });
+          if (r && r.error) { status.textContent = ` error: ${r.error}`; return; }
+          if (r && r.switched === false) { status.textContent = ` ${r.message || 'nothing found'}`; return; }
+          if (mode === 'torrents_check_now') { status.textContent = r.started ? ' checking in the background -- reload this page in a minute' : ` ${r.reason || ''}`; return; }
+          refresh();
+        } catch (err) { status.textContent = ` error: ${err.message}`; }
+      };
+      btn.addEventListener('click', (e) => (ask ? confirmInline(e.currentTarget, ask, run) : run()));
+      return btn;
+    };
+    rows.forEach((row) => {
+      const swarm = [row.seeds != null ? `${row.seeds} seeds` : null, row.peers != null ? `${row.peers} peers` : null,
+        row.availability != null && row.availability >= 0 ? `availability ${Number(row.availability).toFixed(2)}` : null].filter(Boolean).join(', ');
+      const scene = row.kind === 'scene';
+      const buttons = [];
+      if (scene) {
+        buttons.push(act(el('button', { type: 'button', className: 'srw-btn', textContent: 'Find another', title: 'Search for another torrent now; the old one is removed once a replacement is running' }),
+          'torrents_switch', row, `Look for another torrent for "${row.title}" and, when one is found, remove this one with its data?`));
+        if (sources.length) {
+          const scn = { provider: row.provider, scene_stashdb_id: row.scene_id, title: row.title };
+          buttons.push(window.SRW.buildManualSearch(scn, sources, caps.backend, refresh, {
+            host: () => li,
+            grab: (candidate) => window.SRW.runOp('releases_manual_search_grab', { provider: row.provider, scene_stashdb_id: row.scene_id, candidate, replace: true }),
+          }));
+        }
+      }
+      if (row.state === 'missing' || row.state === 'error') {
+        buttons.push(act(el('button', { type: 'button', className: 'srw-btn', textContent: 'Re-add', title: 'Put the same torrent into the download client again' }), 'torrents_readd', row));
+      }
+      if (row.state !== 'stalled') buttons.push(act(el('button', { type: 'button', className: 'srw-btn', textContent: 'Keep waiting', title: 'No automatic switching for a day' }), 'torrents_keep', row));
+      buttons.push(act(el('button', { type: 'button', className: 'srw-btn srw-btn-danger', textContent: 'Remove', title: 'Remove the torrent with its data, never use it again, and search again' }),
+        'torrents_remove', row, `Remove this torrent with its downloaded data${scene ? '' : ' and put the movie back on the wishlist'}?`));
+      const li = el('li', { className: `srw-torrent-problem srw-torrent-${row.state}` }, [
+        el('span', { className: 'srw-review-warning', textContent: HEALTH_LABELS[row.state] || row.state }),
+        el('span', { className: 'srw-release-title', textContent: row.title || '(untitled)' }),
+        el('span', { className: 'srw-review-candidate-meta', textContent: `${row.percent}%${swarm ? ` — ${swarm}` : ''} — ${row.detail || row.raw_state || ''}` }),
+        ...buttons,
+      ]);
+      list.appendChild(li);
+    });
+    const bar = el('div', { className: 'srw-toolbar' }, [
+      el('strong', { textContent: `Torrents needing a look (${rows.length})` }),
+      act(el('button', { type: 'button', className: 'srw-btn', textContent: 'Check now', title: 'Run the torrent check right now (normally every 30 minutes)' }), 'torrents_check_now', {}),
+      status,
+    ]);
+    const anchor = group.querySelector(':scope > .srw-toolbar') || summary;
+    const block = el('div', { className: 'srw-torrent-block' }, [bar, list]);
+    if (anchor) anchor.after(block); else group.prepend(block);
     return group;
   }
 
@@ -353,8 +451,8 @@
       // Look at the downloaded video before deciding (v0.106.4): the scene Stash created from the imported file, as a real link
       // (new tab; never blocked like a popup). The scene is looked up when the row is drawn; no file in Stash -> no link.
       if (r.status === 'import_failed' && r.pending_import_path) {
-        const openLink = el('a', {
-          className: 'srw-btn', textContent: 'Open file in Stash', target: '_blank', rel: 'noopener noreferrer', hidden: true,
+        const openLink = window.SRW.iconButton('a', 'faPlay', 'Open file in Stash', {
+          target: '_blank', rel: 'noopener noreferrer', hidden: true,
           title: 'Open the downloaded file (the scene Stash created from it) in a new tab to play it',
         });
         window.SRW.runOp('releases_imported_file', { provider: r.provider, scene_stashdb_id: r.scene_stashdb_id }).then((found) => {
@@ -393,7 +491,7 @@
           }));
         }
         li.push(el('button', {
-          className: 'srw-btn srw-btn-dismiss', textContent: 'Dismiss',
+          className: 'btn btn-outline-danger srw-btn-fit srw-btn-dismiss', textContent: 'Dismiss',
           onClick: async () => {
             const result = await window.SRW.runOp('releases_dismiss', {
               provider: r.provider, scene_stashdb_id: r.scene_stashdb_id,
@@ -437,8 +535,31 @@
             );
           },
         });
-        const confirmBtn = el('button', {
-          className: 'srw-btn', textContent: 'File is correct',
+        // Re-check fingerprints (v0.235.0): somebody may have submitted fingerprints to the provider since the download was judged.
+        const recheckBtn = window.SRW.iconButton('button', 'faFingerprint', 'Re-check fingerprints', {
+          title: 'Ask the provider for the scene\'s fingerprints again and compare them with the file: a match imports it, otherwise it tells how close the file is',
+          onClick: async (e) => {
+            const button = e.currentTarget;
+            button.disabled = true;
+            window.SRW.setBusy(fixStatus, 'checking...');
+            try {
+              const result = await window.SRW.runOp('releases_recheck_fingerprints', {
+                provider: r.provider, scene_stashdb_id: r.scene_stashdb_id,
+              });
+              if (result.error) { fixStatus.textContent = ` error: ${result.error}`; window.SRW.notify('Re-check fingerprints', result.error, 'error'); return; }
+              fixStatus.textContent = ` ${result.message}`;
+              if (result.result === 'verified') {
+                window.SRW.notify('Re-check fingerprints', `"${r.title}": ${result.message}`, 'success');
+                if (onChanged) onChanged();
+              }
+            } catch (err) {
+              fixStatus.textContent = ` error: ${err.message}`;
+            } finally {
+              button.disabled = false;
+            }
+          },
+        });
+        const confirmBtn = window.SRW.iconButton('button', 'faCheck', 'File is correct', {
           title: 'The video IS this scene (e.g. a re-cut nobody registered a fingerprint for): keep the file and count it as imported',
           onClick: (e) => confirmInline(e.currentTarget,
             `Keep the file for "${r.title}" although it doesn't match the fingerprints? The scene gets this release's metadata and counts as imported.`,
@@ -452,15 +573,12 @@
               if (onChanged) onChanged();
             }),
         });
-        // + Upload (v0.106.7): the same, and afterwards the file's fingerprints go to StashDB (public). StashDB releases only; locked
+        // + Upload (v0.106.7): the same, and afterwards the file's fingerprints go to StashDB (public). StashDB releases only; hidden
         // while Settings > Schedule & Import > "Allow submitting fingerprints" is off.
         let uploadBtn = null;
-        if (r.provider === 'stashdb') {
-          uploadBtn = el('button', {
-            className: 'srw-btn', textContent: 'Correct + submit to StashDB',
-            title: uploadEnabled ? 'Like "File is correct", and the fingerprints of the file are submitted to StashDB (public, cannot be undone)'
-              : 'Switched off: Settings > Schedule & Import > "Allow submitting fingerprints to StashDB"',
-            ...(uploadEnabled ? {} : { disabled: true }),
+        if (r.provider === 'stashdb' && uploadEnabled) { // hidden while submitting is off (Settings > Schedule & Import)
+          uploadBtn = window.SRW.iconButton('button', 'faCloudArrowUp', 'Correct + submit to StashDB', {
+            title: 'Like "File is correct", and the fingerprints of the file are submitted to StashDB (public, cannot be undone)',
             onClick: (e) => confirmInline(e.currentTarget,
               `Keep the file for "${r.title}" AND submit its fingerprints to StashDB? That is public and cannot be undone.`,
               async () => {
@@ -475,7 +593,7 @@
               }, { danger: true }),
           });
         }
-        li.push(confirmBtn, ...(uploadBtn ? [uploadBtn] : []), fixBtn, fixStatus);
+        li.push(recheckBtn, confirmBtn, ...(uploadBtn ? [uploadBtn] : []), fixBtn, fixStatus);
       }
       return window.SRW.arrangeReleaseRow(el('li', { className: 'srw-release-item', 'data-scene-id': r.scene_stashdb_id }, li), r);
     }
@@ -532,9 +650,10 @@
       if (f.status === 'wanted') { // searched by the automatic movie search without a usable result
         const why = { no_match: 'nothing usable found', rejected: 'the last candidate was rejected', error: 'the search failed' }[f.last_search_result] || 'searched';
         children.push(el('span', { className: 'srw-search-status', textContent: `${why}${f.last_search_at ? ` (${f.last_search_at.slice(0, 16)} UTC)` : ''}` }));
-        children.push(el('button', { className: 'srw-btn', textContent: 'Search now', title: 'Ask the indexers for this movie again now (1-3 requests)',
+        children.push(window.SRW.iconButton('button', 'faMagnifyingGlass', 'Search now', { title: 'Search now: ask the indexers for this movie again (1-3 requests)',
           onClick: async (e) => {
             e.currentTarget.disabled = true;
+            window.SRW.busyIcon(e.currentTarget);
             const res = await window.SRW.runOp('films_search', { id: f.id });
             if (res.error) { notify('Movie search', res.error, 'error'); } else {
               notify('Movie search', res.result === 'needs_review' ? `Candidate found: ${res.candidate.title}` : (res.result === 'no_match' ? 'Nothing usable found.' : `Search failed: ${res.error || ''}`), res.result === 'needs_review' ? 'success' : 'info');
@@ -569,7 +688,7 @@
           } }));
       }
       if (f.stash_group_id) {
-        children.push(el('a', { className: 'srw-btn', href: `/groups/${f.stash_group_id}`, target: '_blank', rel: 'noopener noreferrer', textContent: 'Open group' }));
+        children.push(window.SRW.iconButton('a', 'faPlay', 'Open group', { href: `/groups/${f.stash_group_id}`, target: '_blank', rel: 'noopener noreferrer', title: 'Open group: the movie\'s group in Stash (new tab)' }));
       }
       if (f.status === 'wanted') children.push(...window.SRW.buildFilmDismissButtons(f, () => render(container))); // Stuck: get rid of a movie / group nobody wants
       if (f.status === 'import_failed') {

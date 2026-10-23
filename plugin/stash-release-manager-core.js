@@ -11,7 +11,7 @@
   // rule and the bug it caused when this drifted). Change this if you
   // install under a different folder name.
   // Must equal `version:` in stash-release-manager.yml (scripts/test_plugin_version.py checks it).
-  const PLUGIN_VERSION = '0.230.0';
+  const PLUGIN_VERSION = '0.235.8';
   const PLUGIN_ID = 'stash-release-manager';
   const PLUGIN_NAME = 'StashReleaseManager';
 
@@ -399,10 +399,43 @@
   // page change rebuilt the whole plugin page on the next DOM change -- the page vanished while it reloaded.
   const pageUrl = () => window.location.href.split('#')[0];
   let lastUrl = pageUrl();
+
+  // ---- Browser tab title (v0.231.1) ----
+  // Stash titles its own pages "<Page> | <branding>" (the branding is Settings > Interface > Custom title, "Stash" when unset) but leaves the plugin
+  // pages with the bare branding -- useless to tell tabs apart when several Stash tabs are open or the branding was shortened. Named the same way.
+  const PAGE_TITLE = 'SRM Plugin';
+  let brandingPromise = null;
+
+  function getBranding() {
+    if (!brandingPromise) {
+      brandingPromise = fetch('/graphql', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: '{ configuration { ui } }' }),
+      })
+        .then((r) => r.json())
+        .then((j) => (j.data && j.data.configuration && j.data.configuration.ui && j.data.configuration.ui.title) || 'Stash')
+        .catch(() => { brandingPromise = null; return 'Stash'; });
+    }
+    return brandingPromise;
+  }
+
+  async function applyPageTitle() {
+    if (getRoute().type !== 'plugin') return;
+    const title = `${PAGE_TITLE} | ${await getBranding()}`;
+    if (getRoute().type === 'plugin' && document.title !== title) document.title = title;
+  }
+
+  async function restorePageTitle() {
+    // Stash normally sets the next page's own title; only undo ours if it is still showing.
+    if (document.title.startsWith(`${PAGE_TITLE} | `)) document.title = await getBranding();
+  }
+
   function checkNavigation() {
     if (pageUrl() === lastUrl) return;
     lastUrl = pageUrl();
     const route = getRoute();
+    if (route.type === 'plugin') applyPageTitle(); else restorePageTitle();
     for (const cb of navigationCallbacks) {
       try { cb(route); } catch (e) { console.error(`[${PLUGIN_NAME}] navigate callback error:`, e); }
     }
@@ -412,6 +445,9 @@
   function acknowledgeUrl() { lastUrl = pageUrl(); }
   function initNavigationWatcher() {
     lastUrl = pageUrl();
+    // Stash can rewrite <title> after we set it (its own title handling runs again on some renders), so it is kept while on a plugin page
+    applyPageTitle();
+    new MutationObserver(() => { applyPageTitle(); }).observe(document.head, { childList: true, subtree: true, characterData: true });
     new MutationObserver(checkNavigation).observe(document.body, { childList: true, subtree: true });
     window.addEventListener('popstate', checkNavigation); // browser Back/Forward between areas
   }
@@ -419,6 +455,13 @@
   // ==================== DOM helpers ====================
 
   function el(tag, props = {}, children = []) {
+    // Secret fields (API keys, passwords) are built as plain text inputs that are only DISPLAYED masked (.srw-secret, -webkit-text-security): a
+    // type=password field makes Firefox offer to save it as a login, and autocomplete="off" is ignored there (v0.230.2).
+    const secret = tag === 'input' && props.type === 'password';
+    if (secret) {
+      props = { ...props, type: 'text', autocomplete: 'off', spellcheck: 'false', autocapitalize: 'off',
+        'data-lpignore': 'true', 'data-1p-ignore': 'true', 'data-form-type': 'other' };
+    }
     const node = document.createElement(tag);
     Object.entries(props).forEach(([k, v]) => {
       if (k === 'className') node.className = v;
@@ -426,6 +469,7 @@
       else if (k.startsWith('on') && typeof v === 'function') node.addEventListener(k.slice(2).toLowerCase(), v);
       else node.setAttribute(k, v);
     });
+    if (secret) node.classList.add('srw-secret');
     (Array.isArray(children) ? children : [children]).forEach((c) => {
       if (c) node.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
     });
@@ -501,7 +545,10 @@
   }
 
   function confirmInline(triggerButton, message, onConfirm, { danger = false } = {}) {
-    triggerButton.style.display = 'none';
+    // In a release row the question is an overlay over the buttons' place, as in a calendar pill (v0.235.8): it takes no room, so nothing moves,
+    // and the button stays where it is. Needs review keeps its own design (the question replaces Accept/Reject in the flow).
+    const overlay = !!triggerButton.closest('.srw-release-row') && !triggerButton.closest('.srw-review-actions');
+    if (!overlay) triggerButton.style.display = 'none';
     const prompt = el('span', { className: 'srw-inline-confirm' }, [
       // A short question stays on ONE line; only a long explanatory sentence (over ~110 characters even with the names shortened)
       // may wrap, at word boundaries (v0.103.3).
@@ -688,16 +735,44 @@
     } catch (e) { return null; }
   }
 
+  // A button (tag 'button') or link (tag 'a') that shows only an icon; the words are the tooltip and the aria-label (v0.235.2). Saves room in
+  // crowded action columns. Without the icon library the words are shown instead.
+  function iconButton(tag, name, label, props = {}) {
+    const { className = 'srw-btn', title, ...rest } = props;
+    const glyph = icon(name);
+    const node = el(tag, { ...(tag === 'button' ? { type: 'button' } : {}), ...rest, className: glyph ? `${className} srw-btn-icon` : className,
+      title: title || label, 'aria-label': label });
+    // The zero-width text gives the button the line height of a text button, so a row of them stays level.
+    if (glyph) node.append(document.createTextNode('\u200b'), glyph); else node.textContent = label;
+    return node;
+  }
+
+  // While an icon button's action runs: its icon becomes the spinner (the button is disabled by the caller).
+  function busyIcon(btn) {
+    const spin = el('span', { className: 'srw-spinner' });
+    spin.setAttribute('aria-hidden', 'true');
+    btn.replaceChildren(document.createTextNode('\u200b'), spin);
+  }
+
   // One page header for every page (2026-10-04, UI review): the title and ONE tab bar in Stash's own nav-tabs look
   // (same classes as the tabs on its Performer pages, so theme/dark mode come for free). Real links -> middle click and
   // bookmarks work; this plugin's root is mounted outside Stash's React tree (see stash-release-manager.js's
   // createPluginRoot()), so a link is a normal full page load. Activity carries the live "running" count.
+  // Built with the count already in it: a header is built off-page (and again whenever a page redraws), so applyActivityCount() cannot reach it
+  // (the badge used to stay hidden until the next live event and then shifted the tabs). `hidden` is set as a property: el() would turn
+  // hidden:false into the attribute hidden="false", which hides too.
+  function activityBadge() {
+    const badge = el('span', { className: 'srw-activity-badge', title: 'Downloads/imports running', textContent: String(activityCount) });
+    badge.hidden = activityCount === 0;
+    return badge;
+  }
+
   function buildPageHeader(activeKey) {
     const pluginPath = `/plugins/${PLUGIN_ID}`;
     const links = PAGES.map((p) => el('a', {
       className: `nav-item nav-link${p.key === activeKey ? ' active' : ''}`,
       href: pluginPath + p.path,
-    }, [icon(p.icon), p.label, p.key === 'activity' ? el('span', { className: 'srw-activity-badge', title: 'Downloads/imports running', hidden: true }) : null]));
+    }, [icon(p.icon), p.label, p.key === 'activity' ? activityBadge() : null]));
     const header = el('div', { className: 'srw-page-header' }, [
       el('div', { className: 'srw-page-title-row' }, [el('h2', { textContent: 'Release Manager' }), buildHealthPill()]),
       el('nav', { className: 'nav nav-tabs srw-main-tabs', role: 'tablist' }, links),
@@ -858,9 +933,14 @@
   // A number on the Activity tab and a dot on this plugin's entry in Stash's top bar while downloads/imports run.
   // Fed by the sidecar's live 'progress' events (map {scene: progress|null}); a non-null entry is a running download
   // or import. No polling here: without the live stream (browser can't reach the sidecar) the indicator stays hidden.
+  // Every page is a full page load, so the number is kept between them (localStorage) and shown at once; the first live event or the one
+  // request below then corrects it. Without that the badge appeared half a second after the menu and pushed the tabs aside.
+  const ACTIVITY_COUNT_KEY = 'srw:activity-count';
   let activityCount = 0;
+  try { activityCount = Math.max(0, parseInt(window.localStorage.getItem(ACTIVITY_COUNT_KEY), 10) || 0); } catch (e) { /* no storage */ }
   function setActivityCount(n) {
     activityCount = n;
+    try { window.localStorage.setItem(ACTIVITY_COUNT_KEY, String(n)); } catch (e) { /* no storage */ }
     applyActivityCount();
   }
   function applyActivityCount() {
@@ -872,11 +952,17 @@
     window.dispatchEvent(new CustomEvent('spm-change'));  // the Plugin Menu plugin (if installed) re-reads this plugin's badge
   }
   function startActivityWatch() {
+    let pushed = false; // a live event is newer than the request below
     subscribeLive((msg) => {
       if (msg.type === 'progress') {
+        pushed = true;
         setActivityCount(Object.values(msg.data || {}).filter(Boolean).length);
       }
     });
+    // The live stream needs a moment (and may not exist); ask once so the number is right on every page.
+    runOp('releases_download_progress').then((data) => {
+      if (!pushed && data && !data.error) setActivityCount(Object.values(data).filter(Boolean).length);
+    }).catch(() => {});
   }
 
   // "Search visibility" (Milestone 3, 2026-09-19) -- mirrors
@@ -1030,7 +1116,7 @@
     const out = [];
     if (!['suggested', 'wanted'].includes(f.status)) return out;
     const done = async () => { if (onChanged) await onChanged(); };
-    out.push(el('button', { className: 'srw-btn srw-btn-dismiss', textContent: 'Dismiss',
+    out.push(el('button', { className: 'btn btn-outline-danger srw-btn-fit srw-btn-dismiss', textContent: 'Dismiss',
       title: 'Not wanted after all: off the wishlist (with Undo)',
       onClick: async (e) => {
         e.currentTarget.disabled = true;
@@ -1040,7 +1126,7 @@
         await done();
       } }));
     if (f.source === 'empty-group' && f.stash_group_id) {
-      const delBtn = el('button', { className: 'srw-btn srw-btn-dismiss', textContent: 'Dismiss & Delete',
+      const delBtn = el('button', { className: 'btn btn-danger srw-btn-fit srw-btn-dismiss', textContent: 'Dismiss & Delete',
         title: 'Dismiss this movie and delete its empty group in Stash (scenes and files are never deleted)' });
       delBtn.addEventListener('click', async () => {
         delBtn.disabled = true;
@@ -1068,7 +1154,7 @@
 
   function buildWishlistDismiss(release, onChanged) {
     return el('button', {
-      className: 'srw-btn srw-btn-dismiss', textContent: 'Dismiss',
+      className: 'btn btn-outline-danger srw-btn-fit srw-btn-dismiss', textContent: 'Dismiss',
       title: 'Not wanted after all: off the wishlist, no more searching (with Undo)',
       onClick: async (e) => {
         e.currentTarget.disabled = true;
@@ -1389,7 +1475,7 @@
         group.appendChild(btn);
         status.push(st);
       }
-      if (r.last_search_result) group.appendChild(buildLastSearch(r));
+      if (r.last_search_result) group.appendChild(buildLastSearch(r, onGrabbed));
       if (sources.length) group.appendChild(buildManualSearch(r, sources, caps.backend, onGrabbed));
       wrap.append(...(group.children.length > 1 ? [group] : []), ...status); // the magnifier alone is no group
     });
@@ -1398,6 +1484,14 @@
 
   // "Now" (v0.214.0): the same automatic search the schedule runs, started for this one release right away -- whatever the back-off says,
   // because the user asked. Goes through the hand-off like the Search page's "Search now" (the release is on the wishlist already).
+  // Status text with a small spinner in front: shown while a search / a hand-off runs. Assigning textContent later clears it again.
+  function setBusy(node, text) {
+    node.textContent = '';
+    const spin = el('span', { className: 'srw-spinner' });
+    spin.setAttribute('aria-hidden', 'true');
+    node.append(spin, document.createTextNode(' ' + String(text).trim()));
+  }
+
   function buildSearchNowButton(r, onDone, statusNodes) {
     const status = el('span', { className: 'srw-key-status' });
     statusNodes.push(status);
@@ -1407,7 +1501,7 @@
       onClick: async (e) => {
         const button = e.currentTarget;
         button.disabled = true;
-        status.textContent = ' searching...';
+        setBusy(status, 'searching...');
         try {
           const result = await runOp('releases_handoff', {
             provider: r.provider, entity_type: r.entity_type,
@@ -1480,11 +1574,21 @@
   // is known (2026-09-26, user request: check a possible match on the
   // indexer before accepting it). The backend never hands out URLs that
   // carry an API key (indexer_search.safe_info_url()).
+  // Some indexers (MyPornClub) hand out the text of a forum post as the release name: line breaks (also as the two characters \n), web links to file
+  // hosts, long runs of spaces. Shown as one clean line; the name as the indexer gave it stays in the tooltip.
+  function cleanReleaseTitle(title) {
+    const raw = String(title || '');
+    const clean = raw.replace(/\\[nrt]/g, ' ').replace(/https?:\/\/\S+/gi, ' ').replace(/\s+/g, ' ').trim();
+    return clean || raw.trim();
+  }
+
   function releaseTitleNode(title, infoUrl, className = 'srw-review-candidate-title') {
-    if (!infoUrl) return el('span', { className, textContent: title || '(unknown)' });
+    const shown = cleanReleaseTitle(title);
+    const changed = shown !== String(title || '');
+    if (!infoUrl) return el('span', { className, textContent: shown || '(unknown)', title: changed ? `As the indexer gave it: ${title}` : '' });
     return el('a', {
       className, href: infoUrl, target: '_blank', rel: 'noopener noreferrer',
-      title: 'Open on the indexer', textContent: `${title || '(unknown)'} ↗`,
+      title: changed ? `Open on the indexer. As the indexer gave it: ${title}` : 'Open on the indexer', textContent: `${shown || '(unknown)'} ↗`,
     });
   }
 
@@ -1587,10 +1691,13 @@
     const title = kids.filter((c) => c.classList.contains('srw-release-title'));
     // Buttons AND link-buttons ("Open scene", "Open group", "Open file in Stash") are actions; the Scene / Movie pill sits next to the title (v0.128.5).
     const actions = kids.filter((c) => c.tagName === 'BUTTON' || (c.tagName === 'A' && c.classList.contains('srw-btn'))
-      || has(c, 'srw-search-actions', 'srw-inline-confirm', 'srw-key-status'));
+      || has(c, 'srw-search-actions', 'srw-inline-confirm'));
+    // Result / progress texts of the buttons ("searching...", "Still no match ...") get a line of their own under the row's text: in the buttons'
+    // column they widened it and shifted the whole table (v0.235.1).
+    const statuses = kids.filter((c) => has(c, 'srw-key-status'));
     const pills = kids.filter((c) => c.classList.contains('srw-film-class'));
     const wide = kids.filter((c) => has(c, 'srw-review-candidate'));
-    const used = new Set([...thumb, ...entity, ...title, ...pills, ...actions, ...wide]);
+    const used = new Set([...thumb, ...entity, ...title, ...pills, ...actions, ...statuses, ...wide]);
     const meta = kids.filter((c) => !used.has(c));
     // The release date comes first in the third line; a date span that just repeats it is dropped.
     const sceneDate = (r && (r.scene_date || (r.scene_created || '').slice(0, 10))) || '';
@@ -1609,6 +1716,7 @@
       el('div', { className: 'srw-rr-entity' }, entity),
       el('div', { className: 'srw-rr-title' }, [...title, ...pills]),
       el('div', { className: 'srw-rr-meta' }, metaClean),
+      el('div', { className: 'srw-rr-status' }, statuses),
     ]));
     li.appendChild(el('div', { className: 'srw-rr-actions' }, actions));
     wide.forEach((c) => li.appendChild(c));
@@ -1655,14 +1763,16 @@
     };
   }
 
-  function buildLastSearch(r) {
+  function buildLastSearch(r, onGrabbed) {
     const wrap = el('span', { className: 'srw-prowlarr-search' });
     const toggleBtn = el('button', { className: 'srw-btn', textContent: 'Last', title: 'What the last automatic search asked for, and why nothing was taken' });
     const toggle = panelToggle(toggleBtn, (node) => attachPanel(wrap, node));
     let panel = null;
     toggleBtn.addEventListener('click', async () => {
       if (toggle.isOpen) { toggle.close(); panel = null; return; }
-      panel = el('div', { className: 'srw-manual-search-panel' }, [el('span', { className: 'srw-hint', textContent: 'Loading...' })]);
+      const loading = el('span', { className: 'srw-hint' });
+      setBusy(loading, 'Loading...');
+      panel = el('div', { className: 'srw-manual-search-panel' }, [loading]);
       toggle.open(panel);
       const mine = panel;
       const log = await runOp('releases_last_search', { provider: r.provider, scene_stashdb_id: r.scene_stashdb_id });
@@ -1694,6 +1804,9 @@
           + `${shown < log.total ? `, showing ${shown}` : ''}.`,
       }));
       if (log.error) panel.appendChild(el('p', { className: 'srw-hint', textContent: `Error: ${log.error}` }));
+      if (log.kept_from) { // the last search failed (the indexers did not answer): the results are those of an older one
+        panel.appendChild(el('p', { className: 'srw-review-warning', textContent: `The search failed; the results below are from the search of ${log.kept_from.slice(0, 16)} UTC.` }));
+      }
       panel.appendChild(buildSortedPagedResults(log.candidates || [], buildLogRow));
     });
     wrap.appendChild(toggleBtn);
@@ -1703,13 +1816,36 @@
         const qualityLabel = c.vr ? 'VR' : (c.resolution ? `${c.resolution}p` : 'unknown quality');
         const sizeGb = c.size ? `${(c.size / 1e9).toFixed(2)} GB` : 'unknown size';
         const ageLabel = c.age != null ? `${c.age}d old` : 'unknown age';
+        const swarm = c.protocol === 'torrent'
+          ? ` (torrent${c.seeders != null ? `, ${c.seeders} seeders` : ''}${c.peers != null ? `, ${c.peers} peers` : ''})` : '';
+        const quality = c.vr ? 'VR' : (c.resolution ? `${c.resolution}p` : (c.est_resolution ? `~${c.est_resolution}p (estimated)` : 'unknown quality'));
+        const rowStatus = el('span', { className: 'srw-key-status' });
+        // Grab = this result instead of what is running (a running torrent is removed with its data), same as the Manual search's Grab
+        const grab = el('button', {
+          className: 'srw-btn srw-btn-primary', textContent: 'Grab',
+          title: 'Download this result now. A torrent that is running for this scene is removed with its data and not used again.',
+          onClick: (e) => confirmInline(e.currentTarget, `Download "${cleanReleaseTitle(c.title)}" instead? A running torrent of this scene is removed with its data.`, async () => {
+            setBusy(rowStatus, 'searching the indexers again and grabbing...');
+            try {
+              const result = await runOp('releases_last_search_grab', { provider: r.provider, scene_stashdb_id: r.scene_stashdb_id, candidate: c });
+              if (result.error) { rowStatus.textContent = ` error: ${result.error}`; notify(`Grab failed: ${r.title || ''}`, result.error, 'error'); return; }
+              if (!result.grab) { rowStatus.textContent = ` not grabbed: ${String(result.result || 'refused').replace(/_/g, ' ')}`; return; }
+              rowStatus.textContent = ' grabbed';
+              notify(`Grabbed: ${r.title || ''}`, `${c.title} (${c.indexer || 'indexer'}) -- sent to the download client.`, 'success');
+              if (onGrabbed) await onGrabbed();
+            } catch (err) { rowStatus.textContent = ` error: ${err.message}`; }
+          }),
+        });
         return el('div', { className: `srw-manual-search-result srw-verdict-${c.verdict}` }, [
           el('span', { className: 'srw-verdict', textContent: VERDICT_LABELS[c.verdict] || c.verdict }),
           releaseTitleNode(c.title, c.info_url),
           el('span', {
             className: 'srw-review-candidate-meta',
-            textContent: `${c.indexer || 'unknown indexer'} — ${qualityLabel} — ${sizeGb} — ${ageLabel}`,
+            textContent: `${c.indexer || 'unknown indexer'}${swarm} — ${quality} — ${sizeGb} — ${ageLabel}`,
           }),
+          c.size_note ? el('span', { className: 'srw-review-warning', textContent: 'size?', title: c.size_note }) : null,
+          grab,
+          rowStatus,
         ]);
     }
   }
@@ -1754,7 +1890,9 @@
       function buildResultRow(candidate) {
         const sizeGb = candidate.size ? `${(candidate.size / 1e9).toFixed(2)} GB` : 'unknown size';
         const quality = (candidate.quality && candidate.quality.quality) || {};
-        const qualityLabel = quality.source === 'vr' ? 'VR' : (quality.resolution ? `${quality.resolution}p` : 'unknown quality');
+        // a name without a resolution: the sidecar judges one from the scene's length and the size (est_resolution), marked with "~"
+        const qualityLabel = quality.source === 'vr' ? 'VR' : (quality.resolution ? `${quality.resolution}p`
+          : (candidate.est_resolution ? `~${candidate.est_resolution}p (estimated)` : 'unknown quality'));
         const ageLabel = candidate.age != null ? `${candidate.age}d old` : 'unknown age';
         const rowStatus = el('span', { className: 'srw-key-status' });
         // One grab button: `grab` = the caller's own grab (null = the default grab of this panel), `ask` = the confirm text
@@ -1772,6 +1910,10 @@
                   notify(`Grab failed: ${r.title || ''}`, result.error, 'error');
                   return;
                 }
+                if (result.result && !result.grab) { // the sidecar did not send it (e.g. another download of the scene is running)
+                  rowStatus.textContent = ` not grabbed: ${String(result.result).replace(/_/g, ' ')}`;
+                  return;
+                }
                 rowStatus.textContent = ' grabbed';
                 notify(`Grabbed: ${r.title || ''}`, `${candidate.title} (${candidate.indexer || 'indexer'}) -- sent to the download client.`, 'success');
                 if (onGrabbed) await onGrabbed();
@@ -1785,8 +1927,9 @@
           releaseTitleNode(candidate.title, candidate.infoUrl),
           el('span', {
             className: 'srw-review-candidate-meta',
-            textContent: `${candidate.indexer || 'unknown indexer'}${candidate.protocol === 'torrent' ? ` (torrent${candidate.seeders != null ? `, ${candidate.seeders} seeders` : ''})` : ''} — ${qualityLabel} — ${sizeGb} — ${ageLabel}`,
+            textContent: `${candidate.indexer || 'unknown indexer'}${candidate.protocol === 'torrent' ? ` (torrent${candidate.seeders != null ? `, ${candidate.seeders} seeders` : ''}${candidate.peers != null ? `, ${candidate.peers} peers` : ''})` : ''} — ${qualityLabel} — ${sizeGb} — ${ageLabel}`,
           }),
+          candidate.size_note ? el('span', { className: 'srw-review-warning', textContent: 'size?', title: candidate.size_note }) : null,
           candidate.tried ? el('span', { className: 'srw-review-warning', textContent: candidate.tried.startsWith('declined') ? 'declined before' : 'tried before',
             title: `${candidate.tried} (blocklist of this scene)` }) : null,
           grabButton('Grab', 'srw-btn srw-btn-primary', null, `Download "${candidate.title}" for "${r.title}"?`),
@@ -1800,7 +1943,7 @@
       async function runSearch() {
         const query = input.value.trim();
         if (!query) return;
-        status.textContent = ' searching...';
+        setBusy(status, 'searching...');
         resultsWrap.innerHTML = '';
         try {
           const response = await runOp('releases_manual_search', {
@@ -1853,6 +1996,15 @@
       : `${m}:${String(sec % 60).padStart(2, '0')}`;
   }
 
+  // "2 min", "5 h", "2 d 4 h" since an epoch second
+  function formatWaited(sinceEpoch) {
+    const sec = Math.max(0, Math.floor(Date.now() / 1000) - sinceEpoch);
+    if (sec < 90) return 'under 2 min';
+    if (sec < 3600) return `${Math.round(sec / 60)} min`;
+    if (sec < 86400) return `${Math.floor(sec / 3600)} h`;
+    return `${Math.floor(sec / 86400)} d ${Math.floor((sec % 86400) / 3600)} h`;
+  }
+
   function describeProgress(p) {
     if (!p) return null;
     switch (p.phase) {
@@ -1860,8 +2012,17 @@
         return { pct: 100, text: 'Download complete — waiting for import' };
       case 'preparing':
         return { pct: 0, text: 'Import starting…' };
-      case 'waiting_encode':
-        return { pct: 100, text: p.can_local ? 'Download complete — waiting for the encode worker' : 'Download complete — waiting for the re-encode to 1080p' };
+      case 'waiting_encode': {
+        // (v0.232.1) A download that waits for the re-encode must not look like a stuck import: it says who is expected to encode and,
+        // when the encode worker (another machine) is offline, that it has to be started -- in amber, with how long it has waited.
+        const waited = p.queued_at ? ` — waiting ${formatWaited(p.queued_at)}` : '';
+        if (!p.can_local) return { pct: 100, text: `Download complete — queued for the re-encode to 1080p on the NAS${waited}` };
+        if (p.worker_online === undefined) return { pct: 100, text: `Download complete — waiting for the encode worker${waited}` }; // a sidecar that does not report it yet
+        if (p.worker_online) {
+          return { pct: 100, text: `Download complete — waiting for the encode worker${p.worker_name ? ` (${p.worker_name}, online)` : ''}, it takes the job next${waited}` };
+        }
+        return { pct: 100, warn: true, text: `⚠ Waiting for the re-encode — the encode worker is OFFLINE: start it on your PC (SRM Encode Worker), or encode on the NAS${waited}` };
+      }
       case 'encoding': {
         const left = p.seconds_left != null ? `, ${formatSeconds(p.seconds_left)} left` : '';
         const speed = p.speed_x ? `, ${p.speed_x}x` : '';
@@ -1879,10 +2040,14 @@
       }
       case 'verifying':
         return { pct: 100, text: 'In the library — Stash scan & verification pending' };
+      case 'torrent_problem': // the torrent monitor (v0.231.0): in error / gone from the download client
+        return { pct: 0, text: `Torrent problem — ${p.health_detail || p.health || ''}` };
       default: {
         const pct = p.percentage != null ? Number(p.percentage) : 0;
         const timeleft = p.timeleft && p.timeleft !== '0:00:00' ? `, ${p.timeleft} left` : '';
-        return { pct, text: `${p.status || 'Downloading'} — ${pct}%${timeleft}` };
+        const swarm = p.seeds != null || p.peers != null ? `, ${p.seeds ?? 0} seeds / ${p.peers ?? 0} peers` : '';
+        const note = p.health_detail ? ` — ${p.health_detail}` : '';
+        return { pct, text: `${p.status || 'Downloading'} — ${pct}%${timeleft}${p.health ? swarm : ''}${note}` };
       }
     }
   }
@@ -1893,6 +2058,7 @@
     const d = describeProgress(p);
     const phase = (p && p.phase) || 'none';
     if (elements.wrap) elements.wrap.dataset.phase = phase;
+    if (elements.wrap) elements.wrap.dataset.warn = d && d.warn ? '1' : ''; // amber: needs the user (a worker to start)
     if (elements.localBtn) elements.localBtn.style.display = phase === 'waiting_encode' && p.can_local ? '' : 'none'; // "Encode on the NAS now"
     if (!d) {
       elements.fill.style.width = '0%';
@@ -2245,6 +2411,11 @@
   }
 
   const LIVE_RECONNECT_MS = 5000;
+  // Following a link to another page closes the stream first; that is not "live updates unavailable".
+  let leavingPage = false;
+  window.addEventListener('pagehide', () => { leavingPage = true; });
+  window.addEventListener('beforeunload', () => { leavingPage = true; });
+  window.addEventListener('pageshow', () => { leavingPage = false; });
   const liveListeners = new Set();
   let liveSocket = null;
   let liveState = null; // null = connecting, true = open, false = unavailable
@@ -2277,7 +2448,7 @@
       liveListeners.forEach((fn) => fn(msg));
     };
     socket.onclose = () => {
-      if (liveSocket !== socket) return; // closed on purpose (no listeners left)
+      if (liveSocket !== socket || leavingPage) return; // closed on purpose (no listeners left), or because the page is being left
       liveSocket = null;
       setLiveState(false);
       clearTimeout(liveReconnectTimer);
@@ -2315,6 +2486,7 @@
   function attachLive(anchor, { onProgress, onChange, onResync, onEvent, poll, pollMs = 10000, safetyMs = 60000, hint }) {
     let timer = null;
     let changeTimer = null;
+    let hintTimer = null;
     let helloSeen = false;
     const gone = () => !anchor || !document.body.contains(anchor);
     const setTimer = (ms) => {
@@ -2326,11 +2498,16 @@
       if (timer) clearInterval(timer);
       timer = null;
       clearTimeout(changeTimer);
+      clearTimeout(hintTimer);
     }
     const unsubscribe = subscribeLive((msg) => {
       if (gone()) { detach(); return; }
       if (msg.type === 'live') {
-        if (hint) hint.hidden = msg.live;
+        if (hint) { // shown only when the stream stays down for a few seconds (a reconnect or a page change is no reason to flash it)
+          clearTimeout(hintTimer);
+          if (msg.live) hint.hidden = true;
+          else hintTimer = setTimeout(() => { hint.hidden = false; }, 3000);
+        }
         setTimer(msg.live ? safetyMs : pollMs);
         if (!msg.live && poll) poll();
       } else if (msg.type === 'hello') {
@@ -2376,7 +2553,7 @@
     getSettings, runOp, sidecarWsUrl,
     getRoute, onNavigate, initNavigationWatcher,
     el, waitForElement, entityIcon, buildPageHeader,
-    searchStatusLabel, confirmInline, buildManagedList, buildSearchActions, whenNoOpenPanel, buildManualSearch, getSearchCapabilities,
+    searchStatusLabel, setBusy, iconButton, busyIcon, confirmInline, buildManagedList, buildSearchActions, whenNoOpenPanel, buildManualSearch, getSearchCapabilities,
     rememberOpen, icon, mismatchWarning, buildPagedList, buildPager, releaseTitleNode, notify, dismissedNotice, releaseDismissedNotice, dismissRelease, buildWishlistDismiss, buildFilmDismissButtons, notifyHandoff, buildAddOnlyButton,
     sceneUrl, notifyReadd, loadMetadataProviderUrls, loadProviders, resetProviders, providerInfo, providerLabel, providerKeys, providerOn, providersAllOn, providersSelected, isLateAdditionNew, buildLateAdditionBadge,
     buildFilteredPagedList, buildSelect, buildSafetyPanel, ignoreRenamers, pairingOptionsFor, castOptionsFor, buildPairingBadge, localPageFetcher, releaseQueryArgs, filterLocally, isFilterActive,

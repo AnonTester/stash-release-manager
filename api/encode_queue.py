@@ -13,6 +13,11 @@ import import_progress
 LEASE_SECONDS = 600  # a claimed job without a sign of life for this long goes back to the queue
 WORKER_SEEN_SECONDS = 180
 
+# A restart empties the queue; the import run queues the waiting downloads again within seconds. A worker that keeps encoding through the restart
+# (v0.232.3) must not be told "the job is gone" in that gap, and its requeued job is handed back to it instead of to another claim.
+_started_at = time.time()
+RESTART_GRACE_SECONDS = 600
+
 _lock = threading.Lock()
 _jobs = {}           # (provider, stash_id) -> job dict, in the order they were queued
 _last_worker_seen = {"name": None, "at": 0.0}
@@ -113,14 +118,42 @@ def start_verify(provider, stash_id, worker):
         return True
 
 
-def heartbeat(provider, stash_id, worker):
-    """True while `worker` still holds this job (and renews the lease)."""
+def adopt(provider, stash_id, worker):
+    """The job of a worker that is already encoding it, but which the queue (after a restart) holds unclaimed: it belongs to that worker again.
+    False when there is no such unclaimed job."""
+    now = time.time()
     with _lock:
         job = _jobs.get(_key(provider, stash_id))
-        if not job or job["claimed_by"] != worker:
+        if not job or job["claimed_by"] or job["local"]:
             return False
-        job["beat"] = time.time()
+        job.update(claimed_by=worker, claimed_at=now, beat=now)
         return True
+
+
+def heartbeat(provider, stash_id, worker):
+    """True while `worker` still holds this job (and renews the lease). After a restart: true for a job the queue does not know yet (the import
+    run has not queued it again) and for one it holds unclaimed (it is handed back to this worker)."""
+    now = time.time()
+    with _lock:
+        job = _jobs.get(_key(provider, stash_id))
+        if not job:
+            return now - _started_at < RESTART_GRACE_SECONDS
+        if not job["claimed_by"] and not job["local"]:
+            job.update(claimed_by=worker, claimed_at=now, beat=now)
+            return True
+        if job["claimed_by"] != worker:
+            return False
+        job["beat"] = now
+        return True
+
+
+def queued_at(stash_id):
+    """Epoch seconds at which the job of this scene was queued, or None (any provider: the progress map is keyed by scene id only)."""
+    with _lock:
+        for job in _jobs.values():
+            if job["stash_id"] == stash_id:
+                return job["queued_at"]
+    return None
 
 
 def waiting_for_worker(provider, stash_id, wants_worker):

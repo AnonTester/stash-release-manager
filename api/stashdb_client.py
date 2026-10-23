@@ -655,6 +655,21 @@ class StashDBClient:
             raise RuntimeError(str(data["errors"]))
         return data["data"]["findScene"]
 
+    def get_scene_full(self, scene_id):
+        """One scene in the shape search_scenes() returns (id/title/date/created/duration/studio/performers/image_url/is_vr), so it can go
+        into the wishlist hand-off unchanged (the userscript sends only the id). None for an unknown scene."""
+        resp = self._post({
+            "query": "query($id: ID!) { findScene(id: $id) { id title date created details duration studio { id name } "
+                      "performers { performer { id name } } images { url } tags { name } } }",
+            "variables": {"id": scene_id},
+        })
+        resp.raise_for_status()
+        data = resp.json()
+        if data.get("errors"):
+            raise RuntimeError(str(data["errors"]))
+        scene = data["data"]["findScene"]
+        return self._normalize_search_scenes([scene])[0] if scene else None
+
     def get_scene_urls(self, scene_id):
         """[{"url", "site"}] of one scene (site = the link type, e.g. "Studio"). Raises on a failed request; [] for an unknown scene."""
         resp = self._post({"query": FIND_SCENE_URLS_QUERY, "variables": {"id": scene_id}})

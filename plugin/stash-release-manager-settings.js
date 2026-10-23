@@ -1649,6 +1649,37 @@
         assignWrap.appendChild(el('br'));
       });
 
+      // Torrents (v0.231.0): the choice by seeders and the monitor of running torrents (torrent_health.py).
+      assignWrap.appendChild(el('p', { className: 'srw-subsection-heading', textContent: 'Torrents' }));
+      assignWrap.appendChild(el('p', {
+        className: 'srw-hint',
+        textContent: 'Choice: the best resolution is taken when it has plenty of seeders; with only a few, a lower resolution that has several times as many seeders wins. '
+          + 'A torrent nobody seeds, or whose size cannot fit the scene\'s length (probably mislabelled), is only a last resort. A name without a resolution is judged from the scene\'s length and the size. '
+          + 'Monitor: the running torrents are checked regularly. One that makes no progress for the stall time, with nothing real downloaded, is replaced by another torrent when the search finds one '
+          + '(the old one is removed with its data and never used again); without another torrent it is shown as stuck in Activity > Stuck. One with real progress is only flagged, never given up.',
+      }));
+      [['torrent_min_seeders', 'Fewer seeders than this = last resort', '1', { min: '0', step: '1' }],
+        ['torrent_plenty_seeders', 'Plenty of seeders (the best resolution is taken at this many)', '10', { min: '1', step: '1' }],
+        ['torrent_lower_res_factor', 'A lower resolution wins with this many times the seeders', '3', { min: '1', step: '0.5' }],
+        ['torrent_health_minutes', 'Check running torrents every (minutes, 0 = off)', '30', { min: '0', step: '5' }],
+        ['torrent_stall_hours', 'No progress for (hours) counts as stalled', '1', { min: '0.5', step: '0.5' }],
+        ['torrent_real_progress_percent', 'Real progress (% downloaded): such a torrent is never given up', '5', { min: '0', max: '100', step: '1' }],
+        ['torrent_alt_search_hours', 'Look for another torrent at most every (hours)', '6', { min: '0.5', step: '0.5' }]].forEach(([key, label, def, o]) => {
+        const input = el('input', { type: 'number', min: o.min, max: o.max, step: o.step, value: settings[key] || def });
+        const status = el('span', { className: 'srw-key-status' });
+        assignWrap.appendChild(el('label', {}, [`${label}: `, input]));
+        assignWrap.appendChild(el('button', {
+          className: 'srw-btn', textContent: 'Save',
+          onClick: async () => {
+            const result = await window.SRW.runOp('settings_set', { key, value: input.value });
+            status.textContent = result && result.error ? ` error: ${result.error}` : ' saved';
+            setTimeout(() => { status.textContent = ''; }, 2000);
+          },
+        }));
+        assignWrap.appendChild(status);
+        assignWrap.appendChild(el('br'));
+      });
+
       // Last resort for older scenes (v0.218.0): 2160p (scaled down to 1080p before the import) and SD, after everything in the profile.
       assignWrap.appendChild(el('p', { className: 'srw-subsection-heading', textContent: 'Last resort for older scenes: 2160p and SD' }));
       assignWrap.appendChild(el('p', {
@@ -2672,6 +2703,7 @@
       ['StashDB favorites sync', hours('stashdb_favorites_sync_interval_hours', '24'), 'connections'],
       ['ThePornDB identify', hours('theporndb_identify_interval_hours', '24'), 'connections'],
       ['File import check', hours('file_import_interval_hours', '0.25'), 'import_naming'],
+      ['Torrent check', settings.torrent_health_minutes === '0' ? 'off' : `every ${settings.torrent_health_minutes || 30} min`, 'search_quality'],
       ['Recycle bin cleanup', hours('recycle_bin_cleanup_interval_hours', '24'), 'general'],
           ];
     if (whisparrConfigured) {
@@ -2752,7 +2784,7 @@
       className: 'srw-btn srw-btn-primary', textContent: 'Search now',
       onClick: async (e) => {
         e.target.disabled = true;
-        indexerSearchStatus.textContent = ' searching...';
+        window.SRW.setBusy(indexerSearchStatus, 'searching...');
         try {
           const result = await window.SRW.runOp('indexer_search_run');
           if (result.error) {

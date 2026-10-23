@@ -30,7 +30,7 @@
     async function run() {
       const q = input.value.trim();
       if (!q) return;
-      st.textContent = ' searching...';
+      window.SRW.setBusy(st, 'searching...');
       results.innerHTML = '';
       const res = await window.SRW.runOp('films_search_tpdb', { q });
       if (res.error) { st.textContent = ` error: ${res.error}`; return; }
@@ -169,11 +169,12 @@
           } }));
       }
       if (f.status === 'wanted' || viewKey(f) === 'upgrade') { // the automatic search for this one movie, now (v0.128.0; an owned movie: a better version, v0.222.0): the result is a candidate in Activity > Needs review
-        act.push(el('button', { className: 'srw-btn', textContent: 'Search now',
-          title: viewKey(f) === 'upgrade' ? 'Ask the indexers for a BETTER version of this movie (1-3 requests); a candidate waits in Activity > Needs review'
-            : 'Ask the indexers for this movie (1-3 requests); a plausible release becomes a candidate in Activity > Needs review',
+        act.push(window.SRW.iconButton('button', 'faMagnifyingGlass', 'Search now', {
+          title: viewKey(f) === 'upgrade' ? 'Search now: ask the indexers for a BETTER version of this movie (1-3 requests); a candidate waits in Activity > Needs review'
+            : 'Search now: ask the indexers for this movie (1-3 requests); a plausible release becomes a candidate in Activity > Needs review',
           onClick: async (e) => {
             e.currentTarget.disabled = true;
+            window.SRW.busyIcon(e.currentTarget);
             const res = await window.SRW.runOp('films_search', { id: f.id });
             if (res.error) notify('Movie search', res.error, 'error');
             else if (res.result === 'needs_review') notify('Movie search', `Candidate found: ${res.candidate.title} -- see Activity > Needs review.`, 'success');
@@ -270,8 +271,8 @@
       }
       if (viewKey(f) === 'upgrade') {
         if (f.imported_group_id) {
-          act.push(el('a', { className: 'srw-btn', href: `/groups/${f.imported_group_id}`, target: '_blank', rel: 'noopener noreferrer', textContent: 'Open group',
-            title: 'Open the group in Stash (new tab)' }));
+          act.push(window.SRW.iconButton('a', 'faPlay', 'Open group', { href: `/groups/${f.imported_group_id}`, target: '_blank', rel: 'noopener noreferrer',
+            title: 'Open group: the group in Stash (new tab)' }));
         }
         act.push(el('button', { className: 'srw-btn', textContent: 'Keep this file',
           title: 'The file stays as it is; the movie leaves the Upgrade list',

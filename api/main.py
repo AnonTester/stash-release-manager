@@ -127,6 +127,9 @@ from routers.download_clients import router as download_clients_router, init_dow
 from routers.indexers import router as indexers_router, init_indexers_router
 from routers.metadata_providers import router as metadata_providers_router, init_metadata_providers_router
 from routers.stash_boxes import router as stash_boxes_router, init_stash_boxes_router
+from routers.userscript import router as userscript_router, init_userscript_router
+from routers.torrent_health import router as torrent_health_router, init_torrent_health_router
+import torrent_health
 from routers.indexer_search import router as indexer_search_router, init_indexer_search_router
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -370,6 +373,17 @@ def get_provider_client(provider):
     return factory() if factory else None
 
 
+def _provider_scene_duration(provider, scene_id):
+    """Seconds the provider has for a scene (the search compares release sizes with it, v0.231.0), None when unknown."""
+    client = get_provider_client(provider)
+    if client is None or not hasattr(client, "scene_durations"):
+        return None
+    return (client.scene_durations([scene_id]) or {}).get(str(scene_id))
+
+
+indexer_search.set_duration_resolver(_provider_scene_duration)
+
+
 _details_backfill_lock = threading.Lock()
 
 
@@ -509,11 +523,11 @@ def _auto_handoff_release(entity_type, entity_stashdb_id, scene_stashdb_id):
         whisparr_quality_profile_id, whisparr_vr_quality_profile_id, settings.whisparr_root_folder_path,
         quality_profile, vr_search_enabled, search_source=get_auto_hand_off_source(),
         get_provider_client=get_provider_client, get_stash_client=get_stash_client,
+        on_start=lambda already_sent: history.scene("info", "wishlist", f"Added to the wishlist automatically (watched {entity_type})",
+                                                    "stashdb", scene_stashdb_id),
     )
     if result.get("already_in_library"):
         return result
-    history.scene("info", "wishlist", f"Added to the wishlist automatically (watched {entity_type})",
-                  "stashdb", scene_stashdb_id)
     logger.info("auto hand-off: put scene %s (%s %s) on the wishlist", scene_stashdb_id, entity_type,
                 entity_stashdb_id)
     return result
@@ -1601,6 +1615,40 @@ init_download_clients_router(db, get_prowlarr_client_if_configured)
 init_indexers_router(db)
 init_metadata_providers_router(db)
 init_stash_boxes_router(db)
+init_userscript_router(db, get_stash_client, get_stashdb_client,
+                       lambda: get_setting_value(db, "stash_url", settings.stash_url))
+
+
+def _torrent_switch_scene(target):
+    """The monitor found a dead torrent: another one for the same scene, if the search finds one (the old torrent is excluded by its hash and
+    does not stop the grab). True when a replacement was grabbed."""
+    release = target.get("release")
+    source = get_search_source()
+    if release is None or source is None or not getattr(source, "available", False):
+        return False
+    quality_profile, vr_search_enabled = resolve_quality_profiles(db)
+    result = attempt_sidecar_search(
+        db, release["provider"], release["scene_stashdb_id"], release, quality_profile, vr_search_enabled, source, get_provider_client,
+        exclude_hashes=[str(target["job_id"]).lower()], replace_job=True)
+    if not result.get("grab") and result.get("result") in (indexer_search.RESULT_SEARCH_FAILED, indexer_search.RESULT_SEARCH_BACKEND_UNAVAILABLE):
+        return "failed"  # the indexers could not be asked: the monitor tries again at its next look instead of waiting 6 hours
+    return bool(result.get("grab"))
+
+
+_torrent_health_lock = threading.Lock()
+
+
+def run_torrent_health():
+    """One round of the torrent monitor (torrent_health.py); a second trigger while one runs is skipped."""
+    if not _torrent_health_lock.acquire(blocking=False):
+        return {"skipped": True}
+    try:
+        return torrent_health.run(db, {"switch_scene": _torrent_switch_scene})
+    finally:
+        _torrent_health_lock.release()
+
+
+init_torrent_health_router(db, _torrent_switch_scene, run_torrent_health)
 def _stuck_for_button():
     if resolve_whisparr_scope_preset(db) == "full_whisparr":
         return []  # Whisparr searches by itself, nothing for this program to query
@@ -1752,7 +1800,12 @@ def _logged(job, fn):
     try:
         summary = _job_summary(job, result)
         if summary:
-            history.event(summary[0], "job", summary[1])
+            details = None
+            if job == "scan" and isinstance(result, dict) and result.get("failed"):
+                # WHICH entries failed and why (v0.232.2): the line only said "1 entr(y/ies) failed" and the reason was in the container log
+                details = {"failed": [{k: str(f.get(k) or "")[:200] for k in ("provider", "entity_type", "name", "error")}
+                                      for f in result["failed"][:25]]}
+            history.event(summary[0], "job", summary[1], details=details)
     except Exception:
         logger.exception("history: couldn't summarize %s", job)
     return result
@@ -2013,6 +2066,20 @@ async def _file_import_loop():
         await asyncio.sleep(max(interval_hours, 0.1) * 3600)
 
 
+async def _torrent_health_loop():
+    """The torrent monitor (v0.231.0, torrent_health.py): every `torrent_health_minutes` (0 = off)."""
+    while True:
+        minutes = _get_setting("torrent_health_minutes")
+        if minutes > 0:
+            try:
+                result = await asyncio.to_thread(run_torrent_health)
+                if result.get("switched") or result.get("problems"):
+                    logger.info("torrent health: %s", result)
+            except Exception:
+                logger.exception("torrent health failed")
+        await asyncio.sleep(max(minutes, 5) * 60 if minutes > 0 else 600)
+
+
 async def _indexer_search_loop():
     while True:
         interval_hours = _get_setting("indexer_search_interval_hours")
@@ -2131,7 +2198,7 @@ async def lifespan(app: FastAPI):
         threading.Thread(target=run_tags_backfill, daemon=True).start()
         tasks += [asyncio.create_task(loop()) for loop in (
             _scan_loop, _safety_sweep_loop, _stashdb_favorites_loop, _box_favorites_loop, _whisparr_blocklist_sync_loop, _theporndb_identify_loop,
-            _inactive_check_loop, _duplicate_check_loop, _film_search_loop, _film_feed_loop, _import_check_loop, _file_import_loop,
+            _inactive_check_loop, _duplicate_check_loop, _film_search_loop, _film_feed_loop, _import_check_loop, _file_import_loop, _torrent_health_loop,
             _indexer_search_loop, _recycle_bin_cleanup_loop)]
     app.state.job_tasks = tasks
     yield
@@ -2142,6 +2209,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="StashReleaseManager", lifespan=lifespan)
 
 app.include_router(watchlist_router)
+app.include_router(userscript_router)
 app.include_router(releases_router)
 app.include_router(encode_worker_router)
 app.include_router(scan_router)
@@ -2160,6 +2228,7 @@ app.include_router(download_clients_router)
 app.include_router(indexers_router)
 app.include_router(metadata_providers_router)
 app.include_router(stash_boxes_router)
+app.include_router(torrent_health_router)
 app.include_router(indexer_search_router)
 app.include_router(history_router)
 app.include_router(compare_router)

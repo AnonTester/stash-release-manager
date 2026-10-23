@@ -6,6 +6,40 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.235.8
+- Dismiss buttons use Stash's own button classes and follow its theme: "Dismiss" is the outlined red, "Dismiss & Delete" the filled red of Stash's Delete button.
+- Movie rows (Activity > Stuck, Movies page): "Search now" and "Open group" are icon buttons (words as tooltip); "Search now" shows a spinner while it runs.
+
+## 0.235.2 - 0.235.7
+- Activity > Import failed: **Re-check fingerprints** asks the provider for the scene's fingerprints again (someone may have submitted some since the download was judged). An exact match imports the file like a verified one; otherwise nothing changes and the row says how many fingerprints the provider has and how close the nearest perceptual hash is. Only an exact match imports automatically (the 8-bit tolerance is for files this sidecar re-encoded itself); a file within 8 bits is very likely the same video in another encode, and "File is correct" is the way to keep it.
+- The buttons of that row are icon buttons (play, fingerprint, check, upload; the words are the tooltip), "Fix wrong download" keeps its text. The "Correct + submit to StashDB" button is hidden while submitting fingerprints is switched off in Settings.
+- Release rows: the result / progress text of a row's buttons has its own line under the row's text (it used to widen the buttons' column and shift the list), and the confirmation question of a button is an overlay over the buttons' place, as in a calendar pill, so nothing moves. Needs review keeps its own layout.
+
+## 0.234.5
+- A running search shows a small spinner in front of its status text everywhere (Now, Last, Manual, the Search page, Maintenance searches, film searches, the indexer test, the torrent actions on Activity).
+
+## 0.233.0 - 0.234.4
+- Browser userscript for stash-box sites (Tampermonkey or Violentmonkey), served by the sidecar at `/userscript/srm.user.js` (see INSTALL.md). On StashDB scene pages and scene cards: **Send to wishlist** (searched by the schedule), **Send and search now**, **Open in Stash** (for every scene in your whole Stash library, not only the wishlist), **Copy Stash-ID**, and a status colour (the colours of the Release Calendar: green imported / in the library, purple on the wishlist, blue found by a scan, red import failed, grey dismissed). A scene page shows two chips, "Stash" and "SRM"; on a card only a status dot shows until the pointer is on it; dots pulse while the status loads.
+- On performer and studio pages: the same chips and an eye button to **Watch** (created in Stash first when missing; Favorite flag or watchlist tag, as set in the plugin) or, crossed out, to take it off the watchlist again (only the mark is removed, nothing is deleted in Stash), plus Open in Stash.
+- New endpoints: GET /userscript/state, POST /userscript/wishlist, GET /userscript/entity-state, POST /userscript/watch.
+
+## 0.232.1 - 0.232.3
+- Activity > Downloading & importing: a download that waits for its re-encode says "Waiting for the re-encode" and who is expected to do it. With the encode worker offline the text is amber and tells you to start it (or use "Encode on the NAS now"); every variant shows how long the job has waited.
+- History: a scan that had failed entries lists them in the entry's details (provider, kind, name, error; up to 25).
+- Encode worker: a sidecar restart no longer throws away a running encode. The worker keeps encoding when a progress report does not get through, the sidecar tells a worker that keeps reporting "still yours" during the first ten minutes after a start and hands the queued job back to the worker that is encoding it, and the final report is retried every 30 s for 15 minutes. A worker that is already running keeps the old behaviour until it is restarted (do that between two encodes).
+
+## 0.232.0
+- Maintenance > Duration mismatch has the layout of Upgrade wanted (colored badge, screenshot, title linking to the scene, lengths, buttons in one group).
+- Maintenance > Upgrade wanted can be filtered by why a file is on the list: 2D file -> real VR, mono VR -> stereo VR, VR below 4K, quality below cutoff (all, or by the current file's resolution), re-added, wrong length, done; every choice shows its count. Scenes without a provider id are hidden by default (a checkbox shows them).
+
+## 0.230.1 - 0.231.7
+- **Torrents are watched** (Settings > Search & Quality > Torrents; see INSTALL.md). Every 30 minutes the running torrents of scenes and movies are checked. A torrent without progress for an hour (almost nothing downloaded) is replaced by another torrent when the search finds one: the dead one is removed from qBittorrent with its partial data and never used again (blocked by its hash, not its name). Without another torrent it is shown as stuck and searched for again every 6 hours. A torrent with real progress that stalls, one in an error state or one gone from the client is only flagged. Activity > Stuck lists them with seeds, peers and availability and the buttons Find another, Alternatives, Re-add, Keep waiting and Remove. Only observed time counts: while the sidecar or the download client was not running nothing is concluded from the silence. A search that could not be made (indexer not answering) is no longer taken for "no other torrent exists"; with the indexers down the best torrent of the last search is added from its magnet link.
+- Torrent choice: seeders count. The best resolution wins when it has plenty of seeders (default 10), otherwise a lower resolution with at least three times as many; inside a resolution the most seeders win. A release name without a resolution is judged from the scene's length and the size; the search log and the manual search show seeders, peers, the estimated resolution and a "size?" note. The duplicate guard and the torrent blocklist use the info hash.
+- The search log ("Last") shows seeders and peers and has a Grab button on every result; it keeps up to 500 results per search and is only loaded when "Last" is opened. Release names that are really a post text are cleaned for display.
+- A download link that answers with a redirect to a magnet link is added to qBittorrent as that magnet link (before: "InvalidSchema").
+- The status of a torrent on Activity, Releases > On Wishlist and Stuck shows the download client's numbers of this moment (seeds, peers, availability, stall time). The Activity number is there from the first moment; the "live updates unavailable" notice no longer flashes when a tab is clicked.
+- Phone screens: the buttons of Releases > On Wishlist and the Activity tabs wrap under the text. The browser tab of the plugin's pages is titled "SRM Plugin | <Stash title>". Settings > Connections: Firefox no longer offers to save API keys as logins. History: "Added to the wishlist" is written before the search's own entries.
+
 ## 0.230.0
 - Indexer search: a scene whose StashDB studio is a performer-named creator but whose release carries the SITE's name ("Site.Performer.Title.Words...") is found now. (1) The scene's "Studio" link names the site (`https://www.example-site.com/watch/...` -> `examplesite`): the queries "<site> <first performer>" and "<site> YY.MM.DD" are added after the existing ones, except when the site is the studio's own name or part of it. The links are fetched from StashDB once per scene at its first search and stored; ThePornDB scenes are not asked. (2) A title that ends in " - <cast>" is also searched without that tail, right after the full title: no release name carries it and the indexers want every word. The queries stay staged: the search stops at the first plausible lead.
 

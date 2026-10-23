@@ -69,11 +69,14 @@ the only line of defense against grabbing entirely the wrong scene.
 """
 import logging
 import re
+from datetime import datetime, timezone
+from urllib.parse import quote
 
 import download_client_repo
 import download_history_cleanup
 import history
 import release_repo
+import torrent_estimate
 from qbittorrent_client import AlreadyAdded, QbittorrentClient, QbittorrentError
 from sabnzbd_client import SabnzbdClient
 
@@ -593,6 +596,45 @@ def load_size_limits(db):
     return {"default": gb("max_file_gb", 8), 2160: gb("max_file_gb_2160", 12)}
 
 
+# Torrent choice (v0.231.0): a torrent with fewer seeders than `min_seeders` is a last resort; a lower resolution wins over the best one when the
+# best has fewer than `plenty` seeders and the lower one has `factor` times as many.
+DEFAULT_TORRENT_CFG = {"min_seeders": 1, "plenty": 10, "factor": 3.0}
+
+
+def load_torrent_settings(db):
+    """`torrent_min_seeders` / `torrent_plenty_seeders` / `torrent_lower_res_factor` from settings."""
+    from routers.settings import get_setting_value
+    def num(key, default, cast):
+        try:
+            return cast(float(get_setting_value(db, key, "") or default))
+        except ValueError:
+            return default
+    return {"min_seeders": num("torrent_min_seeders", DEFAULT_TORRENT_CFG["min_seeders"], int),
+            "plenty": num("torrent_plenty_seeders", DEFAULT_TORRENT_CFG["plenty"], int),
+            "factor": num("torrent_lower_res_factor", DEFAULT_TORRENT_CFG["factor"], float)}
+
+
+# The length of a scene at its provider (v0.231.0), set by main.py like the parent-studio resolver: fn(provider, scene_id) -> seconds or None.
+_duration_resolver = None
+
+
+def set_duration_resolver(fn):
+    global _duration_resolver
+    _duration_resolver = fn
+
+
+def scene_duration(provider, scene_id):
+    """Seconds, or None (unknown, no resolver, provider error): the estimates simply stay off then."""
+    if _duration_resolver is None:
+        return None
+    try:
+        value = _duration_resolver(provider, scene_id)
+        return value if value and value >= torrent_estimate.MIN_DURATION_SEC else None
+    except Exception:
+        logger.warning("indexer_search: couldn't read the length of %s scene %s", provider, scene_id, exc_info=True)
+        return None
+
+
 def fallback_resolutions(db, scene_date, today=None):
     """Resolutions outside the quality profile that are accepted as a last resort (v0.218.0): once a scene is `fallback_resolution_days` old (0 = never)
     and nothing in the profile turned up -- 2160p (the importer scales it down to 1080p, see transcode.py) and, with `fallback_accept_sd`, SD (480).
@@ -733,7 +775,7 @@ def normalize_prowlarr_release(raw):
 
 def _select_best(releases, allowed_resolutions, indexer_priorities, scene_title, scene_date, performer_names,
                   require_vr=False, rejected_titles=(), vr_rules=None, allow_unknown_resolution=False,
-                  taken_titles=(), size_limits=None):
+                  taken_titles=(), size_limits=None, duration_s=None, torrent_cfg=None):
     """Lowest sort key wins: (quality rank, indexer priority, age,
     -size) -- see module docstring for how this maps to Whisparr's own
     comparer chain. A candidate whose resolution isn't in
@@ -772,15 +814,18 @@ def _select_best(releases, allowed_resolutions, indexer_priorities, scene_title,
     scene already holds (release_repo.grabbed_titles_of_other_scenes())."""
     rejected = _split_rejected(rejected_titles)
     taken_identities = {_review_identity(t) for t in taken_titles}
-    best, best_key = None, None
+    cfg = torrent_cfg or DEFAULT_TORRENT_CFG
+    pool = []
     for r in releases:
         title = r.get("title")
-        if _is_rejected(title, rejected) or _review_identity(title) in taken_identities:
+        if _is_rejected(title, rejected, r) or _review_identity(title) in taken_identities:
             continue
         if not _candidate_plausible(scene_title, scene_date, performer_names, title):
             continue
         quality = (r.get("quality") or {}).get("quality") or {}
         size = r.get("size") or 0
+        torrent = (r.get("protocol") or "usenet") != "usenet"
+        tier, estimated = 0, False
         if require_vr:
             if quality.get("source") != "vr":
                 continue
@@ -795,37 +840,108 @@ def _select_best(releases, allowed_resolutions, indexer_priorities, scene_title,
             if too_large(r, False, size_limits):
                 continue
             resolution = quality.get("resolution")
+            codec = torrent_estimate.codec_of(title)
+            # A name without a resolution: judged from the scene's length and the size (v0.231.0), ranked just after a named one.
+            if resolution is None and duration_s and allowed_resolutions:
+                guess = torrent_estimate.estimate_resolution(size, duration_s, codec)
+                if guess in allowed_resolutions:
+                    resolution, estimated = guess, True
             if resolution is None and allow_unknown_resolution and allowed_resolutions:
                 rank = len(allowed_resolutions)
             elif resolution not in allowed_resolutions:
                 continue
             else:
-                rank = allowed_resolutions.index(resolution)
+                rank = allowed_resolutions.index(resolution) + (0.5 if estimated else 0)
             size_key = -size
+            # Last resort, used only when nothing better is left: a size that cannot be right for this length (mislabelled), or a torrent
+            # nobody seeds.
+            if duration_s and torrent_estimate.size_fit(size, duration_s, codec) is False:
+                tier = 1
+            if torrent and r.get("seeders") is not None and r["seeders"] < cfg["min_seeders"]:
+                tier = 1
+        pool.append({"r": r, "title": title, "rank": rank, "size_key": size_key, "tier": tier, "torrent": torrent,
+                     "seeders": r.get("seeders") if r.get("seeders") is not None else cfg["min_seeders"]})
+
+    # Torrents: the best resolution unless it has few seeders and a lower one has many more (the others keep their order behind it).
+    if not require_vr:
+        preferred = _preferred_torrent_rank([p for p in pool if p["tier"] == 0 and p["torrent"]], cfg)
+        if preferred is not None:
+            for p in pool:
+                if p["torrent"] and p["tier"] == 0 and int(p["rank"]) != preferred:
+                    p["rank"] += 100
+
+    best, best_key = None, None
+    for p in pool:
+        r = p["r"]
         priority = indexer_priorities.get(r.get("indexerId"), 25)
         age = r.get("age")
         age = age if age is not None else float("inf")
-        proto = 0 if (r.get("protocol") or "usenet") == "usenet" else 1  # "prefer usenet" like the *arr default delay profile: a tiebreak after quality
-        key = (rank, proto, priority, age, size_key) if not require_vr else (rank, proto, priority, size_key, age)
-        key = (0 if _names_distinguishing_performer(scene_title, performer_names, title) else 1,) + key
+        proto = 1 if p["torrent"] else 0  # "prefer usenet" like the *arr default delay profile: a tiebreak after quality
+        if require_vr:
+            key = (p["rank"], proto, priority, p["size_key"], age)
+        else:
+            key = (p["rank"], proto, -p["seeders"] if p["torrent"] else 0, priority, age, p["size_key"])
+        key = (p["tier"], 0 if _names_distinguishing_performer(scene_title, performer_names, p["title"]) else 1) + key
         if best_key is None or key < best_key:
             best_key, best = key, r
     return best
 
 
-# Search log (2026-09-25, Indexers-tab stage 4): how many candidates to
-# keep per search -- enough to see what the indexers returned without
-# letting one broad query (100+ results) bloat every release row.
-_SEARCH_LOG_MAX_CANDIDATES = 50
+def _preferred_torrent_rank(candidates, cfg):
+    """The resolution rank (int) the torrents should be taken at, or None without torrents: the best one, unless it has fewer than
+    `plenty` seeders and a lower one has at least `factor` times as many (then the lower one with the most seeders)."""
+    groups = {}
+    for p in candidates:
+        g = int(p["rank"])
+        groups[g] = max(groups.get(g, 0), p["seeders"])
+    if not groups:
+        return None
+    best = min(groups)
+    if groups[best] >= cfg["plenty"]:
+        return best
+    need = cfg["factor"] * max(groups[best], 1)
+    better = [(seeds, -g) for g, seeds in groups.items() if g != best and seeds >= need]
+    return -max(better)[1] if better else best
+
+
+# Search log (2026-09-25, Indexers-tab stage 4): how many candidates to keep per search. Was 50 (v0.231.3: 500) -- the log is paged in the
+# plugin, and the listings no longer carry it (release_repo._listed()), so it only costs room in the database (about 0.4 KB per result).
+_SEARCH_LOG_MAX_CANDIDATES = 500
 # Display order of verdicts in the log -- the interesting ones first.
 _VERDICT_ORDER = ("grabbed", "review", "lower_rank", "quality_not_allowed", "not_vr",
                   "vr_2d", "vr_no_format", "vr_res_too_high", "vr_too_large", "vr_too_small",
                   "too_large", "title_mismatch", "other_scene", "blocklisted")
 
 
+def torrent_facts(r, duration_s=None):
+    """What the search log and the manual-search list show beside a result (v0.231.0): seeders / peers of a torrent, the resolution judged from
+    the length when the name has none, and why a size does not fit. Only the keys that apply."""
+    out = {}
+    if (r.get("protocol") or "usenet") != "usenet":
+        out["protocol"] = "torrent"
+        info_hash = release_hash(r)
+        if info_hash:  # no link, no key: enough to add the torrent again as a magnet when the indexers do not answer (_grab_from_previous_log)
+            out["info_hash"] = info_hash
+        if r.get("seeders") is not None:
+            out["seeders"] = r["seeders"]
+        if r.get("peers") is not None:
+            out["peers"] = r["peers"]
+    if duration_s:
+        codec = torrent_estimate.codec_of(r.get("title"))
+        quality = (r.get("quality") or {}).get("quality") or {}
+        if quality.get("resolution") is None:
+            guess = torrent_estimate.estimate_resolution(r.get("size") or 0, duration_s, codec)
+            if guess:
+                out["est_resolution"] = guess
+        note = torrent_estimate.describe(r.get("size") or 0, duration_s, codec)
+        if note:
+            out["size_note"] = note
+    return out
+
+
 def _explain_candidates(releases, allowed_resolutions, scene_title, scene_date, performer_names,
                         require_vr, rejected_titles, chosen, review, vr_rules=None, allow_unknown_resolution=False,
-                        taken_titles=(), size_limits=None):
+                        taken_titles=(), size_limits=None, duration_s=None):
     """Per-candidate verdicts for the search log -- the SAME predicates
     `_select_best()` applies, in the same order, just recorded instead of
     silently `continue`d past, so the log shows exactly why each result
@@ -844,7 +960,7 @@ def _explain_candidates(releases, allowed_resolutions, scene_title, scene_date, 
             verdict = "grabbed"
         elif review is not None and (title, r.get("downloadUrl")) == (review.get("title"), review.get("downloadUrl")):
             verdict = "review"
-        elif _is_rejected(title, rejected):
+        elif _is_rejected(title, rejected, r):
             verdict = "blocklisted"
         elif _review_identity(title) in taken_identities:
             verdict = "other_scene"
@@ -861,14 +977,59 @@ def _explain_candidates(releases, allowed_resolutions, scene_title, scene_date, 
             verdict = "quality_not_allowed"
         else:
             verdict = "lower_rank"
-        entries.append({
+        entry = {
             "title": title, "indexer": r.get("indexer"), "resolution": quality.get("resolution"),
             "vr": quality.get("source") == "vr", "size": r.get("size"), "age": r.get("age"),
             "verdict": verdict,
             "info_url": safe_info_url(r.get("infoUrl")),
-        })
+        }
+        entry.update(torrent_facts(r, duration_s))
+        entries.append(entry)
     entries.sort(key=lambda e: _VERDICT_ORDER.index(e["verdict"]))
     return entries[:_SEARCH_LOG_MAX_CANDIDATES]
+
+
+# A search log older than this is not used as a source of torrents (seeders and availability change)
+PREVIOUS_LOG_MAX_AGE_HOURS = 7 * 24
+
+
+def _grab_from_previous_log(db, provider, scene_stashdb_id, previous, rejected_titles, torrent_cfg):
+    """The indexers did not answer while a dead torrent is being replaced (v0.231.7): adds the best torrent of the LAST search instead, as a magnet
+    link built from its info hash (the log keeps no download links: they carry the indexer's key; a magnet does not need the indexer at all).
+    Candidates: torrents the last search found plausible (OK / possible match / what was grabbed), not given up on (hash blocklist, which
+    already holds the dead torrent), not flagged for a wrong size, with the minimum seeders; most seeders first, then the log's own order.
+    Returns the grab dict, or None when there is nothing to take (no hashes in an older log, too old, nothing left)."""
+    try:
+        # `kept_from`: a failed search keeps the candidates of an older one (its time), the log's own time is then the failed attempt's
+        searched = datetime.strptime(str(previous.get("kept_from") or previous.get("searched_at") or "")[:19],
+                                     "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+    if (datetime.now(timezone.utc) - searched).total_seconds() > PREVIOUS_LOG_MAX_AGE_HOURS * 3600:
+        return None
+    split = _split_rejected(rejected_titles)
+    options = []
+    for i, c in enumerate(previous.get("candidates") or []):
+        info_hash = str(c.get("info_hash") or "").lower()
+        if (c.get("protocol") != "torrent" or not info_hash or c.get("verdict") not in ("grabbed", "review", "lower_rank")
+                or c.get("size_note") or _is_rejected(c.get("title"), split, {"infoHash": info_hash, "title": c.get("title")})):
+            continue
+        seeders = c.get("seeders")
+        if seeders is None or seeders < torrent_cfg["min_seeders"]:
+            continue
+        options.append((-seeders, i, c, info_hash))
+    if not options:
+        return None
+    _, _, c, info_hash = min(options)
+    magnet = f"magnet:?xt=urn:btih:{info_hash}&dn={quote(str(c.get('title') or ''), safe='')}"
+    candidate = {"title": c.get("title"), "indexer": c.get("indexer"), "protocol": "torrent", "size": c.get("size"), "age": c.get("age"),
+                 "infoHash": info_hash, "magnetUrl": magnet, "downloadUrl": magnet, "seeders": c.get("seeders"), "peers": c.get("peers")}
+    result = grab_candidate(db, provider, scene_stashdb_id, candidate, replace_job=True)
+    if not result.get("grab"):
+        return None
+    history.scene("warning", "torrent", f"The indexers did not answer: took the best torrent of the last search instead: {c.get('title')}",
+                  provider, scene_stashdb_id, details={"seeders": c.get("seeders"), "from": previous.get("kept_from") or previous.get("searched_at")})
+    return result["grab"]
 
 
 # The first marker of the "quality part" of a release name: "XXX", a resolution (720p, 1080p, 2160p), a codec (x264, x265, h264, h265, hevc).
@@ -890,19 +1051,70 @@ def _exact_key(title):
     return re.sub(r"[^a-z0-9]+", " ", (title or "").lower()).strip()
 
 
+# Third and fourth kind (v0.231.0): "hash:<info hash>" / "link:<link without keys>" -- THIS torrent is unusable (dead, stalled, abandoned). Torrent
+# names are not unique: another torrent of the same release name, with another hash, may be fine. They live in the same set as the exact keys
+# (they cannot collide: an exact key has no ':').
+HASH_PREFIX = "hash:"
+LINK_PREFIX = "link:"
+_HEX40_RE = re.compile(r"^[0-9a-f]{40}$")
+
+
+def release_hash(r):
+    """The torrent's info hash (lower-case hex) from the result's infoHash or the btih of its magnet link; '' when not known."""
+    h = str(r.get("infoHash") or "").strip().lower()
+    if _HEX40_RE.match(h):
+        return h
+    for url in (r.get("magnetUrl"), r.get("downloadUrl")):
+        if url and str(url).lower().startswith("magnet:"):
+            m = re.search(r"xt=urn:btih:([0-9a-zA-Z]+)", str(url))
+            if m and _HEX40_RE.match(m.group(1).lower()):
+                return m.group(1).lower()
+    return ""
+
+
+def link_key(url):
+    """A link without the keys in it (apikey=, passkey=...), so it can be compared and stored."""
+    u = str(url or "").strip()
+    if not u or u.lower().startswith("magnet:"):
+        return ""
+    base, _, query = u.partition("?")
+    kept = [kv for kv in query.split("&") if kv and kv.split("=")[0].lower() not in ("apikey", "api_key", "passkey", "key", "token")]
+    return (base + ("?" + "&".join(sorted(kept)) if kept else "")).lower()
+
+
+def release_ids(r):
+    """The blocklist entries ("hash:..", "link:..") that name this very torrent."""
+    ids = set()
+    h = release_hash(r)
+    if h:
+        ids.add(HASH_PREFIX + h)
+    link = link_key(r.get("downloadUrl"))
+    if link:
+        ids.add(LINK_PREFIX + link)
+    return ids
+
+
 def _split_rejected(rejected_titles):
-    """(identities, exact keys) of a scene's blocklist entries."""
+    """(identities, exact keys) of a scene's blocklist entries; the hash / link entries are among the exact keys, prefix kept."""
     identities, exacts = set(), set()
     for t in rejected_titles:
-        if str(t).startswith(EXACT_PREFIX):
-            exacts.add(_exact_key(str(t)[len(EXACT_PREFIX):]))
+        t = str(t)
+        if t.startswith(EXACT_PREFIX):
+            exacts.add(_exact_key(t[len(EXACT_PREFIX):]))
+        elif t.startswith(HASH_PREFIX):
+            exacts.add(HASH_PREFIX + t[len(HASH_PREFIX):].strip().lower())
+        elif t.startswith(LINK_PREFIX):
+            exacts.add(LINK_PREFIX + t[len(LINK_PREFIX):].strip().lower())
         else:
             identities.add(_review_identity(t))
     return identities, exacts
 
 
-def _is_rejected(title, split):
+def _is_rejected(title, split, release=None):
+    """`release` (the result dict) lets a hash / link entry match; without it only the names count."""
     identities, exacts = split
+    if release is not None and release_ids(release) & exacts:
+        return True
     return _review_identity(title) in identities or _exact_key(title) in exacts
 
 
@@ -948,7 +1160,7 @@ def _select_review_candidate(releases, scene_title, scene_date, performer_names,
     best, best_key = None, None
     for r in releases:
         title = r.get("title")
-        if _is_rejected(title, rejected):
+        if _is_rejected(title, rejected, r):
             continue
         if _candidate_plausible(scene_title, scene_date, performer_names, title):
             continue  # already auto-acceptable, not a "review" case
@@ -1120,7 +1332,7 @@ def _viable_lead(releases, scene_title, scene_date, performer_names, rejected_ti
     rejected = _split_rejected(rejected_titles)
     taken_identities = {_review_identity(t) for t in taken_titles}
     return any(_candidate_plausible(scene_title, scene_date, performer_names, r.get("title"))
-               and not _is_rejected(r.get("title"), rejected) and _review_identity(r.get("title")) not in taken_identities
+               and not _is_rejected(r.get("title"), rejected, r) and _review_identity(r.get("title")) not in taken_identities
                for r in releases)
 
 
@@ -1189,7 +1401,8 @@ def _build_queries(scene_title, performer_names, studio_name, scene_date, parent
 
 def search_and_grab(db, whisparr_client, movie_id, provider, scene_stashdb_id, scene_title, scene_date,
                      performer_names, quality_profile, is_vr=False, vr_enabled=False, search_source=None,
-                     studio_name=None, candidate_filter=None, dry_run=False, allow_unknown_resolution=None):
+                     studio_name=None, candidate_filter=None, dry_run=False, allow_unknown_resolution=None,
+                     exclude_hashes=(), replace_job=False, duration_s=None):
     """Full Milestone 3 flow for one release. Always returns
     `{"result": RESULT_*, "grab": grab_dict_or_None}` -- `grab` is only
     ever non-None when `result == RESULT_GRABBED`. Changed 2026-09-19
@@ -1242,6 +1455,9 @@ def search_and_grab(db, whisparr_client, movie_id, provider, scene_stashdb_id, s
     set back in would undercut the whole point. `movie_id` is still
     required either way -- it's this project's own Whisparr bookkeeping
     record regardless of who searches for the file."""
+    # `exclude_hashes` / `replace_job` (v0.231.0, torrent health): switching away from a dead torrent -- the old one is treated as blocklisted
+    # for this search and the running download of the scene does not stop the grab (the caller removes the old torrent afterwards).
+    # `duration_s`: the scene's length when the caller knows it; else it is asked from the provider (needed for the size estimates).
     # `candidate_filter(release) -> bool` / `dry_run` (2026-09-26, upgrade
     # search): the filter drops candidates that aren't an improvement over
     # the file already owned; a dry run searches and selects but writes
@@ -1276,7 +1492,7 @@ def search_and_grab(db, whisparr_client, movie_id, provider, scene_stashdb_id, s
 
     releases = None
 
-    if not dry_run and release_repo.scene_has_active_download(db, provider, scene_stashdb_id):
+    if not dry_run and not replace_job and release_repo.scene_has_active_download(db, provider, scene_stashdb_id):
         logger.info("indexer_search: %s scene %s already has a running download, not searching again",
                     provider, scene_stashdb_id)
         return _finish(RESULT_ALREADY_DOWNLOADING)
@@ -1290,7 +1506,8 @@ def search_and_grab(db, whisparr_client, movie_id, provider, scene_stashdb_id, s
         return _finish(RESULT_NO_QUALITY_PROFILE)
 
     # Read before the search (v0.217.1): the widening below must not stop at a lead that is blocklisted or belongs to another scene.
-    rejected_titles = release_repo.get_review_rejected_titles(db, provider, scene_stashdb_id)
+    rejected_titles = list(release_repo.get_review_rejected_titles(db, provider, scene_stashdb_id)) + [
+        HASH_PREFIX + str(h).lower() for h in exclude_hashes or ()]
     taken_titles = list(release_repo.grabbed_titles_of_other_scenes(db, provider, scene_stashdb_id))
 
     try:
@@ -1337,7 +1554,18 @@ def search_and_grab(db, whisparr_client, movie_id, provider, scene_stashdb_id, s
     except Exception as e:
         logger.exception("indexer_search: release search failed for movie %s", movie_id)
         releases = None
+        previous = None if dry_run else release_repo.get_search_details_for_scene(db, provider, scene_stashdb_id)
+        # Switching away from a dead torrent while the indexers do not answer: the best torrent of the last search is taken instead
+        if replace_job and previous and not dry_run:
+            grabbed = _grab_from_previous_log(db, provider, scene_stashdb_id, previous, rejected_titles, load_torrent_settings(db))
+            if grabbed is not None:
+                return _finish(RESULT_GRABBED, grabbed)
         _log(error=str(e))
+        if previous and previous.get("candidates") and not dry_run:
+            # the failed search does not wipe what the last one found: "Last" keeps showing it (marked with its time)
+            release_repo.set_search_details_for_scene(db, provider, scene_stashdb_id, {
+                "backend": backend, "queries": queries_sent, "error": str(e), "total": previous.get("total", 0),
+                "candidates": previous["candidates"], "kept_from": previous.get("kept_from") or previous.get("searched_at")})
         return _finish(RESULT_SEARCH_FAILED)
 
     if releases and candidate_filter is not None:
@@ -1358,10 +1586,15 @@ def search_and_grab(db, whisparr_client, movie_id, provider, scene_stashdb_id, s
     if allow_unknown_resolution is None:
         allow_unknown_resolution = candidate_filter is None
     size_limits = load_size_limits(db)
+    torrent_cfg = load_torrent_settings(db)
+    if duration_s is None and not is_vr and any((r.get("protocol") or "usenet") != "usenet" or
+                                                 ((r.get("quality") or {}).get("quality") or {}).get("resolution") is None
+                                                 for r in releases):
+        duration_s = scene_duration(provider, scene_stashdb_id)  # only asked when it can matter: a torrent, or a name without a resolution
     best = _select_best(releases, allowed_resolutions, priorities, scene_title, scene_date, performer_names,
                          require_vr=is_vr, rejected_titles=rejected_titles, vr_rules=vr_rules,
                          allow_unknown_resolution=allow_unknown_resolution, taken_titles=taken_titles,
-                         size_limits=size_limits)
+                         size_limits=size_limits, duration_s=duration_s, torrent_cfg=torrent_cfg)
     if best is None and not is_vr and candidate_filter is None:
         # Last resort for an older scene (v0.218.0): 2160p (scaled down to 1080p at the import) or SD, after everything in the profile.
         extra = [r for r in fallback_resolutions(db, scene_date) if r not in allowed_resolutions]
@@ -1370,7 +1603,7 @@ def search_and_grab(db, whisparr_client, movie_id, provider, scene_stashdb_id, s
             best = _select_best(releases, wider, priorities, scene_title, scene_date, performer_names,
                                  require_vr=is_vr, rejected_titles=rejected_titles, vr_rules=vr_rules,
                                  allow_unknown_resolution=allow_unknown_resolution, taken_titles=taken_titles,
-                                 size_limits=size_limits)
+                                 size_limits=size_limits, duration_s=duration_s, torrent_cfg=torrent_cfg)
             if best is not None:
                 allowed_resolutions = wider
     if best is None:
@@ -1393,7 +1626,7 @@ def search_and_grab(db, whisparr_client, movie_id, provider, scene_stashdb_id, s
                                                       studio_name=studio_name)
         _log(_explain_candidates(releases, review_resolutions, scene_title, scene_date, performer_names,
                                  is_vr, rejected_titles, None, review_candidate, vr_rules,
-                                 allow_unknown_resolution, taken_titles, size_limits))
+                                 allow_unknown_resolution, taken_titles, size_limits, duration_s))
         if not dry_run:
             previous = release_repo.get_review_candidate_for_scene(db, provider, scene_stashdb_id)
             release_repo.set_review_candidate_for_scene(db, provider, scene_stashdb_id, review_candidate)
@@ -1417,7 +1650,7 @@ def search_and_grab(db, whisparr_client, movie_id, provider, scene_stashdb_id, s
 
     _log(_explain_candidates(releases, allowed_resolutions, scene_title, scene_date, performer_names,
                              is_vr, rejected_titles, best, None, vr_rules, allow_unknown_resolution, taken_titles,
-                             size_limits))
+                             size_limits, duration_s))
     if dry_run:
         dry_info["would_grab"] = {"title": best.get("title"), "indexer": best.get("indexer"),
                                   "size": best.get("size"), "info_url": safe_info_url(best.get("infoUrl"))}
@@ -1426,7 +1659,7 @@ def search_and_grab(db, whisparr_client, movie_id, provider, scene_stashdb_id, s
         "title": best.get("title"), "indexer": best.get("indexer"), "size": best.get("size"),
         "protocol": best.get("protocol") or "usenet", "downloadUrl": best.get("downloadUrl"), "age": best.get("age"),
         **torrent_extras(best),
-    })
+    }, replace_job=replace_job)
 
 
 def _norm_release(name):
@@ -1482,17 +1715,20 @@ def candidate_url(c):
 
 
 def _torrent_duplicate_guard(client, candidate):
-    """Why this torrent must NOT be added again (or None): qBittorrent already has the same hash or the same release name."""
-    key = _norm_release(candidate.get("title"))
-    info_hash = (candidate.get("infoHash") or "").lower()
+    """Why this torrent must NOT be added again (or None): qBittorrent already has the very same torrent (hash). The release NAME no longer counts
+    (v0.231.0): torrent names are not unique, a dead and a healthy torrent can share one. A link without a known hash is decided by
+    QbittorrentClient.add(), which works out the hash of the file it fetches."""
+    info_hash = release_hash(candidate)
+    if not info_hash:
+        return None
     try:
         torrents = client.get_torrents(category="")
     except Exception:
         logger.exception("indexer_search: couldn't check qBittorrent for duplicates of %r", candidate.get("title"))
         return "couldn't check qBittorrent for duplicates"
     for t in torrents:
-        if (info_hash and (t.get("hash") or "").lower() == info_hash) or (key and _norm_release(t.get("name")) == key):
-            return "qBittorrent already has this release"
+        if (t.get("hash") or "").lower() == info_hash:
+            return "qBittorrent already has this torrent"
     return None
 
 
@@ -1586,7 +1822,7 @@ def _send_to_qbittorrent(db, candidate, client_row, warn):
     return {"result": RESULT_GRABBED, "client_row": client_row, "nzo_id": info_hash}
 
 
-def grab_candidate(db, provider, scene_stashdb_id, candidate):
+def grab_candidate(db, provider, scene_stashdb_id, candidate, replace_job=False):
     """Sends `candidate` (a dict with at least title/protocol/downloadUrl/
     indexer -- the same shape `_select_best()`/`_select_review_candidate()`
     produce) to this scene's configured download client and records the
@@ -1594,14 +1830,16 @@ def grab_candidate(db, provider, scene_stashdb_id, candidate):
     same shape as search_and_grab() itself. Factored out 2026-09-19 so
     the "accept this review candidate" action (routers/releases.py's
     accept_review_candidate()) shares the exact same grab path a normal
-    auto-accepted candidate uses, instead of a second, drifting copy."""
+    auto-accepted candidate uses, instead of a second, drifting copy.
+    `replace_job` (v0.231.0): the scene's running download is being replaced (a dead torrent), so it does not stop the grab; the caller
+    removes the old download."""
     def _finish(result, grab=None):
         release_repo.set_search_result_for_scene(db, provider, scene_stashdb_id, result)
         return {"result": result, "grab": grab}
 
     # Last line of defence for every grab path (auto, Search now, accepted
     # review candidate, manual pick, upgrade): one download per scene.
-    if release_repo.scene_has_active_download(db, provider, scene_stashdb_id):
+    if not replace_job and release_repo.scene_has_active_download(db, provider, scene_stashdb_id):
         logger.warning("indexer_search: not grabbing %r -- %s scene %s already has a running download",
                        candidate.get("title"), provider, scene_stashdb_id)
         return _finish(RESULT_ALREADY_DOWNLOADING)
