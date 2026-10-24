@@ -1024,6 +1024,14 @@ class StashClient:
                     qualifying_ids.add(sid["stash_id"])
         return len(qualifying_ids)
 
+    def scene_for_fingerprint_check(self, scene_id):
+        """One scene in the shape the library check works with (id, title, stash_ids, files with fingerprints), or None when Stash has none (v0.238.0)."""
+        data = self._graphql(
+            "query($ids: [Int!]) { findScenes(scene_ids: $ids) { scenes { id title stash_ids { endpoint stash_id } "
+            "files { path fingerprints { type value } } } } }", {"ids": [int(scene_id)]})
+        scenes = data["findScenes"]["scenes"]
+        return scenes[0] if scenes else None
+
     def all_scenes_with_stashdb_id(self):
         """Every local scene carrying a StashDB stash_id, with its
         files' own fingerprints included -- feeds

@@ -2671,6 +2671,11 @@
       label: 'Automatic upgrade search', key: 'upgrade_search_enabled', value: settings.upgrade_search_enabled === 'true' ? 'true' : 'false',
       options: [['false', 'Off'], ['true', 'On']],
     });
+    appendSettingRow(section, {
+      label: 'Dry-run button on Upgrade wanted', key: 'upgrade_dry_run_button', value: settings.upgrade_dry_run_button === 'true' ? 'true' : 'false',
+      options: [['false', 'Hidden'], ['true', 'Shown']],
+    });
+    appendSettingRow(section, { label: 'VR file below this bitrate is an upgrade candidate (Mbit/s)', key: 'vr_upgrade_min_mbps', value: settings.vr_upgrade_min_mbps || '8', min: '1', max: '200', step: '1' });
     appendSettingRow(section, { label: 'At most every (hours, 1-168)', key: 'upgrade_search_interval_hours', value: settings.upgrade_search_interval_hours || '12', min: '1', max: '168', step: '1' });
     appendSettingRow(section, { label: 'Candidates per run (1-200)', key: 'upgrade_search_per_run', value: settings.upgrade_search_per_run || '20', min: '1', max: '200', step: '1' });
     return section;

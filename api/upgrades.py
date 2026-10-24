@@ -7,8 +7,8 @@ Candidates (table `upgrade_candidate`, refreshed by refresh_candidates()):
                       target: real stereoscopic VR.
 - 'vr_mono'        -- monoscopic 360/180 VR ('vr_mono'); fine to keep, but
                       should become stereoscopic.
-- 'vr_low_quality' -- stereo VR below `vr_upgrade_min_width` total width
-                      (default 3840) or below `vr_upgrade_min_mbps` (8);
+- 'vr_low_quality' -- stereo VR below `vr_upgrade_min_mbps` Mbit/s (default 8;
+                      the width rule of earlier versions is gone, v0.237.4);
                       target: higher VR resolution, never above the 6K /
                       15 GB limits of indexer_search.vr_candidate_problem().
 - 'below_cutoff'   -- non-VR file below the active quality profile's
@@ -40,6 +40,7 @@ import logging
 import re
 from datetime import datetime, timedelta, timezone
 
+import quality_profile_repo
 import release_repo
 import vr_check
 from indexer_search import candidate_url, search_and_grab, vr_height
@@ -71,7 +72,8 @@ query($ids: [ID!]) {
 _LOW_RES_QUERY = """
 query($t: [ID!], $r: ResolutionEnum!) {
   findScenes(scene_filter: {resolution: {value: $r, modifier: LESS_THAN},
-                            tags: {value: $t, modifier: EXCLUDES, depth: -1}}, filter: {per_page: -1}) {
+                            tags: {value: $t, modifier: EXCLUDES, depth: -1},
+                            groups: {modifier: IS_NULL}}, filter: {per_page: -1}) {
     scenes { id title files { path width height size duration } stash_ids { endpoint stash_id } }
   }
 }
@@ -146,10 +148,27 @@ def _upsert(db, scene, file, reason, provider, provider_scene_id, provider_durat
         return cur.lastrowid
 
 
+def _scenes_by_ids(stash_client, ids, chunk=100):
+    """The scenes with these Stash ids. An id that is gone from Stash (a scene deleted after the VR check had judged its file) makes Stash
+    answer the whole request with an error ("scene with id N not found"): then the chunk is asked for one id at a time and the missing ones
+    are skipped (v0.237.6)."""
+    out = []
+    for i in range(0, len(ids), chunk):
+        part = ids[i:i + chunk]
+        try:
+            out += stash_client._graphql(_SCENES_BY_IDS_QUERY, {"ids": part})["findScenes"]["scenes"]
+        except Exception:
+            for one in part:
+                try:
+                    out += stash_client._graphql(_SCENES_BY_IDS_QUERY, {"ids": [one]})["findScenes"]["scenes"]
+                except Exception:
+                    logger.info("upgrade candidates: scene %s is gone from Stash, skipped", one)
+    return out
+
+
 def refresh_candidates(db, stash_client, get_setting, cutoff_resolution=None):
     """Rebuilds the 'wanted' list from the VR check results and the
     library's current files. Returns counts per reason."""
-    min_width = _num(get_setting, "vr_upgrade_min_width", 3840)
     min_mbps = _num(get_setting, "vr_upgrade_min_mbps", 8)
     with db.connect() as conn:
         verdicts = {(r["scene_id"], r["file_path"]): (r["verdict"], r["finding_status"])
@@ -164,7 +183,7 @@ def refresh_candidates(db, stash_client, get_setting, cutoff_resolution=None):
         seen_ids = {s["id"] for s in vr_scenes}
         extra_ids = sorted({sid for sid, _ in verdicts} - seen_ids, key=int)
         if extra_ids:
-            vr_scenes += stash_client._graphql(_SCENES_BY_IDS_QUERY, {"ids": extra_ids})["findScenes"]["scenes"]
+            vr_scenes += _scenes_by_ids(stash_client, extra_ids)
         for scene in vr_scenes:
             provider, pid = _provider_ref(scene, stash_client)
             for file in scene.get("files") or []:
@@ -175,8 +194,9 @@ def refresh_candidates(db, stash_client, get_setting, cutoff_resolution=None):
                 elif verdict == "vr_mono":
                     reason = "vr_mono"
                 elif verdict == "stereo":
+                    # By bitrate, not by resolution or size (user, v0.237.4): a stereo VR file under `vr_upgrade_min_mbps` is worth replacing.
                     mbps = (file["size"] * 8 / file["duration"] / 1e6) if file.get("size") and file.get("duration") else None
-                    if (file.get("width") or 0) < min_width or (mbps is not None and mbps < min_mbps):
+                    if mbps is not None and mbps < min_mbps:
                         reason = "vr_low_quality"
                 if reason:
                     _upsert(db, scene, file, reason, provider, pid)
@@ -266,6 +286,23 @@ def _better_filter(cand):
     return better
 
 
+def filter_for_scene(db, provider, pid):
+    """The "must really be better" test for a scene that is being upgraded (a release row with `upgrade_of`), or None for an ordinary wishlist
+    scene (v0.237.1). The regular searches -- the wishlist's own, RSS, targeted -- ask for it, so a candidate that went "To wishlist" is held
+    to the same rule as one the upgrade search handles itself: only a release above the file in the library is taken, never a worse one, and
+    the last-resort kinds (2160p scaled down, SD after N days) do not apply. A re-add accepts what the normal search accepts, without the
+    last resorts."""
+    rows = [r for r in _scene_rows(db, provider, pid) if r.get("upgrade_of")]
+    if not rows:
+        return None
+    with db.connect() as conn:
+        cand = conn.execute("SELECT * FROM upgrade_candidate WHERE provider_scene_id = ? AND file_path = ?",
+                            (pid, rows[0]["upgrade_of"])).fetchone()
+    if cand is None:
+        return lambda r: True
+    return _better_filter(dict(cand)) or (lambda r: True)
+
+
 def _scene_rows(db, provider, pid):
     with db.connect() as conn:
         return [dict(r) for r in conn.execute(
@@ -320,6 +357,10 @@ def search_one(db, cand_id, get_provider_client, search_source, quality_profile,
     detail = client.get_scene_detail(cand["provider_scene_id"]) if client else None
     if not detail:
         return {"error": f"{cand['provider']} doesn't know this scene (any more)"}
+    if cand.get("quality_profile_id"):  # a profile set for this candidate (Upgrade wanted, bulk) beats the one of the Settings
+        own = quality_profile_repo.get_one(db, int(cand["quality_profile_id"]))
+        if own is not None:
+            quality_profile = own
     is_vr = cand["reason"].startswith("vr_") or bool(cand.get("is_vr"))
     performers = [p["performer"]["name"] for p in detail.get("performers") or [] if (p.get("performer") or {}).get("name")]
     previous = None if dry_run else _prepare_release_rows(db, cand, detail, is_vr)
@@ -328,7 +369,8 @@ def search_one(db, cand_id, get_provider_client, search_source, quality_profile,
             db, None, None, cand["provider"], cand["provider_scene_id"], detail.get("title") or cand["scene_title"],
             detail.get("date"), performers, quality_profile, is_vr=is_vr, vr_enabled=vr_enabled,
             search_source=search_source, studio_name=(detail.get("studio") or {}).get("name"),
-            candidate_filter=_better_filter(cand), dry_run=dry_run)
+            candidate_filter=_better_filter(cand) or (lambda r: True),  # never the last-resort kinds (a re-add included)
+            allow_unknown_resolution=True if cand["reason"] == "readd" else None, dry_run=dry_run)
     except Exception as e:
         logger.exception("upgrade search failed for candidate %s", cand_id)
         if previous is not None:
@@ -353,6 +395,40 @@ def search_one(db, cand_id, get_provider_client, search_source, quality_profile,
                   status="grabbed" if grabbed else cand["status"],
                   detail=json.dumps(result.get("grab")) if grabbed else cand.get("detail"))
     return result
+
+
+def to_wishlist(db, cand_id, get_provider_client):
+    """"To wishlist" (v0.237.0): the candidate becomes a normal wishlist release (status sent_to_whisparr, marked with the file it replaces), so
+    the regular wishlist search handles it -- all the rules of that search, not the "must be better" test of the upgrade search -- and it shows on
+    Releases > On Wishlist (filter "Only upgrades"). The candidate itself gets the status 'wishlist' and is left alone by the upgrade search.
+    Returns {"previous": release rows as they were (for the Undo), "status_before"} or {"error"}."""
+    cand = get_candidate(db, cand_id)
+    if cand is None:
+        return {"error": "candidate not found"}
+    if not cand.get("provider_scene_id"):
+        return {"error": "scene has no StashDB/ThePornDB link -- identify it first"}
+    if cand["status"] not in ("wanted", "review", "check"):
+        return {"error": f"a candidate that is '{cand['status']}' cannot go to the wishlist"}
+    client = get_provider_client(cand["provider"])
+    detail = client.get_scene_detail(cand["provider_scene_id"]) if client else None
+    if not detail:
+        return {"error": f"{cand['provider']} doesn't know this scene (any more)"}
+    is_vr = cand["reason"].startswith("vr_") or bool(cand.get("is_vr"))
+    previous = _prepare_release_rows(db, cand, detail, is_vr)
+    set_candidate(db, cand_id, status="wishlist")
+    history.scene("info", "wishlist", "Upgrade moved to the wishlist (replaces the file in the library)", cand["provider"], cand["provider_scene_id"],
+                  scene_title=cand["scene_title"])
+    return {"previous": [list(x) for x in previous], "status_before": cand["status"]}
+
+
+def undo_wishlist(db, cand_id, previous, status):
+    """Undo of to_wishlist(): the release rows as they were, the candidate back to its old status."""
+    cand = get_candidate(db, cand_id)
+    if cand is None or cand["status"] != "wishlist" or status not in ("wanted", "review", "check"):
+        return {"error": "nothing to undo"}
+    _undo_release_rows(db, cand, [tuple(x) for x in previous or []])
+    set_candidate(db, cand_id, status=status)
+    return {"ok": True}
 
 
 def accept_review(db, cand_id, get_provider_client):

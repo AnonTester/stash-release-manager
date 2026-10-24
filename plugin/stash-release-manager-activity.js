@@ -600,7 +600,7 @@
     // Filter bar + paging (2026-09-26, user principle), same component as
     // everywhere else; the bar shows once a section has >10 entries.
     const view = window.SRW.buildFilteredPagedList({
-      filters: ['search', 'kind', 'description', 'type', 'vr', 'dates', 'providers'],
+      filters: ['search', 'kind', 'description', 'type', 'vr', 'dates', 'providers', 'upgrades'],
       perPage: 40,
       showFilterBarFrom: 10,
       fetchPage: window.SRW.localPageFetcher(() => sorted, {
@@ -608,6 +608,7 @@
         description: (r) => r.details,
         type: (r) => (r.entity_types && r.entity_types.length === 1 ? r.entity_types[0] : r.entity_type),
         vr: (r) => r.is_vr,
+        upgrade: (r) => Boolean(r.upgrade_of),
         provider: (r) => r.provider,
         date: (r) => r.scene_date || r.scene_created,
         kind: (r) => (r._filmLi ? 'movies' : 'scenes'),
@@ -826,18 +827,8 @@
     function candidateLine(c, sceneDate) {
       const facts = [c.indexer, c.protocol === 'torrent' ? `Torrent${c.seeders != null ? `, ${c.seeders} seeders` : ''}` : null,
         c.size ? `${(c.size / 1e9).toFixed(1)} GB` : null,
-        c.age != null ? `${c.age} days old` : null].filter(Boolean).join(' · ');
-      let warning = null;
-      if (sceneDate && c.age != null) {
-        const sceneAge = Math.floor((Date.now() - new Date(`${sceneDate}T00:00:00`).getTime()) / 86400000);
-        if (Number.isFinite(sceneAge) && c.age > sceneAge + 30) {
-          warning = el('span', {
-            className: 'srw-review-warning',
-            title: `The scene is dated ${sceneDate} (${Math.max(sceneAge, 0)} days ago); this release was posted ${c.age} days ago.`,
-            textContent: 'older than the scene — probably a different release',
-          });
-        }
-      }
+        c.age != null ? window.SRW.ageWords(c.age) : null].filter(Boolean).join(' · ');
+      const warning = window.SRW.ageWarning(c.age, sceneDate);
       return el('div', { className: 'srw-review-box' }, [
         releaseTitleNode(c.title, c.infoUrl),
         facts ? el('span', { className: 'srw-release-date', textContent: facts }) : null,
@@ -870,13 +861,14 @@
       ]);
     }
 
-    function decisionButtons(onAccept, onReject, title, onAcceptScene = null) {
+    function decisionButtons(onAccept, onReject, title, onAcceptScene = null, onUndoReject = null) {
       const status = el('span', { className: 'srw-key-status' });
-      const run = async (fn, label) => {
+      const run = async (fn, label, undo = null) => {
         status.textContent = ` ${label}...`;
         try {
           const result = await fn();
           if (result && result.error) { status.textContent = ` error: ${result.error}`; return; }
+          if (undo) window.SRW.dismissedNotice(`Rejected: ${title}`, 'Blocklisted for this scene.', undo, () => render(container));
           render(container);
         } catch (err) {
           status.textContent = ` error: ${err.message}`;
@@ -895,7 +887,7 @@
         el('button', {
           className: 'srw-btn', textContent: 'Reject',
           onClick: (e) => confirmInline(e.currentTarget, `Blocklist "${title}" for this scene?`,
-            () => run(onReject, 'rejecting'), { danger: true }),
+            () => run(onReject, 'rejecting', onUndoReject), { danger: true }),
         }),
         status,
       ];
@@ -914,7 +906,8 @@
       ], candidateLine(c, r.scene_date), decisionButtons(
         () => window.SRW.runOp('releases_review_candidate_accept', { provider: r.provider, scene_stashdb_id: r.scene_stashdb_id }),
         () => window.SRW.runOp('releases_review_candidate_reject', { provider: r.provider, scene_stashdb_id: r.scene_stashdb_id }),
-        c.title,
+        c.title, null,
+        () => window.SRW.runOp('releases_review_candidate_restore', { provider: r.provider, scene_stashdb_id: r.scene_stashdb_id }),
       ), reviewThumb(r.image_url, sceneUrl(r.provider, r.scene_stashdb_id))));
     });
     filmsReview.forEach((f) => { // movies: the automatic movie search found a plausible release (Reject = never this release for this movie)

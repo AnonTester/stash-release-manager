@@ -131,6 +131,21 @@ def run_scan(db, clients, delay=0.3, progress_callback=None, auto_handoff_callba
 _FEED_INITIAL_LOOKBACK = timedelta(hours=24)
 
 
+# After a clean per-entry fallback the feed starts again from here (a margin behind "now": the next feed read overlaps it, and a scene
+# is only stored when it is newer than its entry's own watermark, so nothing is stored twice).
+_FEED_FALLBACK_MARGIN = timedelta(minutes=30)
+
+
+def _advance_feed_watermark(db, provider):
+    """The per-entry scan just covered every watched entry up to now: move the provider's feed watermark forward, so the next feed read is
+    short again instead of starting where it first failed. Never moves it backwards."""
+    new = (datetime.now(timezone.utc) - _FEED_FALLBACK_MARGIN).strftime("%Y-%m-%dT%H:%M:%S.000000Z")
+    current = watchlist_repo.get_feed_watermark(db, provider)
+    if current is None or current < new:
+        watchlist_repo.set_feed_watermark(db, provider, new)
+        logger.info("feed scan: %s feed watermark advanced %s -> %s after a clean per-entry scan", provider, current, new)
+
+
 def run_feed_scan(db, clients, delay=0.3, progress_callback=None, auto_handoff_callback=None):
     """The "Neuheiten-Feed" scan (2026-09-25, top of the user's ToDo):
     instead of one request per watchlist entry (~2277, 1h+), read each
@@ -146,8 +161,8 @@ def run_feed_scan(db, clients, delay=0.3, progress_callback=None, auto_handoff_c
     - a whole provider whose feed couldn't reach back to its feed
       watermark (FeedIncomplete -- e.g. ThePornDB's 10000-result cap
       after the sidecar was down for more than ~a day).
-    A provider whose feed fails outright keeps its feed watermark, so
-    the next run retries the same window. Returns run_scan()'s summary
+    - a feed request that fails (timeout on a deep page, v0.236.0), same fallback. A clean fallback advances the feed watermark
+      (`_advance_feed_watermark`); a fallback with failures keeps it, so the next run tries the same window again. Returns run_scan()'s summary
     shape plus a per-provider `feed` report."""
     watched = watchlist_repo.list_watchlist(db)
     summary = {"scanned": 0, "new_baselines": 0, "new_releases": 0, "failed": [], "feed": {}}
@@ -195,16 +210,24 @@ def run_feed_scan(db, clients, delay=0.3, progress_callback=None, auto_handoff_c
                 hits += [e for pid in scene["_performer_ids"] for e in index.get(("performer", pid), [])]
                 for e in hits:
                     matched[id(e)].append(scene)
-        except FeedIncomplete as e:
-            logger.warning("feed scan: %s feed incomplete (%s) -- falling back to per-entry scan", provider, e)
-            history.event("warning", "job", f"Scan: {provider} feed incomplete, fell back to the per-entry scan",
-                          details={"reason": str(e)})
-            summary["feed"][provider] = {"fallback": "per_entry", "reason": str(e)}
-            merge(run_scan(db, {provider: client}, delay, None, auto_handoff_callback, entries=active))
-            continue
         except Exception as e:
-            logger.exception("feed scan: %s feed failed, feed watermark kept for the next run", provider)
-            summary["failed"].append({"provider": provider, "entity_type": "feed", "name": "feed", "error": str(e)})
+            # FeedIncomplete (the feed could not reach back to the watermark) or a feed request that failed (timeout on a deep page):
+            # the watched entries are scanned one by one instead, so nothing is missed (v0.236.0: a failed feed request used to skip
+            # the provider altogether, and the watermark -- which a fallback never advanced -- fell further behind every run).
+            incomplete = isinstance(e, FeedIncomplete)
+            if incomplete:
+                logger.warning("feed scan: %s feed incomplete (%s) -- falling back to per-entry scan", provider, e)
+                history.event("warning", "job", f"Scan: {provider} feed incomplete, fell back to the per-entry scan",
+                              details={"reason": str(e)})
+            else:
+                logger.exception("feed scan: %s feed failed -- falling back to per-entry scan", provider)
+                history.event("warning", "job", f"Scan: {provider} feed could not be read, fell back to the per-entry scan",
+                              details={"reason": str(e)})
+            summary["feed"][provider] = {"fallback": "per_entry", "reason": str(e)}
+            sub = run_scan(db, {provider: client}, delay, None, auto_handoff_callback, entries=active)
+            merge(sub)
+            if not sub["failed"]:
+                _advance_feed_watermark(db, provider)
             continue
 
         stored = 0

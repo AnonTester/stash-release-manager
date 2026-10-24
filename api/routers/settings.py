@@ -384,12 +384,15 @@ DEFAULTS = {
     # Upgrade search (2026-09-26, upgrades.py). VR files count as "low
     # quality" below this total width or bitrate; automatic upgrade
     # searches are off until switched on, at most N per indexer-search run.
-    "vr_upgrade_min_width": "3840",
+    # A stereo VR file below this bitrate (Mbit/s) is an upgrade candidate (v0.237.4; the width rule is gone).
     "vr_upgrade_min_mbps": "8",
+    "vr_upgrade_min_width": "3840",  # no longer used (kept so old settings load)
     # Submit the fingerprints of a file you confirmed ("Correct + submit to StashDB" on Import failed) to StashDB. Public and not
     # undoable, so off until you switch it on (v0.106.7).
     "fingerprint_upload_enabled": "false",
     "upgrade_search_enabled": "false",
+    # A "Dry run" button on Upgrade wanted rows (shows what a search would grab, downloads nothing): off by default (v0.237.0).
+    "upgrade_dry_run_button": "false",
     "upgrade_search_per_run": "20",
     # The upgrade search rides on the indexer-search loop (every 2 h) but only runs this often
     # (2026-09-29, user: 1-2 runs a day are plenty). Wishlist searches keep their own interval.
@@ -639,8 +642,15 @@ def set_one(key: str, body: dict):
         raise HTTPException(400, f"{key} must be #rrggbb or empty, got {value!r}")
     if key in ("film_whisparr_file_auto", "film_library_auto") and value not in ("true", "false"):
         raise HTTPException(400, f"{key} must be 'true' or 'false', got {value!r}")
-    if key == "upgrade_search_enabled" and value not in ("true", "false"):
-        raise HTTPException(400, f"upgrade_search_enabled must be 'true' or 'false', got {value!r}")
+    if key in ("upgrade_search_enabled", "upgrade_dry_run_button") and value not in ("true", "false"):
+        raise HTTPException(400, f"{key} must be 'true' or 'false', got {value!r}")
+    if key == "vr_upgrade_min_mbps":
+        try:
+            ok = 1 <= float(value) <= 200
+        except ValueError:
+            ok = False
+        if not ok:
+            raise HTTPException(400, f"vr_upgrade_min_mbps must be a number between 1 and 200, got {value!r}")
     if key == "upgrade_search_per_run" and not (value.isdigit() and 1 <= int(value) <= 200):
         raise HTTPException(400, f"upgrade_search_per_run must be a whole number between 1 and 200, got {value!r}")
     if key == "upgrade_search_interval_hours" and not (value.isdigit() and 1 <= int(value) <= 168):

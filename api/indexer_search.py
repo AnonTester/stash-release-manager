@@ -1568,6 +1568,11 @@ def search_and_grab(db, whisparr_client, movie_id, provider, scene_stashdb_id, s
                 "candidates": previous["candidates"], "kept_from": previous.get("kept_from") or previous.get("searched_at")})
         return _finish(RESULT_SEARCH_FAILED)
 
+    if candidate_filter is None:
+        # A scene that is being upgraded (release.upgrade_of, e.g. after "To wishlist" on Upgrade wanted) is held to the upgrade rules by every
+        # search, also the regular ones: only a release above the library file, no last-resort kinds (v0.237.1).
+        import upgrades  # lazy: upgrades imports this module
+        candidate_filter = upgrades.filter_for_scene(db, provider, scene_stashdb_id)
     if releases and candidate_filter is not None:
         releases = [r for r in releases if candidate_filter(r)]
     if not releases:

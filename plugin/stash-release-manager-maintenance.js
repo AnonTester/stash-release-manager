@@ -33,7 +33,7 @@
     { key: 'movies', label: 'Movies' },
   ];
   const AREAS = [
-    { key: 'library-check', group: 'check', icon: 'faClipboardCheck', label: 'Library check', build: (c) => renderLibraryCheck(c) },
+    { key: 'library-check', group: 'check', icon: 'faClipboardCheck', label: 'Fingerprint check', build: (c) => renderLibraryCheck(c) },
     { key: 'performers', group: 'check', icon: 'faUserSlash', label: 'Performers without scenes', build: (c) => c.appendChild(buildPerformersArea()) },
     { key: 'unidentified', group: 'check', icon: 'faCircleQuestion', label: 'Unidentified scenes', build: (c) => c.appendChild(buildUnidentifiedArea()) },
     { key: 'vr-check', group: 'check', icon: 'faVrCardboard', label: 'VR: 2D / mono files', build: (c) => c.appendChild(flatten(buildVrCheckSection())) },
@@ -178,15 +178,16 @@
 
   async function renderLibraryCheck(content) {
     const { el } = window.SRW;
-    content.appendChild(el('h3', { textContent: 'Library check' }));
+    content.appendChild(el('h3', { textContent: 'Fingerprint check: wrong StashDB IDs' }));
     content.appendChild(el('p', {
       className: 'srw-hint',
-      textContent: 'Checks the existing library against StashDB’s own registered fingerprints '
-        + '(independent of anything this project itself has handed off to Whisparr) -- finds a local '
-        + 'scene pointing at the wrong StashDB scene id, and identifies what it actually is.',
+      textContent: 'Compares the fingerprints of your files with the ones StashDB has registered and finds scenes whose StashDB ID is wrong '
+        + '-- a local scene pointing at the wrong StashDB scene -- and says what the file really is. A wrong ID can be corrected here (title, '
+        + 'date, performers, studio and tags are taken over from the right scene); files and Whisparr are never touched. '
+        + 'Scenes StashDB cannot judge (no fingerprints registered yet, or several candidates) are listed under "Needs manual review".',
     }));
 
-    const startBtn = el('button', { className: 'srw-btn srw-btn-primary', textContent: 'Start Library Check' });
+    const startBtn = el('button', { className: 'srw-btn srw-btn-primary', textContent: 'Start fingerprint check' });
     const progressWrap = el('div', { className: 'srw-maintenance-progress' });
     const resultsWrap = el('div', { className: 'srw-maintenance-results' });
 
@@ -493,7 +494,7 @@
         updateApplyBtn();
       });
       const candidateTitle = (f.candidates[0] && f.candidates[0].title) || '?';
-      const dismissBtn = el('button', { className: 'srw-btn srw-btn-sm', textContent: 'Dismiss' });
+      const dismissBtn = el('button', { className: 'btn btn-outline-danger srw-btn-fit srw-btn-dismiss', textContent: 'Dismiss' });
       dismissBtn.addEventListener('click', async () => {
         dismissBtn.disabled = true;
         try {
@@ -589,7 +590,7 @@
           }
         }
         if (failures.length) {
-          window.SRW.notify('Library check', `Corrected ${succeeded} of ${ids.length} scene(s). ${failures.length} failed:\n\n${failures.join('\n')}`, 'warning');
+          window.SRW.notify('Fingerprint check', `Corrected ${succeeded} of ${ids.length} scene(s). ${failures.length} failed:\n\n${failures.join('\n')}`, 'warning');
         }
         await renderFindings(resultsWrap);
       },
@@ -625,13 +626,39 @@
           dismissBtn.disabled = false;
         }
       });
+      // "Re-check fingerprints": ask StashDB again what the file is -- fingerprints may have been registered since the check ran. A match closes
+      // the finding, one other scene makes it a correction, the result is written under the row.
+      const note = el('div', { className: 'srw-key-status srw-finding-note' });
+      const recheckBtn = window.SRW.iconButton('button', 'faFingerprint', 'Re-check fingerprints', {
+        title: 'Ask StashDB again what this file is (fingerprints may have been registered since the check ran)',
+        onClick: async (e) => {
+          const b = e.currentTarget;
+          b.disabled = true;
+          window.SRW.setBusy(note, 'asking StashDB…');
+          try {
+            const res = await window.SRW.runOp('maintenance_check_recheck', { finding_id: f.id });
+            if (res.error) { note.textContent = ` error: ${res.error}`; return; }
+            note.textContent = ` ${res.message}`;
+            if (res.result !== 'unverifiable') {
+              window.SRW.notify('Re-check fingerprints', `"${f.scene_title}": ${res.message}`, 'success');
+              await renderFindings(resultsWrap);
+            }
+          } catch (err) {
+            note.textContent = ` error: ${err.message}`;
+          } finally {
+            b.disabled = false;
+          }
+        },
+      });
       const pathLines = (f.file_paths || []).map((p) => el('div', { className: 'srw-maintenance-file-path', textContent: p }));
       return el('li', { className: 'srw-release-item' }, [
         el('div', {}, [
           el('span', { textContent: `[${f.kind}] ${f.scene_title} -- ${detail}` }),
           ...pathLines,
+          note,
         ]),
         f.scene_id ? window.SRW.buildStashLink('scene', f.scene_id) : null,
+        recheckBtn,
         dismissBtn,
       ]);
     };
@@ -901,7 +928,7 @@
           f.phash_match === 0 ? el('div', {
             className: 'srw-hint srw-vr-misid',
             textContent: 'Possibly misidentified in Stash (file matches none of the scene\'s fingerprints) -- '
-              + 'use “Identify Scene” (or the Library Check above) to find the right scene.',
+              + 'use “Identify Scene” (or the Fingerprint check above) to find the right scene.',
           }) : null,
           el('div', { className: 'srw-maintenance-file-path', textContent: f.file_path }),
         ]),
@@ -2436,9 +2463,10 @@
   }
 
   function buildUpgradeSection() {
-    const { el, confirmInline } = window.SRW;
+    const { el, confirmInline, notify } = window.SRW;
     const status = el('span', { className: 'srw-key-status' });
     const list = el('div');
+    // ---- filters: why (reason), where it stands (state), without id ----
     // Filter by the reason, with the resolution of the current file split out for "below cutoff" (by frame size, so a cropped 1920×800
     // file counts as 1080p). Scenes without a StashDB / ThePornDB id cannot be searched yet and are hidden unless asked for.
     const resBucket = (c) => {
@@ -2447,7 +2475,7 @@
       return eff < 470 ? 'lt480' : eff < 700 ? '480' : eff < 1000 ? '720' : eff < 1400 ? '1080' : eff < 2000 ? '1440' : '2160';
     };
     const BUCKETS = [['lt480', 'under 480p'], ['480', '480p'], ['720', '720p'], ['1080', '1080p'], ['1440', '2K (1440p)'], ['2160', '4K']];
-    const FILTER_OPTIONS = [
+    const REASON_OPTIONS = [
       ['', 'All reasons'],
       ['vr_2d', '2D file → real VR'],
       ['vr_mono', 'mono VR → stereo VR'],
@@ -2456,10 +2484,14 @@
       ...BUCKETS.map(([k, t]) => [`below_cutoff:${k}`, `Quality below cutoff: ${t}`]),
       ['readd', 're-added by you'],
       ['duration', 'wrong length'],
-      ['done', 'Done (replaced)'],
     ];
-    const reasonSelect = el('select', { title: 'Why the file is on the list' },
-      FILTER_OPTIONS.map(([v, t]) => el('option', { value: v, textContent: t })));
+    // State: open = still to do (not searched, searched, possible match); the others are what happened to a candidate.
+    const STATE_OPTIONS = [
+      ['open', 'Open'], ['check', 'To check'], ['downloading', 'Downloading'], ['wishlist', 'On the wishlist'], ['dismissed', 'Dismissed'], ['done', 'Done (replaced)'], ['all', 'All'],
+    ];
+    const stateOf = (c) => (c.status === 'wanted' || c.status === 'review' ? 'open' : c.status === 'grabbed' ? 'downloading' : c.status); // 'check' = found by the library check, waiting for a look
+    const reasonSelect = el('select', { title: 'Why the file is on the list' }, REASON_OPTIONS.map(([v, t]) => el('option', { value: v, textContent: t })));
+    const stateSelect = el('select', { title: 'Where the candidate stands' }, STATE_OPTIONS.map(([v, t]) => el('option', { value: v, textContent: t })));
     const unidentifiedKey = 'srw:upgrade-include-unidentified';
     let includeUnidentified = false;
     try { includeUnidentified = window.localStorage.getItem(unidentifiedKey) === '1'; } catch (e) { /* storage blocked */ }
@@ -2470,25 +2502,127 @@
     } });
     unidentifiedBox.checked = includeUnidentified;
     const hiddenLine = el('span', { className: 'srw-hint' });
+    const matchesState = (c, want) => want === 'all' || stateOf(c) === want;
     const matchesReason = (c, want) => {
-      if (want === 'done') return c.status === 'done';
-      if (c.status === 'done') return false;
       if (!want) return true;
       if (want.startsWith('below_cutoff:')) return c.reason === 'below_cutoff' && resBucket(c) === want.slice(13);
       return c.reason === want;
     };
     const passesId = (c) => includeUnidentified || Boolean(c.provider_scene_id);
-    // The counts behind each filter (with the id filter applied) and how many rows the id filter hides.
+    const visible = (c) => passesId(c) && matchesState(c, stateSelect.value) && matchesReason(c, reasonSelect.value);
+    // The counts behind each choice (the other choices and the id filter applied) and how many rows the id filter hides.
     function refreshCounts() {
-      const visible = candidates.filter(passesId);
       Array.from(reasonSelect.options).forEach((o, i) => {
-        const n = visible.filter((c) => matchesReason(c, o.value)).length;
-        o.textContent = `${FILTER_OPTIONS[i][1]} (${n})`;
+        const n = candidates.filter((c) => passesId(c) && matchesState(c, stateSelect.value) && matchesReason(c, o.value)).length;
+        o.textContent = `${REASON_OPTIONS[i][1]} (${n})`;
       });
-      const hidden = candidates.filter((c) => c.status !== 'done' && !passesId(c)).length;
+      Array.from(stateSelect.options).forEach((o, i) => {
+        const n = candidates.filter((c) => passesId(c) && matchesReason(c, reasonSelect.value) && matchesState(c, o.value)).length;
+        o.textContent = `${STATE_OPTIONS[i][1]} (${n})`;
+      });
+      const hidden = candidates.filter((c) => stateOf(c) === 'open' && !passesId(c)).length;
       hiddenLine.textContent = !includeUnidentified && hidden ? `${hidden} scene(s) without a StashDB / ThePornDB id hidden.` : '';
     }
-    // The automatic search is a job: switched on/off and timed in Settings > Jobs (v0.155.0); here only what it is set to.
+    // ---- sort ----
+    const SORTS = [
+      ['title', 'Title', (c) => (c.scene_title || '').toLowerCase(), true],
+      ['size', 'File size', (c) => c.cur_size || 0, false],
+      ['resolution', 'Resolution', (c) => (c.cur_height || 0), true],
+      ['bitrate', 'Bitrate', (c) => c.cur_mbps || 0, true],
+      ['searched', 'Last searched', (c) => c.last_search_at || '', true],
+      ['date', 'Scene date', (c) => c.scene_date || '', false],
+      ['reason', 'Reason', (c) => c.reason || '', true],
+    ];
+    let sortKey = 'title';
+    let sortReversed = false;
+    const sortSelect = el('select', { title: 'Sort the list' }, SORTS.map(([k, t]) => el('option', { value: k, textContent: `Sort: ${t}` })));
+    const sortDir = el('button', { type: 'button', className: 'srw-btn', title: 'Reverse the order', textContent: '↑',
+      onClick: () => { sortReversed = !sortReversed; sortDir.textContent = sortReversed ? '↓' : '↑'; view.reset(); } });
+    sortSelect.addEventListener('change', () => { sortKey = sortSelect.value; view.reset(); });
+    const sorted = () => {
+      const def = SORTS.find((s) => s[0] === sortKey);
+      const asc = def[3] !== sortReversed; // each sort starts in its natural direction (largest first for sizes, A-Z for titles)
+      return candidates.filter(visible).sort((a, b) => {
+        const x = def[2](a); const y = def[2](b);
+        const d = typeof x === 'string' ? x.localeCompare(y) : x - y;
+        return asc ? d : -d;
+      });
+    };
+    // ---- selection and bulk actions ----
+    const selected = new Set();
+    const selCount = el('span', { className: 'srw-bulk-count' });
+    const bulk = el('div', { className: 'srw-bulk-bar', hidden: true });
+    const pageBox = el('input', { type: 'checkbox', title: 'Select / unselect everything on this page' });
+    let pageIds = [];
+    pageBox.addEventListener('change', () => { pageIds.forEach((id) => (pageBox.checked ? selected.add(id) : selected.delete(id))); syncSelection(); view.reload(); });
+    const allLink = el('a', { href: '#', className: 'srw-bulk-all', onClick: (e) => { e.preventDefault(); sorted().forEach((c) => selected.add(c.id)); syncSelection(); view.reload(); } });
+    const profileSelect = el('select', { title: 'Quality profile for the selected candidates (non-VR files; VR upgrades follow the VR rules)' });
+    function syncSelection() {
+      selCount.textContent = `${selected.size} selected`;
+      const matching = sorted();
+      allLink.textContent = selected.size < matching.length ? `Select all ${matching.length} matching` : '';
+      bulk.hidden = selected.size === 0;
+      pageBox.checked = pageIds.length > 0 && pageIds.every((id) => selected.has(id));
+      searchAllBtn.disabled = selected.size > BULK_SEARCH_MAX;
+      searchAllBtn.title = selected.size > BULK_SEARCH_MAX ? `At most ${BULK_SEARCH_MAX} searches at a time (each asks the indexers)` : 'Search the selected candidates now, one after the other';
+    }
+    const BULK_SEARCH_MAX = 10;
+    const selectedCands = () => candidates.filter((c) => selected.has(c.id));
+    async function runBulk(action, extra = {}) {
+      const ids = [...selected];
+      const r = await window.SRW.runOp('upgrades_bulk', { ids, action, ...extra });
+      if (r.error) { notify('Upgrade wanted', r.error, 'error'); return null; }
+      return r;
+    }
+    const bulkBtn = (label, title, onClick, className = 'srw-btn') => el('button', { type: 'button', className, textContent: label, title, onClick });
+    const dismissAllBtn = bulkBtn('Dismiss', 'Keep the current files, do not search upgrades for the selected candidates', (e) => confirmInline(e.currentTarget,
+      `Dismiss ${selected.size} candidate(s)? Their current files are kept.`, async () => {
+        const ids = [...selected];
+        const r = await runBulk('dismiss');
+        if (!r) return;
+        selected.clear(); await load();
+        window.SRW.dismissedNotice(`Dismissed: ${r.changed} candidate(s)`, 'The current files are kept, no upgrade search.',
+          () => window.SRW.runOp('upgrades_bulk', { ids, action: 'restore', statuses: r.previous }), () => load());
+      }), 'btn btn-outline-danger srw-btn-fit srw-btn-dismiss');
+    const approveAllBtn = bulkBtn('Queue for search', 'Release the selected candidates that wait "To check" for the automatic upgrade search', async () => {
+      const r = await runBulk('approve');
+      if (!r) return;
+      notify('Upgrade wanted', `${r.changed} candidate(s) queued for the upgrade search.`, 'success'); selected.clear(); load();
+    });
+    const restoreAllBtn = bulkBtn('Restore', 'Put the selected dismissed candidates back on the list', async () => {
+      const r = await runBulk('restore');
+      if (!r) return;
+      notify('Upgrade wanted', `${r.restored} candidate(s) restored.`, 'success'); selected.clear(); load();
+    });
+    const wishlistAllBtn = bulkBtn('To wishlist', 'Put the selected candidates on the normal wishlist: its search takes only a release that is better than the current file (never a worse one, no last-resort fallback) and the old file is replaced after a verified import',
+      (e) => confirmInline(e.currentTarget, `Put ${selected.size} candidate(s) on the wishlist? Its search replaces a file only with a better release.`, async () => {
+        const ids = [...selected];
+        const r = await runBulk('wishlist');
+        if (!r) return;
+        const failed = Object.keys(r.errors || {}).length;
+        selected.clear(); await load();
+        window.SRW.dismissedNotice(`On the wishlist: ${r.changed} candidate(s)`, failed ? `${failed} could not be moved (${Object.values(r.errors)[0]}).` : 'See Releases > On Wishlist > Only upgrades.',
+          () => window.SRW.runOp('upgrades_bulk', { ids: Object.keys(r.previous).map(Number), action: 'unwishlist', previous: r.previous }), () => load());
+      }));
+    const searchAllBtn = bulkBtn('Search now', '', (e) => confirmInline(e.currentTarget,
+      `Search upgrades for ${selected.size} candidate(s) now? Each is a request to your indexers; a better file is downloaded and replaces the current one after the verified import.`, async () => {
+        window.SRW.setBusy(status, `searching ${selected.size}…`);
+        const r = await runBulk('search');
+        status.textContent = '';
+        if (!r) return;
+        notify('Upgrade search', `${r.grabbed} of ${r.results.length} grabbed; ${r.results.filter((x) => x.error).length} failed.`, r.grabbed ? 'success' : 'info');
+        selected.clear(); load();
+      }), 'srw-btn srw-btn-primary');
+    const applyProfileBtn = bulkBtn('Apply', 'Set this quality profile on the selected candidates', async () => {
+      const r = await runBulk('profile', { profile_id: Number(profileSelect.value) || null });
+      if (!r) return;
+      notify('Upgrade wanted', `Quality profile set on ${r.changed} candidate(s).`, 'success'); load();
+    });
+    const clearBtn = bulkBtn('Clear selection', '', () => { selected.clear(); syncSelection(); view.reload(); });
+    bulk.append(el('span', { className: 'srw-bulk-head' }, [selCount, allLink]),
+      el('span', { className: 'srw-bulk-actions' }, [searchAllBtn, wishlistAllBtn, approveAllBtn, dismissAllBtn, restoreAllBtn,
+        el('span', { className: 'srw-bulk-profile' }, [el('span', { textContent: 'Quality profile' }), profileSelect, applyProfileBtn]), clearBtn]));
+    // ---- the rest of the toolbar ----
     const autoLine = el('span', { className: 'srw-hint' });
     const refreshBtn = el('button', {
       className: 'srw-btn srw-btn-primary', textContent: 'Find candidates',
@@ -2503,31 +2637,85 @@
         load();
       },
     });
+    // One-time check of the whole library (v0.237.2): wrong lengths, 2D / mono / small VR files, files below the profile's cutoff.
+    const checkLine = el('span', { className: 'srw-hint' });
+    let polling = false;
+    async function pollLibraryCheck() {
+      if (polling) return;
+      polling = true;
+      try {
+        for (;;) {
+          const r = await window.SRW.runOp('upgrades_library_check_status');
+          const j = (r && r.job) || {};
+          if (r.error) { checkLine.textContent = `error: ${r.error}`; break; }
+          if (j.running) {
+            window.SRW.setBusy(checkLine, `${j.phase || 'working'}${j.total ? ` ${j.done || 0} / ${j.total}` : ''}`);
+            await new Promise((res) => setTimeout(res, 3000));
+            continue;
+          }
+          const lastRun = j.phase === 'done' ? j : (r.last || null); // this session's run, or the one kept from before
+          const describe = (x) => {
+            const c = x.counts || {};
+            return `Library checked ${x.finished_at || ''} UTC: ${x.added_duration || 0} wrong-length file(s) added${x.skipped_duration ? ` (${x.skipped_duration} skipped: gone from Stash)` : ''}; found ${c.vr_2d || 0} 2D-in-VR, ${c.vr_mono || 0} VR mono, ${c.vr_low_quality || 0} low-bitrate VR, ${c.below_cutoff || 0} below the cutoff${x.cutoff ? ` (${x.cutoff}p)` : ' (no cutoff set in the quality profile)'}. The result stays in the list below; run it again only when you want a fresh look.`;
+          };
+          if (j.phase === 'failed') checkLine.textContent = `The library check failed: ${j.error}`;
+          else if (lastRun && lastRun.finished_at) { checkLine.textContent = describe(lastRun); if (j.phase === 'done') await load(); }
+          else checkLine.textContent = '';
+          break;
+        }
+      } finally { polling = false; }
+    }
+    const libraryCheckBtn = el('button', {
+      type: 'button', className: 'srw-btn', textContent: 'Check the whole library…',
+      title: 'Look at every scene of your library once: wrong length, 2D / mono / low-bitrate VR files, files below the quality profile cutoff',
+      onClick: (e) => confirmInline(e.currentTarget,
+        'Check the whole library once? It asks the providers for the length of every scene (the first run can take an hour or more), looks for 2D / mono / low-bitrate VR files and for files below the cutoff of the quality profile. It only fills this list; nothing is downloaded. The result stays; a second run within 30 days reuses the providers\' lengths and is quick.',
+        async () => {
+          const r = await window.SRW.runOp('upgrades_library_check_start', {});
+          if (r.error) { notify('Library check', r.error, 'error'); return; }
+          if (r.skipped) notify('Library check', r.reason, 'info');
+          pollLibraryCheck();
+        }),
+    });
     const section = el('details', { className: 'srw-settings-section srw-panel srw-upgrades' }, [
       el('summary', { textContent: 'Upgrade wanted' }),
       el('p', {
         className: 'srw-hint',
         textContent: 'Library files that should be replaced by a better version: 2D files of VR scenes → real VR, '
           + 'monoscopic VR → stereoscopic, VR below 4K / low bitrate → higher resolution (never above 6K / 15 GB), '
-          + 'non-VR below the profile cutoff. Only candidates that are actually better are grabbed; after the '
-          + 'verified import the old file goes to the recycle bin. "Dry run" shows what would be grabbed.',
+          + 'non-VR below the profile cutoff, and files with a wrong length. Only candidates that are actually better are grabbed; after the '
+          + 'verified import the old file goes to the recycle bin.',
       }),
-      el('div', { className: 'srw-toolbar' }, [
-        refreshBtn,
-        reasonSelect, el('label', { title: 'Without an id the scene cannot be searched yet; identify it first (Maintenance > Unidentified scenes)' },
+      el('div', { className: 'srw-toolbar srw-upgrade-toolbar' }, [
+        refreshBtn, libraryCheckBtn, reasonSelect, stateSelect, sortSelect, sortDir,
+        el('label', { title: 'Without an id the scene cannot be searched yet; identify it first (Maintenance > Unidentified scenes)' },
           [unidentifiedBox, ' include scenes without StashDB / ThePornDB id']), status,
       ]),
+      el('p', { className: 'srw-hint' }, [checkLine]),
       el('p', { className: 'srw-hint' }, [hiddenLine]),
       el('p', { className: 'srw-hint' }, [autoLine, ' ', el('a', { href: '/plugins/stash-release-manager/settings#jobs', textContent: 'Change in Settings > Jobs' })]),
+      bulk,
       list,
     ]);
 
     let candidates = [];
     let view = null;
+    let dryRunButton = false;
+    let profiles = [];
+    let activeProfileId = '';
+    const profileName = (id) => (profiles.find((p) => p.id === id) || {}).name;
     async function load() {
       const r = await window.SRW.runOp('upgrades_list');
       if (r.error) { status.textContent = ` error: ${r.error}`; return; }
       candidates = r.candidates || [];
+      dryRunButton = Boolean(r.dry_run_button);
+      profiles = r.profiles || [];
+      activeProfileId = r.active_profile_id || '';
+      const keep = profileSelect.value;
+      profileSelect.replaceChildren(el('option', { value: '0', textContent: `Settings profile${profileName(Number(activeProfileId)) ? ` (${profileName(Number(activeProfileId))})` : ''}` }),
+        ...profiles.map((p) => el('option', { value: String(p.id), textContent: p.name })));
+      profileSelect.value = keep || '0';
+      for (const id of [...selected]) if (!candidates.some((c) => c.id === id)) selected.delete(id);
       refreshCounts();
       autoLine.textContent = r.enabled
         ? `Automatic search: on, a few candidates (${r.per_run || '20'} per run) at most every ${r.interval_hours || '12'} h.`
@@ -2537,114 +2725,167 @@
           filters: ['search'],
           perPage: 30,
           showFilterBarFrom: 10,
-          emptyText: 'No upgrade candidates (click "Find candidates").',
-          fetchPage: window.SRW.localPageFetcher(() => candidates.filter((c) => passesId(c) && matchesReason(c, reasonSelect.value)),
-            { text: (c) => `${c.scene_title} ${c.file_path}` }),
-          renderItems: (items) => el('ul', { className: 'srw-release-list' }, items.map(buildRow)),
+          emptyText: 'No upgrade candidates here (try another state, or click "Find candidates").',
+          fetchPage: window.SRW.localPageFetcher(() => sorted(), { text: (c) => `${c.scene_title} ${c.file_path} ${c.studio_name || ''}` }),
+          renderItems: (items) => { pageIds = items.map((c) => c.id); syncSelection(); return el('ul', { className: 'srw-release-list srw-upgrade-list' }, [
+            el('li', { className: 'srw-upgrade-selectall' }, [el('label', {}, [pageBox, ' select this page'])]), ...items.map(buildRow)]); },
         });
         list.appendChild(view.node);
-        reasonSelect.addEventListener('change', () => view.reset());
+        reasonSelect.addEventListener('change', () => { refreshCounts(); view.reset(); });
+        stateSelect.addEventListener('change', () => { refreshCounts(); view.reset(); });
       }
       view.reload();
+      syncSelection();
     }
 
     function fmtGb(bytes) { return bytes ? `${(bytes / 1e9).toFixed(1)} GB` : '?'; }
+    const fmtMin = (s) => (s ? `${Math.round(s / 60)} min` : null);
+
+    function showDryRun(c, r) {
+      const counts = {};
+      (r.candidates || []).forEach((x) => { counts[x.verdict] = (counts[x.verdict] || 0) + 1; });
+      const body = el('div', { className: 'srw-manual-search-panel' }, [
+        el('p', { className: r.would_grab ? 'srw-review-warning' : 'srw-hint', textContent: r.would_grab
+          ? `Would grab: ${r.would_grab.title} (${fmtGb(r.would_grab.size)}, ${r.would_grab.indexer})`
+          : `Nothing better found (${r.result}).` }),
+        el('p', { className: 'srw-hint', textContent: Object.entries(counts).map(([k, n]) => `${n}× ${k}`).join(', ') }),
+        el('div', { className: 'srw-result-list' }, (r.candidates || []).slice(0, 60).map((x) => el('div', { className: 'srw-manual-search-result srw-result-row' }, [
+          el('div', { className: 'srw-result-main' }, [
+            el('div', { className: 'srw-result-head' }, [el('span', { className: 'srw-verdict', textContent: x.verdict }), el('span', { textContent: x.title })]),
+            el('div', { className: 'srw-result-facts' }, [el('span', { className: 'srw-chips' }, [x.indexer, fmtGb(x.size)].filter(Boolean).map((t) => el('span', { className: 'srw-chip', textContent: t })))]),
+          ]),
+        ]))),
+      ]);
+      window.SRW.openModal('Dry run (nothing is downloaded)', body, { subtitle: window.SRW.sceneSubtitle({ title: c.scene_title, studio_name: c.studio_name, scene_date: c.scene_date }) });
+    }
 
     function buildRow(c) {
       const [badge, why] = UPGRADE_REASON[c.reason] || [c.reason, ''];
       const sceneHref = `/scenes/${c.scene_id}`;
-      const result = el('div', { className: 'srw-hint' });
+      const result = el('div', { className: 'srw-hint srw-upgrade-note' });
       const statusText = {
         wanted: c.last_search_at ? `last searched ${c.last_search_at.slice(0, 16)}: ${c.last_search_result || '—'}` : 'not searched yet',
         grabbed: 'upgrade downloading / importing',
-        review: 'upgrade imported but unverified -- old file kept, please check',
+        review: 'possible better file found -- see Activity > Needs review',
         done: 'replaced (old file in the recycle bin)',
+        check: 'found by the library check -- file and provider disagree on the length; look at it, then queue it for the upgrade search or dismiss it',
+        dismissed: 'dismissed -- the current file is kept',
+        wishlist: 'on the wishlist -- the wishlist search takes care of it',
       }[c.status] || c.status;
       const actions = [];
-      if (c.status === 'wanted') {
-        const dryBtn = el('button', {
-          className: 'srw-btn srw-btn-sm', textContent: 'Dry run', title: 'Search and show what would be grabbed -- nothing is downloaded',
-          onClick: async () => {
-            dryBtn.disabled = true; window.SRW.setBusy(result, 'searching…');
-            const r = await window.SRW.runOp('upgrades_search', { id: c.id, dry_run: true });
-            dryBtn.disabled = false;
-            if (r.error) { result.textContent = `error: ${r.error}`; return; }
-            const counts = {};
-            (r.candidates || []).forEach((x) => { counts[x.verdict] = (counts[x.verdict] || 0) + 1; });
-            const summary = Object.entries(counts).map(([k, n]) => `${n}× ${k}`).join(', ');
-            result.textContent = r.would_grab
-              ? `would grab: ${r.would_grab.title} (${fmtGb(r.would_grab.size)}, ${r.would_grab.indexer}) — ${summary}`
-              : `nothing better found (${r.result})${summary ? ` — ${summary}` : ''}`;
-          },
-        });
-        const grabBtn = el('button', {
-          className: 'srw-btn srw-btn-sm srw-btn-primary', textContent: 'Search now',
+      const cb = el('input', { type: 'checkbox', title: 'Select' });
+      cb.checked = selected.has(c.id);
+      cb.addEventListener('change', () => { if (cb.checked) selected.add(c.id); else selected.delete(c.id); syncSelection(); });
+      if (c.status === 'wanted' || c.status === 'review' || c.status === 'check') {
+        const grabBtn = window.SRW.iconButton('button', 'faMagnifyingGlass', 'Search now', {
+          title: 'Search now: look for an upgrade and download it; after the verified import the current file goes to the recycle bin',
           onClick: (e) => confirmInline(e.currentTarget,
-            `Search an upgrade for "${c.scene_title}" and download it? After the verified import the current file `
-            + 'goes to the recycle bin.', async () => {
+            `Search an upgrade for "${c.scene_title}" and download it? After the verified import the current file goes to the recycle bin.`, async () => {
+              window.SRW.setBusy(result, 'searching…');
               const r = await window.SRW.runOp('upgrades_search', { id: c.id, dry_run: false });
-              if (r.error) { window.SRW.notify('Upgrade', r.error, 'error'); return; }
-              window.SRW.notify('Upgrade', r.grab ? `Grabbed: ${r.grab.title}` : `Nothing better found (${r.result}).`,
-                r.grab ? 'success' : 'info');
+              result.textContent = '';
+              if (r.error) { notify('Upgrade', r.error, 'error'); return; }
+              notify('Upgrade', r.grab ? `Grabbed: ${r.grab.title}` : `Nothing better found (${r.result}).`, r.grab ? 'success' : 'info');
               load();
             }),
         });
+        const wishBtn = window.SRW.iconButton('button', 'faHeart', 'To wishlist', {
+          title: 'To wishlist: the normal wishlist search takes over -- only a release that is better than the current file is taken, never a worse one; the old file is replaced after a verified import',
+          onClick: (e) => confirmInline(e.currentTarget, `Put "${c.scene_title}" on the wishlist? Its search replaces the file only with a better release.`, async () => {
+            const r = await window.SRW.runOp('upgrades_bulk', { ids: [c.id], action: 'wishlist' });
+            if (r.error) { notify('To wishlist', r.error, 'error'); return; }
+            if (r.errors && r.errors[String(c.id)]) { notify('To wishlist', r.errors[String(c.id)], 'error'); return; }
+            await load();
+            window.SRW.dismissedNotice(`On the wishlist: ${c.scene_title || 'upgrade'}`, 'See Releases > On Wishlist > Only upgrades.',
+              () => window.SRW.runOp('upgrades_bulk', { ids: [c.id], action: 'unwishlist', previous: r.previous }), () => load());
+          }),
+        });
         const dismissBtn = el('button', {
-          className: 'srw-btn srw-btn-sm', textContent: 'Dismiss', title: 'Keep the current file, don\'t search an upgrade',
+          className: 'btn btn-outline-danger srw-btn-fit srw-btn-dismiss', textContent: 'Dismiss', title: 'Keep the current file, don\'t search an upgrade',
           onClick: async () => {
             const res = await window.SRW.runOp('upgrades_dismiss', { id: c.id });
-            if (res && res.error) { window.SRW.notify('Dismiss', `Dismiss failed: ${res.error}`, 'error'); return; }
-            const at = candidates.findIndex((x) => x.id === c.id);
-            candidates = candidates.filter((x) => x.id !== c.id);
-            refreshCounts(); view.reload();
+            if (res && res.error) { notify('Dismiss', `Dismiss failed: ${res.error}`, 'error'); return; }
+            await load();
             window.SRW.dismissedNotice(`Dismissed: ${c.scene_title || 'upgrade'}`, 'The current file is kept, no upgrade search.',
-              () => window.SRW.runOp('upgrades_restore', { id: c.id, status: res.previous || 'wanted' }),
-              () => { candidates.splice(at < 0 ? candidates.length : at, 0, c); refreshCounts(); view.reload(); });
+              () => window.SRW.runOp('upgrades_restore', { id: c.id, status: res.previous || 'wanted' }), () => load());
           },
         });
-        // Own query (v0.106.0), same panel as the wishlist rows: type a search, pick a result, Grab. The grab is recorded as an
-        // upgrade of THIS file (old file to the recycle bin after the verified import).
+        // Own query: type a search, pick a result, Grab -- in a modal. The grab is recorded as an upgrade of THIS file.
         const searchSlot = el('span', { className: 'srw-search-actions' });
         window.SRW.getSearchCapabilities().then((caps) => {
           const sources = (caps && caps.manual_sources) || [];
           if (!sources.length) return;
-          const asRelease = { provider: c.provider, scene_stashdb_id: c.provider_scene_id, title: c.scene_title,
-            studio_name: c.studio_name, scene_date: c.scene_date };
+          const asRelease = { provider: c.provider, scene_stashdb_id: c.provider_scene_id, title: c.scene_title, studio_name: c.studio_name, scene_date: c.scene_date };
           searchSlot.appendChild(window.SRW.buildManualSearch(asRelease, sources, caps.backend, () => load(), {
-            host: () => rowLi,
             grab: (candidate) => window.SRW.runOp('upgrades_manual_grab', { id: c.id, candidate }),
           }));
         });
         if (c.provider_scene_id) {
-          actions.push(dryBtn, grabBtn, searchSlot, dismissBtn);
+          if (dryRunButton) {
+            actions.push(el('button', {
+              type: 'button', className: 'srw-btn', textContent: 'Dry run', title: 'Search and show what would be grabbed -- nothing is downloaded',
+              onClick: async (e) => {
+                const b = e.currentTarget; b.disabled = true; window.SRW.setBusy(result, 'searching…');
+                const r = await window.SRW.runOp('upgrades_search', { id: c.id, dry_run: true });
+                b.disabled = false; result.textContent = '';
+                if (r.error) { notify('Dry run', r.error, 'error'); return; }
+                showDryRun(c, r);
+              },
+            }));
+          }
+          if (c.status === 'check') {
+            actions.push(window.SRW.iconButton('button', 'faCheck', 'Queue for search', {
+              title: 'Queue for search: the length looks right to you -- the automatic upgrade search may take this candidate',
+              onClick: async () => {
+                const r = await window.SRW.runOp('upgrades_bulk', { ids: [c.id], action: 'approve' });
+                if (r.error) { notify('Queue for search', r.error, 'error'); return; }
+                load();
+              },
+            }));
+          }
+          actions.push(grabBtn, searchSlot, wishBtn, dismissBtn);
         } else {
-          // No StashDB / ThePornDB id: the search works from the provider's scene (title, date, performers) and the replacement is recorded
-          // against it, so there is nothing to search by yet (v0.212.2). Identify the scene first; this row then searches like the others.
           actions.push(
             el('span', { className: 'srw-hint', textContent: 'No StashDB / ThePornDB id yet -- identify the scene first.' }),
-            el('a', { className: 'srw-btn srw-btn-sm', href: `${MAINTENANCE_PATH}/unidentified`, textContent: 'Unidentified scenes',
+            el('a', { className: 'srw-btn', href: `${MAINTENANCE_PATH}/unidentified`, textContent: 'Unidentified scenes',
               title: 'Maintenance > Unidentified scenes: find out what the scene is (fingerprints, name search) and apply it' }),
             dismissBtn);
         }
+      } else if (c.status === 'dismissed') {
+        actions.push(el('button', { type: 'button', className: 'srw-btn', textContent: 'Restore', title: 'Back on the list',
+          onClick: async () => {
+            const r = await window.SRW.runOp('upgrades_bulk', { ids: [c.id], action: 'restore' });
+            if (r.error) { notify('Restore', r.error, 'error'); return; }
+            load();
+          } }));
+      } else if (c.status === 'wishlist') {
+        actions.push(el('a', { className: 'srw-btn', href: '/plugins/stash-release-manager', textContent: 'On Wishlist', title: 'Releases > On Wishlist (filter: Only upgrades)' }));
       }
-      const mbps = c.cur_mbps ? `, ${Math.round(c.cur_mbps)} Mbit/s` : '';
-      const rowLi = el('li', { className: 'srw-release-item' }, [
-        el('span', { className: `srw-upgrade-reason srw-upgrade-reason-${c.reason}`, textContent: badge, title: why }),
+      const chips = [`${c.cur_width}×${c.cur_height}`, fmtGb(c.cur_size), c.cur_mbps ? `${Math.round(c.cur_mbps)} Mbit/s` : null,
+        c.reason === 'duration' && c.cur_duration && c.provider_duration
+          ? `file ${fmtMin(c.cur_duration)} · provider ${fmtMin(c.provider_duration)} (${c.cur_duration < c.provider_duration ? 'shorter' : 'longer'})` : fmtMin(c.cur_duration),
+        c.quality_profile_id && profileName(c.quality_profile_id) ? `profile: ${profileName(c.quality_profile_id)}` : null,
+        c.studio_name || null, c.scene_date || null].filter(Boolean);
+      return el('li', { className: 'srw-release-item srw-upgrade-row' }, [
+        cb,
         el('a', { className: 'srw-vr-thumb-link', href: sceneHref, target: '_blank', rel: 'noopener noreferrer' },
           [el('img', { className: 'srw-vr-thumb', src: `/scene/${c.scene_id}/screenshot`, loading: 'lazy', alt: '' })]),
-        el('div', {}, [
-          el('a', { className: 'srw-release-title', href: sceneHref, target: '_blank', rel: 'noopener noreferrer',
-            textContent: c.scene_title || `Scene ${c.scene_id}` }),
-          el('div', { className: 'srw-hint', textContent: `now: ${c.cur_width}×${c.cur_height}, ${fmtGb(c.cur_size)}${mbps} — ${statusText}` }),
+        el('div', { className: 'srw-upgrade-info' }, [
+          el('div', { className: 'srw-result-head' }, [
+            el('span', { className: `srw-upgrade-reason srw-upgrade-reason-${c.reason}`, textContent: badge, title: why }),
+            el('a', { className: 'srw-release-title', href: sceneHref, target: '_blank', rel: 'noopener noreferrer', textContent: c.scene_title || `Scene ${c.scene_id}` }),
+          ]),
+          el('div', { className: 'srw-result-facts' }, [el('span', { className: 'srw-chips' }, chips.map((t) => el('span', { className: 'srw-chip', textContent: t })))]),
+          el('div', { className: 'srw-hint', textContent: statusText }),
           el('div', { className: 'srw-maintenance-file-path', textContent: c.file_path }),
           result,
         ]),
         el('div', { className: 'srw-upgrade-actions' }, actions),
       ]);
-      return rowLi;
     }
 
     load();
+    pollLibraryCheck(); // shows a check that is running already (or the result of the last one)
     return window.SRW.rememberOpen(section, 'maintenance:upgrade-wanted', false);
   }
 

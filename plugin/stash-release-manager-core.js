@@ -11,7 +11,7 @@
   // rule and the bug it caused when this drifted). Change this if you
   // install under a different folder name.
   // Must equal `version:` in stash-release-manager.yml (scripts/test_plugin_version.py checks it).
-  const PLUGIN_VERSION = '0.235.8';
+  const PLUGIN_VERSION = '0.238.0';
   const PLUGIN_ID = 'stash-release-manager';
   const PLUGIN_NAME = 'StashReleaseManager';
 
@@ -545,10 +545,15 @@
   }
 
   function confirmInline(triggerButton, message, onConfirm, { danger = false } = {}) {
-    // In a release row the question is an overlay over the buttons' place, as in a calendar pill (v0.235.8): it takes no room, so nothing moves,
-    // and the button stays where it is. Needs review keeps its own design (the question replaces Accept/Reject in the flow).
-    const overlay = !!triggerButton.closest('.srw-release-row') && !triggerButton.closest('.srw-review-actions');
-    if (!overlay) triggerButton.style.display = 'none';
+    // The question never takes room, so nothing around it moves (v0.238.0): a calendar pill and the buttons' column of a release row place it
+    // by CSS (.srw-cal-pill / .srw-rr-actions); everywhere else it is an overlay over the trigger's own place (the trigger stays in the flow,
+    // invisible, so its room is kept) -- see placeConfirm(). Without a positioned parent it replaces the trigger as it always did.
+    const cssOverlay = !!triggerButton.closest('.srw-release-row .srw-rr-actions');
+    const inPill = !!triggerButton.closest('.srw-cal-pill');
+    const generic = !cssOverlay && !inPill && !!triggerButton.offsetParent;
+    if (generic) triggerButton.style.visibility = 'hidden';
+    else if (!cssOverlay) triggerButton.style.display = 'none';
+    const restore = () => { triggerButton.style.display = ''; triggerButton.style.visibility = ''; };
     const prompt = el('span', { className: 'srw-inline-confirm' }, [
       // A short question stays on ONE line; only a long explanatory sentence (over ~110 characters even with the names shortened)
       // may wrap, at word boundaries (v0.103.3).
@@ -573,18 +578,43 @@
             try {
               await onConfirm();
             } finally {
-              triggerButton.style.display = '';
+              restore();
             }
           },
         }),
         el('button', {
           className: 'srw-btn srw-btn-sm',
           textContent: 'Cancel',
-          onClick: () => { prompt.remove(); triggerButton.style.display = ''; },
+          onClick: () => { prompt.remove(); restore(); },
         }),
       ]),
     ]);
     triggerButton.after(prompt);
+    if (generic) placeConfirm(triggerButton, prompt);
+  }
+
+  // Lays the question over the trigger's place: absolute (see .srw-confirm-overlay), at the trigger's top, anchored to the side of its containing
+  // block the trigger is nearer to (so it grows into the block, not out of it), at most as wide as the block. The offsets are worked out from the
+  // rectangles, so it does not matter which ancestor (a table cell, the page root, a row) is the containing block.
+  function placeConfirm(trigger, prompt) {
+    prompt.classList.add('srw-confirm-overlay');
+    const cb = prompt.offsetParent;
+    const t = trigger.getBoundingClientRect();
+    let left; let top; let width;
+    if (cb && cb !== document.body) {
+      const r = cb.getBoundingClientRect();
+      left = t.left - r.left - cb.clientLeft + cb.scrollLeft;
+      top = t.top - r.top - cb.clientTop + cb.scrollTop;
+      width = cb.clientWidth;
+    } else { // no positioned ancestor: the page itself is the containing block
+      left = t.left + window.scrollX;
+      top = t.top + window.scrollY;
+      width = document.documentElement.clientWidth;
+    }
+    prompt.style.maxWidth = `${Math.max(Math.min(width - 8, 736), 200)}px`;
+    prompt.style.top = `${Math.round(top)}px`;
+    if (left + t.width / 2 > width / 2) prompt.style.right = `${Math.max(Math.round(width - left - t.width), 0)}px`;
+    else prompt.style.left = `${Math.round(left)}px`;
   }
 
   async function waitForElement(selector, { timeout = 8000, interval = 200 } = {}) {
@@ -733,6 +763,28 @@
       svg.appendChild(p);
       return svg;
     } catch (e) { return null; }
+  }
+
+  // The age of a release in words: "34 days old", "412 days old (about 14 months)", "800 days old (about 2.2 years)" (v0.238.0).
+  function ageWords(days) {
+    if (days == null || !Number.isFinite(Number(days))) return 'unknown age';
+    const d = Number(days);
+    if (d < 90) return `${d} days old`;
+    if (d < 730) return `${d} days old (about ${Math.round(d / 30.4)} months)`;
+    return `${d} days old (about ${(d / 365.25).toFixed(1)} years)`;
+  }
+
+  // A release posted long before the scene's own date cannot be this scene: the warning for such a candidate (null when it fits or either date
+  // is unknown). `sceneDate` = YYYY-MM-DD, `age` = days since the release was posted.
+  function ageWarning(age, sceneDate) {
+    if (age == null || !sceneDate) return null;
+    const sceneAge = Math.floor((Date.now() - new Date(`${String(sceneDate).slice(0, 10)}T00:00:00`).getTime()) / 86400000);
+    if (!Number.isFinite(sceneAge) || age <= sceneAge + 30) return null;
+    return el('span', {
+      className: 'srw-review-warning',
+      title: `The scene is dated ${String(sceneDate).slice(0, 10)} (${Math.max(sceneAge, 0)} days ago); this release was posted ${age} days ago.`,
+      textContent: 'older than the scene — probably a different release',
+    });
   }
 
   // A button (tag 'button') or link (tag 'a') that shows only an icon; the words are the tooltip and the aria-label (v0.235.2). Saves room in
@@ -1409,21 +1461,6 @@
   // Returns one span right away and fills it once the capabilities
   // arrive, so callers can stay synchronous. `onGrabbed` runs after a
   // successful manual grab (caller re-renders).
-  // Runs `fn` now -- or, while a search panel ("Search…" / "Last search") is open inside `root`, as soon as it is closed (checked every 2 s, once).
-  // For live reloads: rebuilding the list would otherwise close the panel and throw the results away while the user reads them.
-  function whenNoOpenPanel(root, fn) {
-    const isOpen = () => Boolean(root.querySelector('.srw-manual-search-panel'));
-    if (!isOpen()) { fn(); return; }
-    if (root.srwWaitingForPanel) return;
-    root.srwWaitingForPanel = true;
-    const timer = setInterval(() => {
-      if (root.isConnected && isOpen()) return;
-      clearInterval(timer);
-      root.srwWaitingForPanel = false;
-      if (root.isConnected) fn();
-    }, 2000);
-  }
-
   // The safety check of the moving/renaming functions (api/renamer_check.py): other renaming plugins in Stash, library folders, formats, ...
   // `compact`: only warnings/errors (for Import folder and Organize library); the full list is Settings > Import & Naming > Safety check.
   function buildSafetyPanel({ compact = false } = {}) {
@@ -1477,7 +1514,9 @@
       }
       if (r.last_search_result) group.appendChild(buildLastSearch(r, onGrabbed));
       if (sources.length) group.appendChild(buildManualSearch(r, sources, caps.backend, onGrabbed));
-      wrap.append(...(group.children.length > 1 ? [group] : []), ...status); // the magnifier alone is no group
+      // The result texts of the buttons ("nothing found", errors, the spinner) go in a line of their own: in a release row it hangs under the buttons
+      // and takes no room, so the buttons stay where they are (v0.238.0); elsewhere it follows them inline.
+      wrap.append(...(group.children.length > 1 ? [group] : []), el('span', { className: 'srw-search-status-line' }, status)); // the magnifier alone is no group
     });
     return wrap;
   }
@@ -1592,30 +1631,61 @@
     });
   }
 
-  // Sort control for a list of search results (2026-09-26, user
-  // request). `ageOf(item)` returns days old (smaller = newer) or null.
+  // Sort control for a list of search results (2026-09-26, user request; a bar of buttons since v0.238.0). Click a button to sort by it, click the
+  // active one again to reverse it (the arrow shows the direction). Results without a value (no seeders, no size) always come last.
+  const resolutionOf = (c) => (c.vr ? 0 : Number(c.resolution || (c.quality && c.quality.resolution) || c.est_resolution || 0));
   const RESULT_SORTS = [
-    { key: 'default', label: 'Default order' },
-    { key: 'newest', label: 'Newest first' },
-    { key: 'oldest', label: 'Oldest first' },
-    { key: 'name_asc', label: 'Name A–Z' },
-    { key: 'name_desc', label: 'Name Z–A' },
+    { key: 'default', label: 'Default', title: 'The order the search returned them in' },
+    { key: 'age', label: 'Age', value: (c) => (c.age == null ? null : Number(c.age)), firstAsc: true, first: 'Newest first', second: 'Oldest first' },
+    { key: 'size', label: 'Size', value: (c) => (c.size ? Number(c.size) : null), firstAsc: false, first: 'Largest first', second: 'Smallest first' },
+    { key: 'quality', label: 'Quality', value: (c) => resolutionOf(c) || null, firstAsc: false, first: 'Highest resolution first', second: 'Lowest resolution first' },
+    { key: 'seeders', label: 'Seeders', value: (c) => (c.seeders == null ? null : Number(c.seeders)), firstAsc: false, first: 'Most seeders first', second: 'Fewest seeders first', only: (items) => items.some((c) => c.seeders != null) },
+    { key: 'name', label: 'Name', value: (c) => (c.title || '').toLowerCase(), firstAsc: true, first: 'A to Z', second: 'Z to A' },
   ];
-  function sortResults(items, key, ageOf) {
-    const byAge = (a, b) => (ageOf(a) ?? Infinity) - (ageOf(b) ?? Infinity);
-    const byName = (a, b) => (a.title || '').localeCompare(b.title || '', undefined, { sensitivity: 'base' });
+  // `state` = { key, reversed }
+  function sortResults(items, state) {
+    const def = RESULT_SORTS.find((o) => o.key === state.key);
     const copy = [...items];
-    if (key === 'newest') copy.sort(byAge);
-    else if (key === 'oldest') copy.sort((a, b) => byAge(b, a));
-    else if (key === 'name_asc') copy.sort(byName);
-    else if (key === 'name_desc') copy.sort((a, b) => byName(b, a));
+    if (!def || !def.value) return copy;
+    const dirAsc = def.firstAsc !== state.reversed; // first click = the natural direction, a second click reverses it
+    copy.sort((x, y) => {
+      const vx = def.value(x); const vy = def.value(y);
+      if (vx == null && vy == null) return 0;
+      if (vx == null) return 1;
+      if (vy == null) return -1;
+      const d = typeof vx === 'string' ? vx.localeCompare(vy, undefined, { sensitivity: 'base' }) : vx - vy;
+      return dirAsc ? d : -d;
+    });
     return copy;
   }
-  function buildSortSelect(onChange) {
-    const select = el('select', { className: 'srw-filter-preset-select', title: 'Sort results' },
-      RESULT_SORTS.map((o) => el('option', { value: o.key, textContent: o.label })));
-    select.addEventListener('change', () => onChange(select.value));
-    return select;
+  function buildSortBar(items, state, onChange, filterSlot = null, defaultSort = null) {
+    const group = el('div', { className: 'btn-group srw-sort-bar', role: 'group', 'aria-label': 'Sort the results' });
+    const draw = () => {
+      group.replaceChildren(...RESULT_SORTS.filter((o) => !o.only || o.only(items)).map((o0) => {
+        const o = o0.key === 'default' && defaultSort ? { ...o0, ...defaultSort } : o0; // the first button is named for what the default order is
+        const active = state.key === o.key;
+        const arrow = active && o.value ? (((o.firstAsc !== state.reversed)) ? ' ↑' : ' ↓') : '';
+        return el('button', {
+          type: 'button', className: `btn btn-secondary srw-btn-fit${active ? ' active' : ''}`, textContent: `${o.label}${arrow}`,
+          title: o.value ? `${state.key === o.key ? (state.reversed ? o.second : o.first) : o.first} (click again to reverse)` : o.title,
+          onClick: () => {
+            if (active && o.value) state.reversed = !state.reversed; else { state.key = o.key; state.reversed = false; }
+            draw();
+            onChange();
+          },
+        });
+      }));
+    };
+    draw();
+    return el('div', { className: 'srw-sort-row' }, [el('span', { className: 'srw-sort-label', textContent: 'Sort' }), group, filterSlot]);
+  }
+
+  // The facts of a result as small chips (indexer, torrent swarm, quality, size, age); `quality` is the label already worked out by the caller.
+  function resultChips(c, quality) {
+    const chips = [c.indexer || 'unknown indexer'];
+    if (c.protocol === 'torrent') chips.push(`torrent${c.seeders != null ? ` · ${c.seeders} seeders` : ''}${c.peers != null ? ` · ${c.peers} peers` : ''}`);
+    chips.push(quality, c.size ? `${(c.size / 1e9).toFixed(2)} GB` : 'unknown size', ageWords(c.age));
+    return el('span', { className: 'srw-chips' }, chips.map((t) => el('span', { className: 'srw-chip', textContent: t })));
   }
 
   // Search log (2026-09-25, stage 4) -- "Last search" toggles a panel
@@ -1625,21 +1695,23 @@
   // Indexer search results ("Last search", manual "Search…"): sort select
   // + text/VR filter + paging (2026-09-26 -- a search can return 100+
   // candidates).
-  function buildSortedPagedResults(items, buildRow) {
-    let sortKey = 'default';
+  function buildSortedPagedResults(items, buildRow, defaultSort = null) {
+    const sortState = { key: 'default', reversed: false };
+    const filterSlot = el('div', { className: 'srw-sort-filter' }); // the filter bar (search + VR) sits in the sort row (v0.238.0)
     const view = buildFilteredPagedList({
       filters: ['search', 'vr'],
       perPage: 25,
-      showFilterBarFrom: 10,
+      showFilterBarFrom: 1,
+      barTarget: filterSlot,
       emptyText: 'No results.',
-      fetchPage: localPageFetcher(() => sortResults(items, sortKey, (c) => c.age), {
+      fetchPage: localPageFetcher(() => sortResults(items, sortState), {
         text: (c) => `${c.title || ''} ${c.indexer || ''}`, vr: (c) => c.vr,
       }),
-      renderItems: (page) => el('div', {}, page.map(buildRow)),
+      renderItems: (page) => el('div', { className: 'srw-result-list' }, page.map(buildRow)),
     });
     view.reset();
     const children = [];
-    if (items.length > 1) children.push(buildSortSelect((key) => { sortKey = key; view.reset(); }));
+    if (items.length > 1) children.push(buildSortBar(items, sortState, () => view.reset(), filterSlot, defaultSort));
     children.push(view.node);
     return el('div', {}, children);
   }
@@ -1737,36 +1809,88 @@
   // Where later decorations put a badge / note: the third line of the row.
   const rowMeta = (li) => li.querySelector('.srw-rr-meta') || li;
 
-  // Result panels (Last search / manual search) need the full row width. Inside a release row (v0.102.10) they are attached to the
-  // row itself, where they take a full-width line below the three columns -- the buttons' column must stay one line. Elsewhere
-  // (entity panel lists) they stay inside their wrapper as before.
-  function attachPanel(wrap, panel) {
-    (wrap.closest('li.srw-release-row') || wrap.closest('.srw-search-actions') || wrap).appendChild(panel);
+  // A dialog in Stash's own modal markup (Bootstrap: .modal / .modal-dialog / .modal-content), so a theme restyles it like Stash's own dialogs
+  // (v0.238.0). `title` is the heading, `node` the content; Escape, the x and a click beside the dialog close it. Returns {close, body}.
+  function openModal(title, node, { onClose = null, size = 'modal-xl', subtitle = null } = {}) {
+    const backdrop = el('div', { className: 'modal-backdrop fade show srw-modal-backdrop' });
+    const closeBtn = el('button', { type: 'button', className: 'close', 'aria-label': 'Close' }, [el('span', { 'aria-hidden': 'true', textContent: '×' })]);
+    const body = el('div', { className: 'modal-body srw-modal-body' }, [node]);
+    const dialog = el('div', { className: `modal-dialog ${size} modal-dialog-scrollable modal-dialog-centered`, role: 'document' }, [
+      el('div', { className: 'modal-content' }, [
+        el('div', { className: 'modal-header' }, [el('div', { className: 'srw-modal-heading' }, [el('h5', { className: 'modal-title srw-modal-title', textContent: title }), subtitle]), closeBtn]),
+        body,
+      ]),
+    ]);
+    const modal = el('div', { className: 'modal fade show srw-modal', tabindex: '-1', role: 'dialog', 'aria-modal': 'true' }, [dialog]);
+    modal.style.display = 'block';
+    let closed = false;
+    const onKey = (e) => { if (e.key === 'Escape') close(); };
+    function close() {
+      if (closed) return;
+      closed = true;
+      document.removeEventListener('keydown', onKey);
+      modal.remove();
+      backdrop.remove();
+      if (!document.querySelector('.srw-modal')) document.body.classList.remove('modal-open');
+      if (onClose) onClose();
+    }
+    closeBtn.addEventListener('click', close);
+    modal.addEventListener('mousedown', (e) => { if (e.target === modal) close(); });
+    document.addEventListener('keydown', onKey);
+    document.body.classList.add('modal-open');
+    document.body.append(backdrop, modal);
+    return { close, body };
   }
 
-  // Open / close of a result panel (Last search, manual search) -- v0.175.1/2: while its panel is open the button is highlighted and reads
-  // "Close"; clicking it closes the panel and gives the button its own text back. Returns {isOpen, current, open(node), close()}.
-  function panelToggle(toggleBtn, attach) {
+  // The scene a search modal is about, under its heading: title, then performers, studio and date (v0.238.0) -- the modal covers the row, and these
+  // are the words one builds a manual query from.
+  function sceneSubtitle(r) {
+    const people = Array.isArray(r.cast) && r.cast.length ? r.cast.map((p) => p.name)
+      : String(r.cast_names || '').split('|').filter(Boolean);
+    if (!people.length && r.entity_type === 'performer' && r.entity_name) people.push(r.entity_name);
+    const meta = [people.join(', '), r.studio_name, r.scene_date].filter(Boolean).join(' · ');
+    return el('div', { className: 'srw-modal-sub' }, [
+      el('div', { className: 'srw-modal-sub-title', textContent: r.title || '' }),
+      meta ? el('div', { className: 'srw-modal-sub-meta', textContent: meta }) : null,
+    ]);
+  }
+
+  // Open / close of a result panel (Last search, manual search): the panel is shown in a modal (v0.238.0; before, it was pushed in under the row
+  // and moved the list). The buttons keep their text. Returns {isOpen, current, open(node), close()}; `title` is the modal's heading.
+  function panelToggle(toggleBtn, attach, title = '', subtitle = null) {
     let panel = null;
-    const label = toggleBtn.textContent;
-    const close = () => { if (panel) { panel.remove(); panel = null; } toggleBtn.classList.remove('srw-btn-primary'); toggleBtn.textContent = label; };
+    let modal = null;
+    const close = () => { const m = modal; modal = null; panel = null; if (m) m.close(); };
     return {
       get isOpen() { return Boolean(panel); },
       get current() { return panel; },
       close,
       open(node) {
         panel = node;
-        toggleBtn.classList.add('srw-btn-primary');
-        toggleBtn.textContent = 'Close';
-        attach(node);
+        modal = openModal(title, node, { subtitle, onClose: () => { if (panel === node) { panel = null; modal = null; } } });
       },
     };
+  }
+
+  // Runs `fn` now -- or, while a search panel ("Search…" / "Last search") is open inside `root`, as soon as it is closed (checked every 2 s, once).
+  // For live reloads: rebuilding the list would otherwise close the panel and throw the results away while the user reads them.
+  function whenNoOpenPanel(root, fn) {
+    const isOpen = () => Boolean(root.querySelector('.srw-manual-search-panel'));
+    if (!isOpen()) { fn(); return; }
+    if (root.srwWaitingForPanel) return;
+    root.srwWaitingForPanel = true;
+    const timer = setInterval(() => {
+      if (root.isConnected && isOpen()) return;
+      clearInterval(timer);
+      root.srwWaitingForPanel = false;
+      if (root.isConnected) fn();
+    }, 2000);
   }
 
   function buildLastSearch(r, onGrabbed) {
     const wrap = el('span', { className: 'srw-prowlarr-search' });
     const toggleBtn = el('button', { className: 'srw-btn', textContent: 'Last', title: 'What the last automatic search asked for, and why nothing was taken' });
-    const toggle = panelToggle(toggleBtn, (node) => attachPanel(wrap, node));
+    const toggle = panelToggle(toggleBtn, null, 'Last search', sceneSubtitle(r));
     let panel = null;
     toggleBtn.addEventListener('click', async () => {
       if (toggle.isOpen) { toggle.close(); panel = null; return; }
@@ -1807,7 +1931,10 @@
       if (log.kept_from) { // the last search failed (the indexers did not answer): the results are those of an older one
         panel.appendChild(el('p', { className: 'srw-review-warning', textContent: `The search failed; the results below are from the search of ${log.kept_from.slice(0, 16)} UTC.` }));
       }
-      panel.appendChild(buildSortedPagedResults(log.candidates || [], buildLogRow));
+      panel.appendChild(buildSortedPagedResults(log.candidates || [], buildLogRow, {
+        label: 'Best match',
+        title: 'The search\'s own verdict, best first: taken, needs review, another ranked higher, quality or size not allowed, title/date/performers do not match, other scene, blocklisted',
+      }));
     });
     wrap.appendChild(toggleBtn);
     return wrap;
@@ -1815,7 +1942,6 @@
     function buildLogRow(c) {
         const qualityLabel = c.vr ? 'VR' : (c.resolution ? `${c.resolution}p` : 'unknown quality');
         const sizeGb = c.size ? `${(c.size / 1e9).toFixed(2)} GB` : 'unknown size';
-        const ageLabel = c.age != null ? `${c.age}d old` : 'unknown age';
         const swarm = c.protocol === 'torrent'
           ? ` (torrent${c.seeders != null ? `, ${c.seeders} seeders` : ''}${c.peers != null ? `, ${c.peers} peers` : ''})` : '';
         const quality = c.vr ? 'VR' : (c.resolution ? `${c.resolution}p` : (c.est_resolution ? `~${c.est_resolution}p (estimated)` : 'unknown quality'));
@@ -1836,16 +1962,19 @@
             } catch (err) { rowStatus.textContent = ` error: ${err.message}`; }
           }),
         });
-        return el('div', { className: `srw-manual-search-result srw-verdict-${c.verdict}` }, [
-          el('span', { className: 'srw-verdict', textContent: VERDICT_LABELS[c.verdict] || c.verdict }),
-          releaseTitleNode(c.title, c.info_url),
-          el('span', {
-            className: 'srw-review-candidate-meta',
-            textContent: `${c.indexer || 'unknown indexer'}${swarm} — ${quality} — ${sizeGb} — ${ageLabel}`,
-          }),
-          c.size_note ? el('span', { className: 'srw-review-warning', textContent: 'size?', title: c.size_note }) : null,
-          grab,
-          rowStatus,
+        return el('div', { className: `srw-manual-search-result srw-result-row srw-verdict-${c.verdict}` }, [
+          el('div', { className: 'srw-result-main' }, [
+            el('div', { className: 'srw-result-head' }, [
+              el('span', { className: 'srw-verdict', textContent: VERDICT_LABELS[c.verdict] || c.verdict }),
+              releaseTitleNode(c.title, c.info_url),
+            ]),
+            el('div', { className: 'srw-result-facts' }, [
+              resultChips(c, quality),
+              ageWarning(c.age, r.scene_date),
+              c.size_note ? el('span', { className: 'srw-review-warning', textContent: 'size?', title: c.size_note }) : null,
+            ]),
+          ]),
+          el('div', { className: 'srw-result-actions' }, [grab, rowStatus]),
         ]);
     }
   }
@@ -1871,7 +2000,7 @@
       textContent: 'Manual',
       title: 'Search the indexers yourself with your own query and grab a result',
     });
-    const toggle = panelToggle(toggleBtn, (node) => { if (opts && opts.host) opts.host().appendChild(node); else attachPanel(wrap, node); });
+    const toggle = panelToggle(toggleBtn, null, 'Manual search', sceneSubtitle(r));
     let panel = null;
     toggleBtn.addEventListener('click', () => {
       if (toggle.isOpen) { toggle.close(); panel = null; return; }
@@ -1893,7 +2022,6 @@
         // a name without a resolution: the sidecar judges one from the scene's length and the size (est_resolution), marked with "~"
         const qualityLabel = quality.source === 'vr' ? 'VR' : (quality.resolution ? `${quality.resolution}p`
           : (candidate.est_resolution ? `~${candidate.est_resolution}p (estimated)` : 'unknown quality'));
-        const ageLabel = candidate.age != null ? `${candidate.age}d old` : 'unknown age';
         const rowStatus = el('span', { className: 'srw-key-status' });
         // One grab button: `grab` = the caller's own grab (null = the default grab of this panel), `ask` = the confirm text
         const grabButton = (label, className, grab, ask, hint) => el('button', {
@@ -1923,20 +2051,24 @@
             });
           },
         });
-        return el('div', { className: 'srw-manual-search-result' }, [
-          releaseTitleNode(candidate.title, candidate.infoUrl),
-          el('span', {
-            className: 'srw-review-candidate-meta',
-            textContent: `${candidate.indexer || 'unknown indexer'}${candidate.protocol === 'torrent' ? ` (torrent${candidate.seeders != null ? `, ${candidate.seeders} seeders` : ''}${candidate.peers != null ? `, ${candidate.peers} peers` : ''})` : ''} — ${qualityLabel} — ${sizeGb} — ${ageLabel}`,
-          }),
-          candidate.size_note ? el('span', { className: 'srw-review-warning', textContent: 'size?', title: candidate.size_note }) : null,
-          candidate.tried ? el('span', { className: 'srw-review-warning', textContent: candidate.tried.startsWith('declined') ? 'declined before' : 'tried before',
-            title: `${candidate.tried} (blocklist of this scene)` }) : null,
-          grabButton('Grab', 'srw-btn srw-btn-primary', null, `Download "${candidate.title}" for "${r.title}"?`),
-          opts && opts.grabAsScene ? grabButton('Grab as one scene', 'srw-btn', opts.grabAsScene,
-            `Download "${candidate.title}" as ONE SCENE of "${r.title}"? It joins the movie's group; the movie stays on the wishlist for the other parts.`,
-            'The file is only a part of the movie: it is added to its group and the movie stays wanted for the other parts') : null,
-          rowStatus,
+        return el('div', { className: 'srw-manual-search-result srw-result-row' }, [
+          el('div', { className: 'srw-result-main' }, [
+            el('div', { className: 'srw-result-head' }, [releaseTitleNode(candidate.title, candidate.infoUrl)]),
+            el('div', { className: 'srw-result-facts' }, [
+              resultChips(candidate, qualityLabel),
+              ageWarning(candidate.age, r.scene_date),
+              candidate.size_note ? el('span', { className: 'srw-review-warning', textContent: 'size?', title: candidate.size_note }) : null,
+              candidate.tried ? el('span', { className: 'srw-review-warning', textContent: candidate.tried.startsWith('declined') ? 'declined before' : 'tried before',
+                title: `${candidate.tried} (blocklist of this scene)` }) : null,
+            ]),
+          ]),
+          el('div', { className: 'srw-result-actions' }, [
+            grabButton('Grab', 'srw-btn srw-btn-primary', null, `Download "${candidate.title}" for "${r.title}"?`),
+            opts && opts.grabAsScene ? grabButton('Grab as one scene', 'srw-btn', opts.grabAsScene,
+              `Download "${candidate.title}" as ONE SCENE of "${r.title}"? It joins the movie's group; the movie stays on the wishlist for the other parts.`,
+              'The file is only a part of the movie: it is added to its group and the movie stays wanted for the other parts') : null,
+            rowStatus,
+          ]),
         ]);
       }
 
@@ -1957,7 +2089,10 @@
             resultsWrap.appendChild(el('p', { className: 'srw-hint', textContent: 'No results.' }));
             return;
           }
-          resultsWrap.appendChild(buildSortedPagedResults(results, buildResultRow));
+          resultsWrap.appendChild(buildSortedPagedResults(results, buildResultRow, {
+            label: 'Indexer order',
+            title: 'As the search returned them: by the priority of the indexer (lowest number first), then more seeders, then newer, then larger',
+          }));
         } catch (err) {
           status.textContent = ` error: ${err.message}`;
         }
@@ -2117,13 +2252,13 @@
   function defaultFilterState() {
     return {
       search: '', description: false, tags: false, type: 'both', vr: 'all', kind: 'all', dateFrom: '', dateUntil: '',
-      providers: { stashdb: true, theporndb: true }, late: 'all', pairing: '', pairingOptions: [], cast: '', castOptions: [],
+      providers: { stashdb: true, theporndb: true }, late: 'all', upgrades: 'all', pairing: '', pairingOptions: [], cast: '', castOptions: [],
     };
   }
 
   function isFilterActive(f) {
     return Boolean(f.search.trim() || f.type !== 'both' || f.vr !== 'all' || f.kind !== 'all' || f.dateFrom || f.dateUntil
-      || !providersAllOn(f.providers) || f.late !== 'all' || Boolean(f.pairing) || Boolean(f.cast.trim()));
+      || !providersAllOn(f.providers) || f.late !== 'all' || f.upgrades !== 'all' || Boolean(f.pairing) || Boolean(f.cast.trim()));
   }
 
   function releaseQueryArgs(f) {
@@ -2137,6 +2272,7 @@
       date_from: f.dateFrom || null,
       date_until: f.dateUntil || null,
       late_addition: f.late === 'all' ? null : f.late === 'only',
+      upgrades: f.upgrades === 'all' ? null : f.upgrades,
     };
   }
 
@@ -2164,6 +2300,7 @@
         if (f.dateUntil && (!d || d > f.dateUntil)) return false;
       }
       if (f.late !== 'all' && fields.late && Boolean(fields.late(x)) !== (f.late === 'only')) return false;
+      if (f.upgrades !== 'all' && fields.upgrade && Boolean(fields.upgrade(x)) !== (f.upgrades === 'only')) return false;
       if (f.cast.trim() && fields.cast && !(fields.cast(x) || '').toLowerCase().includes(f.cast.trim().toLowerCase())) return false;
       if (f.pairing && fields.pairing && (fields.pairing(x) || '') !== (f.pairing === PAIRING_NONE ? '' : f.pairing)) return false;
       return true;
@@ -2234,6 +2371,11 @@
         [{ key: 'all', label: 'VR + Non-VR' }, { key: 'vr', label: 'VR' }, { key: 'non_vr', label: 'Non-VR' }],
         () => state.vr, (v) => { state.vr = v; onChange(); }, 'VR or flat releases'));
     }
+    if (filters.includes('upgrades')) {
+      parts.push(buildSelect(
+        [{ key: 'all', label: 'With upgrades' }, { key: 'hide', label: 'Hide upgrades' }, { key: 'only', label: 'Only upgrades' }],
+        () => state.upgrades, (v2) => { state.upgrades = v2; onChange(); }, 'Upgrades replace a file that is already in your library (re-adds, better versions)'));
+    }
     if (filters.includes('late')) {
       parts.push(buildSelect(
         [{ key: 'all', label: 'All additions' }, { key: 'only', label: 'Added late' }, { key: 'hide', label: 'Not added late' }],
@@ -2296,7 +2438,7 @@
   function buildFilteredPagedList({
     filters = [], fetchPage, renderItems, perPage = 40,
     emptyText = 'Nothing here.', filteredEmptyText = 'Nothing matches the current filter.',
-    onTotal = null, showFilterBarFrom = 0, pairingOptions = [], castOptions = [],
+    onTotal = null, showFilterBarFrom = 0, pairingOptions = [], castOptions = [], barTarget = null,
   }) {
     const state = defaultFilterState();
     state.pairingOptions = pairingOptions;
@@ -2330,7 +2472,7 @@
       // it (or a filter is already active) -- a 3-entry list doesn't get
       // a full toolbar.
       if (!barShown && filters.length && (result.total > showFilterBarFrom || active)) {
-        barSlot.appendChild(buildPagedFilterBar(state, filters, () => load(1)));
+        (barTarget || barSlot).appendChild(buildPagedFilterBar(state, filters, () => load(1)));
         barShown = true;
       }
       if (onTotal) onTotal(result.total, active);
@@ -2352,7 +2494,7 @@
       // scene title) -- rows on other pages aren't in the DOM any more.
       setSearch(text) {
         state.search = text || '';
-        const input = barSlot.querySelector('.srw-search-input');
+        const input = (barTarget || barSlot).querySelector('.srw-search-input');
         if (input) input.value = state.search;
         return load(1);
       },
@@ -2553,7 +2695,7 @@
     getSettings, runOp, sidecarWsUrl,
     getRoute, onNavigate, initNavigationWatcher,
     el, waitForElement, entityIcon, buildPageHeader,
-    searchStatusLabel, setBusy, iconButton, busyIcon, confirmInline, buildManagedList, buildSearchActions, whenNoOpenPanel, buildManualSearch, getSearchCapabilities,
+    searchStatusLabel, setBusy, openModal, sceneSubtitle, iconButton, busyIcon, ageWords, ageWarning, confirmInline, buildManagedList, buildSearchActions, whenNoOpenPanel, buildManualSearch, getSearchCapabilities,
     rememberOpen, icon, mismatchWarning, buildPagedList, buildPager, releaseTitleNode, notify, dismissedNotice, releaseDismissedNotice, dismissRelease, buildWishlistDismiss, buildFilmDismissButtons, notifyHandoff, buildAddOnlyButton,
     sceneUrl, notifyReadd, loadMetadataProviderUrls, loadProviders, resetProviders, providerInfo, providerLabel, providerKeys, providerOn, providersAllOn, providersSelected, isLateAdditionNew, buildLateAdditionBadge,
     buildFilteredPagedList, buildSelect, buildSafetyPanel, ignoreRenamers, pairingOptionsFor, castOptionsFor, buildPairingBadge, localPageFetcher, releaseQueryArgs, filterLocally, isFilterActive,

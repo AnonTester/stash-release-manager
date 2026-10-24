@@ -283,7 +283,7 @@ def main():
         # Server-side filtered/paged listing (2026-09-26), see
         # routers/releases.py's query().
         keys = ("statuses", "q", "search_description", "search_tags", "entity_type", "vr", "providers",
-                "date_from", "date_until", "page", "per_page", "ids_only", "entities", "late_addition", "order")
+                "date_from", "date_until", "page", "per_page", "ids_only", "entities", "late_addition", "order", "upgrades")
         result = _post(sidecar_url, "/releases/query", {k: args[k] for k in keys if k in args}, timeout=60)
     elif mode == "releases_bulk_status":
         # Calendar/List "Dismiss N shown" + its Undo, see
@@ -533,6 +533,14 @@ def main():
         result = _get(sidecar_url, "/maintenance/upgrades", timeout=30)
     elif mode == "upgrades_refresh":
         result = _post(sidecar_url, "/maintenance/upgrades/refresh", {}, timeout=300)
+    elif mode == "upgrades_bulk":
+        # Bulk actions on Upgrade wanted (v0.237.0), see routers/maintenance.py's upgrades_bulk(); a bulk search runs up to 10 real searches.
+        result = _post(sidecar_url, "/maintenance/upgrades/bulk",
+                       {k: args[k] for k in ("ids", "action", "statuses", "profile_id", "previous") if k in args}, timeout=900)
+    elif mode == "upgrades_library_check_start":
+        result = _post(sidecar_url, f"/maintenance/upgrades/library-check/start?force={'true' if args.get('force') else 'false'}", {}, timeout=30)
+    elif mode == "upgrades_library_check_status":
+        result = _get(sidecar_url, "/maintenance/upgrades/library-check/status", timeout=30)
     elif mode == "upgrades_search":
         # Real grab only when dry_run is explicitly false (bool or string).
         qs = "?dry_run=false" if str(args.get("dry_run")).lower() in ("false", "0") else "?dry_run=true"
@@ -656,6 +664,8 @@ def main():
         result = _post(sidecar_url, f"/maintenance/vr-check/findings/{args.get('finding_id')}/dismiss", {}, timeout=15)
     elif mode == "vr_check_fix":
         result = _post(sidecar_url, f"/maintenance/vr-check/findings/{args.get('finding_id')}/fix", {}, timeout=120)
+    elif mode == "maintenance_check_recheck":
+        result = _post(sidecar_url, f"/maintenance/library-check/findings/{args.get('finding_id')}/recheck", {}, timeout=120)
     elif mode == "maintenance_check_dismiss":
         result = _post(sidecar_url, f"/maintenance/library-check/findings/{args.get('finding_id')}/dismiss", {}, timeout=15)
     elif mode == "file_import_run":
@@ -714,6 +724,9 @@ def main():
         result = _post(sidecar_url, path, {}, timeout=60)
     elif mode == "releases_review_candidate_reject":
         path = f"/releases/{args.get('provider')}/{args.get('scene_stashdb_id')}/review-candidate/reject"
+        result = _post(sidecar_url, path, {})
+    elif mode == "releases_review_candidate_restore":
+        path = f"/releases/{args.get('provider')}/{args.get('scene_stashdb_id')}/review-candidate/restore"
         result = _post(sidecar_url, path, {})
     elif mode == "releases_manual_search":
         # Manual search with a user-typed query (2026-09-22) over Prowlarr

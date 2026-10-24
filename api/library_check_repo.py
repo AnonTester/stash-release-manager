@@ -104,3 +104,10 @@ def set_finding_status(db, finding_id, status, applied_title=None, error=None):
                WHERE id = ?""",
             (status, applied_title, error, finding_id),
         )
+
+
+def delete_finding(db, finding_id):
+    """A finding that is no longer true (the re-check found the scene matches after all): gone, not 'resolved' -- the status column only knows
+    pending / applied / failed / dismissed."""
+    with db.connect() as conn:
+        conn.execute("DELETE FROM library_check_finding WHERE id = ?", (finding_id,))

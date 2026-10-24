@@ -134,6 +134,7 @@ def query(body: dict):
         entities=[tuple(e) for e in body["entities"]] if body.get("entities") is not None else None,
         late_addition=body.get("late_addition"),
         order=body.get("order") or "day",
+        upgrades=body.get("upgrades") if body.get("upgrades") in ("only", "hide") else None,
     ))
 
 
@@ -630,7 +631,25 @@ def reject_review_candidate(provider: str, scene_stashdb_id: str):
     release_repo.set_search_result_for_scene(_db, provider, scene_stashdb_id, RESULT_TITLE_MISMATCH_ONLY)
     history.scene("warning", "blocklist", f"Possible match rejected (blocklisted): {candidate['title']}",
                   provider, scene_stashdb_id)
+    _rejected_candidates[(provider, scene_stashdb_id)] = candidate  # for the Undo (the candidate carries a download link: kept here, not sent around)
     return {"ok": True}
+
+
+# The candidate of the last rejection per scene, so that Undo can bring it back (in memory: the Undo card lives for seconds; gone after a restart).
+_rejected_candidates = {}
+
+
+@router.post("/{provider}/{scene_stashdb_id}/review-candidate/restore")
+def restore_review_candidate(provider: str, scene_stashdb_id: str):
+    """Undo of "Not this one" / Reject: the title leaves the scene's blocklist and the candidate is back for review."""
+    candidate = _rejected_candidates.pop((provider, scene_stashdb_id), None)
+    if candidate is None:
+        raise HTTPException(404, "Nothing to undo for this scene (the rejection is too old, or the sidecar was restarted since)")
+    release_repo.remove_review_rejected_title(_db, provider, scene_stashdb_id, candidate["title"])
+    release_repo.set_review_candidate_for_scene(_db, provider, scene_stashdb_id, candidate)
+    release_repo.set_search_result_for_scene(_db, provider, scene_stashdb_id, indexer_search.RESULT_NEEDS_REVIEW)
+    history.scene("info", "blocklist", f"Rejection undone, the possible match is back for review: {candidate['title']}", provider, scene_stashdb_id)
+    return {"ok": True, "title": candidate["title"]}
 
 
 @router.post("/{provider}/{scene_stashdb_id}/confirm-file")

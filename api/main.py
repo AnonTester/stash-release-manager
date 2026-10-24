@@ -64,6 +64,7 @@ from version import SIDECAR_VERSION
 import vr_check
 import upgrades
 import duration_check
+import upgrade_library_check
 import handoff as _handoff_module
 import file_importer as _file_importer_module
 import inactive_check
@@ -683,6 +684,8 @@ def _stash_path_to_local(path):
 
 vr_job = vr_check.VrCheckJob(db, get_stash_client, get_provider_client, _stash_path_to_local)
 duration_job = duration_check.DurationCheckJob(db, get_stash_client, get_provider_client)
+upgrade_library_check_job = upgrade_library_check.UpgradeLibraryCheck(
+    db, get_stash_client, duration_job, lambda k, d: get_setting_value(db, k, d), lambda: _cutoff_resolution())
 
 
 def _organizer():
@@ -1598,7 +1601,7 @@ init_maintenance_router(db, get_stash_client, get_stashdb_client, vr_job, _fix_w
                         upgrade_search=run_upgrade_search, cutoff_resolution=_cutoff_resolution,
                         get_provider_client=get_provider_client, to_local=_stash_path_to_local,
                         organizer_factory=_organizer, importer_factory=_importer, movies_factory=_movies,
-                        duration_job=duration_job, readd=readd_library_scene)
+                        duration_job=duration_job, readd=readd_library_scene, library_check_job=upgrade_library_check_job)
 init_compare_router(db, lambda: scene_compare.SceneCompare(db, get_stash_client, get_provider_client, settings.data_dir,
                                                               get_importer=_importer, to_local=_stash_path_to_local))
 init_file_import_router(

@@ -1097,7 +1097,7 @@
     // 2026-09-26) -- otherwise only visible on each entity's page.
     const isLate = status === 'late';
     const view = window.SRW.buildFilteredPagedList({
-      filters: ['search', 'description', 'type', 'vr', 'dates', 'providers'],
+      filters: ['search', 'description', 'type', 'vr', 'dates', 'providers', ...(status === 'sent_to_whisparr' ? ['upgrades'] : [])],
       perPage: 50,
       showFilterBarFrom: 10,
       emptyText: 'None.',
@@ -1258,8 +1258,9 @@
               window.SRW.releaseTitleNode(candidate.title, candidate.infoUrl),
               el('span', {
                 className: 'srw-review-candidate-meta',
-                textContent: `${candidate.indexer || 'unknown indexer'} — ${sizeGb}`,
+                textContent: `${candidate.indexer || 'unknown indexer'} — ${sizeGb} — ${window.SRW.ageWords(candidate.age)}`,
               }),
+              window.SRW.ageWarning(candidate.age, r.scene_date),
               el('button', {
                 className: 'srw-btn srw-btn-primary',
                 textContent: 'Load it',
@@ -1298,6 +1299,10 @@
                       provider: r.provider, scene_stashdb_id: r.scene_stashdb_id,
                     });
                     if (result.error) { reviewStatus.textContent = ` error: ${result.error}`; e.target.disabled = false; return; }
+                    window.SRW.dismissedNotice(`Rejected: ${window.SRW.cleanReleaseTitle ? window.SRW.cleanReleaseTitle(candidate.title) : candidate.title}`,
+                      'Blocklisted for this scene.',
+                      () => window.SRW.runOp('releases_review_candidate_restore', { provider: r.provider, scene_stashdb_id: r.scene_stashdb_id }),
+                      () => renderReleaseList(container));
                     await renderReleaseList(container);
                   } catch (err) {
                     reviewStatus.textContent = ` error: ${err.message}`;

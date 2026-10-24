@@ -156,3 +156,32 @@ def apply_fix(stash_client, scene_id, expected_target_id, create_missing_perform
     return stash_client.retag_scene(scene_id, scraped, expected_target_id,
                                      create_missing_performers=create_missing_performers, endpoint=endpoint,
                                      keep_other_endpoints=keep_other_endpoints)
+
+
+def recheck_finding(db, stash_client, stashdb_client, finding):
+    """"Re-check fingerprints" on a "Needs manual review" finding (v0.238.0): asks StashDB again for what the scene's file(s) are -- someone may have
+    registered fingerprints since the run -- and files the answer like a run would: a match closes the finding, one other scene makes it an
+    auto-fixable mismatch, several scenes an ambiguous one, nothing leaves it unverifiable. Returns {"result", "message"} or {"error"}."""
+    import library_check_repo
+    scene = stash_client.scene_for_fingerprint_check(finding["scene_id"])
+    if scene is None:
+        return {"error": "Stash has no scene with this id any more"}
+    matches, mismatches, ambiguous, unverifiable = find_library_mismatches(stashdb_client, [scene], stash_client.stashdb_endpoint, delay=0)
+    run_id = finding.get("run_id")
+    if matches:
+        library_check_repo.delete_finding(db, finding["id"])
+        return {"result": "verified", "message": "StashDB now has fingerprints that match this scene's id -- the finding is closed."}
+    if mismatches:
+        m = mismatches[0]
+        library_check_repo.insert_finding(db, run_id, m["id"], m["title"], "mismatch", expected_stashdb_id=m["expected_stashdb_id"],
+                                          candidates=m["found_as"], file_paths=m["paths"])
+        names = ", ".join(c.get("title") or c["id"] for c in m["found_as"])
+        return {"result": "mismatch", "message": f"StashDB now identifies the file as {names} -- it moved to the corrections list."}
+    if ambiguous:
+        a = ambiguous[0]
+        library_check_repo.insert_finding(db, run_id, a["id"], a["title"], "ambiguous", expected_stashdb_id=a["expected_stashdb_id"],
+                                          candidates=a["found_as"], file_paths=a["paths"])
+        return {"result": "ambiguous", "message": f"StashDB lists {len(a['found_as'])} scenes for this file: "
+                + ", ".join(c.get("title") or c["id"] for c in a["found_as"])}
+    u = unverifiable[0] if unverifiable else {"reason": "unknown"}
+    return {"result": "unverifiable", "message": f"Still not verifiable: {u['reason']}."}

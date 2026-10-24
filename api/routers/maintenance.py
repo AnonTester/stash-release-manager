@@ -24,6 +24,7 @@ from pydantic import BaseModel
 import history
 import library_check
 import library_check_repo
+import quality_profile_repo
 import release_repo
 import library_rename
 import upgrades
@@ -55,11 +56,11 @@ _cutoff_resolution = None
 
 def init_maintenance_router(db, get_stash_client, get_stashdb_client, vr_job=None, fix_wrong_download=None,
                             upgrade_search=None, cutoff_resolution=None, get_provider_client=None, to_local=None,
-                            organizer_factory=None, importer_factory=None, movies_factory=None, duration_job=None, readd=None):
+                            organizer_factory=None, importer_factory=None, movies_factory=None, duration_job=None, readd=None, library_check_job=None):
     global _db, _get_stash_client, _get_stashdb_client, _vr_job, _fix_wrong_download
     global _upgrade_search, _cutoff_resolution, _get_provider_client, _to_local, _organizer, _importer, _movies
-    global _duration_job, _readd
-    _duration_job, _readd = duration_job, readd
+    global _duration_job, _readd, _library_check_job
+    _duration_job, _readd, _library_check_job = duration_job, readd, library_check_job
     _importer = importer_factory
     _movies = movies_factory
     _get_provider_client = get_provider_client
@@ -79,7 +80,7 @@ def init_maintenance_router(db, get_stash_client, get_stashdb_client, vr_job=Non
 @router.get("/upgrades")
 def upgrades_list():
     from routers.settings import get_setting_value
-    candidates = upgrades.list_candidates(_db, ("wanted", "grabbed", "review", "done"))
+    candidates = upgrades.list_candidates(_db, ("wanted", "grabbed", "review", "done", "dismissed", "wishlist", "check"))
     # Studio + release date for the manual search prefill ("Studio.YY.MM.DD"), from the release rows when the scene has any.
     with _db.connect() as conn:
         info = {(r["provider"], r["scene_stashdb_id"]): (r["studio_name"], r["scene_date"]) for r in conn.execute(
@@ -92,6 +93,9 @@ def upgrades_list():
         "per_run": get_setting_value(_db, "upgrade_search_per_run", "20"),
         "interval_hours": get_setting_value(_db, "upgrade_search_interval_hours", "12"),
         "cutoff_resolution": _cutoff_resolution() if _cutoff_resolution else None,
+        "dry_run_button": get_setting_value(_db, "upgrade_dry_run_button", "false") == "true",
+        "profiles": [{"id": p["id"], "name": p["name"]} for p in quality_profile_repo.list_all(_db)],
+        "active_profile_id": get_setting_value(_db, "quality_profile_id", ""),
     }
 
 
@@ -105,6 +109,97 @@ def upgrades_refresh():
 @router.post("/upgrades/{cand_id}/search")
 def upgrades_search(cand_id: int, dry_run: bool = True):
     return _upgrade_search(cand_id, dry_run=dry_run)
+
+
+@router.post("/upgrades/library-check/start")
+def upgrades_library_check_start(force: bool = False):
+    """One-time check of the whole library for upgrade candidates (upgrade_library_check.py); `force` asks the providers for every length again."""
+    return _library_check_job.start(force)
+
+
+@router.get("/upgrades/library-check/status")
+def upgrades_library_check_status():
+    from routers.settings import get_setting_value
+    return {"job": _library_check_job.status, "last": _library_check_job.last_run(), "cutoff_resolution": _cutoff_resolution() if _cutoff_resolution else None,
+            "vr_min_mbps": get_setting_value(_db, "vr_upgrade_min_mbps", "8"), **duration_check.summary(_db)}
+
+
+class UpgradeBulkBody(BaseModel):
+    ids: list[int]
+    action: str  # dismiss | restore | approve | wishlist | unwishlist | profile | search
+    statuses: dict[str, str] | None = None  # restore: {id: status to go back to}
+    profile_id: int | None = None  # profile: None / 0 = the profile of the Settings again
+    previous: dict | None = None  # unwishlist: {id: {"status", "rows"}} as wishlist returned it
+
+
+BULK_SEARCH_MAX = 10
+
+
+@router.post("/upgrades/bulk")
+def upgrades_bulk(body: UpgradeBulkBody):
+    """Bulk actions on Upgrade wanted (v0.237.0). dismiss: returns the previous status of each (for the Undo); restore: back to those
+    statuses; wishlist / unwishlist: to the normal wishlist and back (upgrades.to_wishlist); profile: sets / clears the candidates' own quality profile; search: real searches, one after the other, at most BULK_SEARCH_MAX."""
+    ids = list(dict.fromkeys(int(i) for i in body.ids))
+    if not ids:
+        raise HTTPException(400, "no candidates selected")
+    if body.action == "dismiss":
+        previous = {}
+        for i in ids:
+            cand = upgrades.get_candidate(_db, i)
+            if cand and cand["status"] in ("wanted", "review", "grabbed", "check"):
+                previous[str(i)] = cand["status"]
+                upgrades.set_candidate(_db, i, status="dismissed")
+        return {"ok": True, "changed": len(previous), "previous": previous}
+    if body.action == "restore":
+        restored = 0
+        for i in ids:
+            cand = upgrades.get_candidate(_db, i)
+            status = (body.statuses or {}).get(str(i), "wanted")
+            if cand and cand["status"] == "dismissed" and status in ("wanted", "grabbed", "review", "check"):
+                upgrades.set_candidate(_db, i, status=status)
+                restored += 1
+        return {"ok": True, "restored": restored}
+    if body.action == "wishlist":
+        previous, errors = {}, {}
+        for i in ids:
+            out = upgrades.to_wishlist(_db, i, _get_provider_client)
+            if out.get("error"):
+                errors[str(i)] = out["error"]
+            else:
+                previous[str(i)] = {"status": out["status_before"], "rows": out["previous"]}
+        return {"ok": True, "changed": len(previous), "previous": previous, "errors": errors}
+    if body.action == "unwishlist":
+        undone = 0
+        for i in ids:
+            old = (body.previous or {}).get(str(i)) or {}
+            if upgrades.undo_wishlist(_db, i, old.get("rows"), old.get("status")).get("ok"):
+                undone += 1
+        return {"ok": True, "restored": undone}
+    if body.action == "approve":
+        # 'check' -> 'wanted': the candidate found by the library check is released for the (automatic) upgrade search
+        done = 0
+        for i in ids:
+            cand = upgrades.get_candidate(_db, i)
+            if cand and cand["status"] == "check":
+                upgrades.set_candidate(_db, i, status="wanted")
+                done += 1
+        return {"ok": True, "changed": done}
+    if body.action == "profile":
+        pid = body.profile_id or None
+        if pid is not None and quality_profile_repo.get_one(_db, pid) is None:
+            raise HTTPException(400, "unknown quality profile")
+        for i in ids:
+            upgrades.set_candidate(_db, i, quality_profile_id=pid)
+        return {"ok": True, "changed": len(ids), "profile_id": pid}
+    if body.action == "search":
+        if len(ids) > BULK_SEARCH_MAX:
+            raise HTTPException(400, f"at most {BULK_SEARCH_MAX} searches at a time (each asks the indexers); select fewer")
+        results = []
+        for i in ids:
+            out = _upgrade_search(i, dry_run=False)
+            results.append({"id": i, "grab": bool((out or {}).get("grab")), "result": (out or {}).get("result"), "error": (out or {}).get("error")})
+        return {"ok": True, "results": results, "grabbed": sum(1 for r in results if r["grab"])}
+    raise HTTPException(400, "unknown action")
 
 
 # --- Duration mismatch (v0.209.0, duration_check.py) ---
@@ -411,7 +506,7 @@ class RestoreBody(BaseModel):
 def upgrades_restore(cand_id: int, body: RestoreBody):
     """Undo of "Dismiss" on Upgrade wanted: back to the status the candidate had before."""
     cand = upgrades.get_candidate(_db, cand_id)
-    if not cand or cand["status"] != "dismissed" or body.status not in ("wanted", "grabbed", "review"):
+    if not cand or cand["status"] != "dismissed" or body.status not in ("wanted", "grabbed", "review", "check"):
         raise HTTPException(400, "nothing to restore")
     upgrades.set_candidate(_db, cand_id, status=body.status)
     return {"ok": True}
@@ -640,6 +735,20 @@ def apply_finding(finding_id: int):
     except Exception as e:
         library_check_repo.set_finding_status(_db, finding_id, "failed", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/library-check/findings/{finding_id}/recheck")
+def recheck_finding(finding_id: int):
+    """"Re-check fingerprints" on a Needs-manual-review finding: StashDB is asked again for this scene's file(s), see library_check.recheck_finding()."""
+    finding = library_check_repo.get_finding(_db, finding_id)
+    if not finding:
+        raise HTTPException(status_code=404, detail="finding not found")
+    if finding.get("status") != "pending":
+        raise HTTPException(status_code=400, detail="only an open finding can be re-checked")
+    result = library_check.recheck_finding(_db, _get_stash_client(), _get_stashdb_client(), finding)
+    if result.get("error"):
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
 
 
 @router.post("/library-check/findings/{finding_id}/dismiss")

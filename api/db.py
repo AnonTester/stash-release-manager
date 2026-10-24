@@ -534,6 +534,8 @@ class Database:
         self._migrate_downloaded_release(conn)
         self._migrate_studio_dismiss_streak(conn)
         self._migrate_torrent_health(conn)
+        self._migrate_upgrade_profile(conn)
+        self._migrate_upgrade_check_status(conn)
 
     def _migrate_torrent_support(self, conn):
         """Torrent support (v0.133.0): download_client.type allows 'qbittorrent' (+ an `options` JSON column for the client's *arr-style settings),
@@ -916,6 +918,22 @@ class Database:
             group_id   TEXT NOT NULL,
             PRIMARY KEY (folder_key, group_id)
         )""")
+
+    def _migrate_upgrade_profile(self, conn):
+        """`upgrade_candidate.quality_profile_id` (v0.237.0): a quality profile for THIS candidate (set in bulk on Upgrade wanted); NULL = the
+        profile chosen in Settings. VR candidates ignore the resolutions of a profile (they follow the VR rules), so it matters for non-VR ones."""
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(upgrade_candidate)")}
+        if "quality_profile_id" not in cols:
+            conn.execute("ALTER TABLE upgrade_candidate ADD COLUMN quality_profile_id INTEGER")
+
+    def _migrate_upgrade_check_status(self, conn):
+        """v0.237.8, once: wrong-length candidates the library check added before the status 'check' existed (never searched) wait for a look
+        instead of being picked up by the automatic upgrade search."""
+        done = conn.execute("SELECT 1 FROM setting WHERE key = 'migrated:upgrade_check_status'").fetchone()
+        if done:
+            return
+        conn.execute("UPDATE upgrade_candidate SET status = 'check' WHERE reason = 'duration' AND status = 'wanted' AND last_search_at IS NULL")
+        conn.execute("INSERT INTO setting (key, value) VALUES ('migrated:upgrade_check_status', '1')")
 
     def _migrate_upgrade_review(self, conn):
         """Adds `upgrade_candidate.review_candidate` / `rejected_titles`

@@ -2177,3 +2177,71 @@ a.srw-btn { text-decoration: none; display: inline-block; text-align: center; }
   background: #161b22; border-color: rgba(224, 176, 80, 0.7);
 }
 .srw-release-row .srw-rr-actions .srw-inline-confirm-text, .srw-release-row .srw-rr-actions .srw-inline-confirm-text.srw-inline-confirm-long { white-space: normal; max-width: 100%; }
+
+/* A confirmation question that lies over the trigger's place (v0.236.2, placeConfirm() in core.js): out of the flow, so nothing moves. */
+.srw-inline-confirm.srw-confirm-overlay {
+  position: absolute; z-index: 20; flex-wrap: wrap; justify-content: flex-end;
+  background: #161b22; border-color: rgba(224, 176, 80, 0.7);
+}
+.srw-inline-confirm.srw-confirm-overlay .srw-inline-confirm-text,
+.srw-inline-confirm.srw-confirm-overlay .srw-inline-confirm-text.srw-inline-confirm-long { white-space: normal; max-width: 100%; overflow-wrap: anywhere; }
+#srw-plugin-root { position: relative; }
+
+/* Search panels (Last / Manual) open in a modal built from Stash's own modal classes (v0.236.4, openModal() in core.js). */
+.srw-modal-body { position: relative; }
+.srw-modal-title { overflow-wrap: anywhere; font-size: 1.1rem; }
+.srw-modal .srw-manual-search-panel { width: 100%; }
+.srw-modal-backdrop { z-index: 1040; }
+.srw-modal { z-index: 1050; overflow-y: auto; }
+
+/* Search results in the modal (v0.236.5): a sort bar of buttons, rows with the title and chips on the left and the Grab buttons on the right. */
+.srw-sort-row { display: flex; align-items: center; gap: 0.6rem; margin: 0 0 0.6rem; flex-wrap: wrap; }
+.srw-sort-label { opacity: 0.7; }
+.srw-sort-bar .btn.srw-btn-fit { border-radius: 0; }
+.srw-sort-bar .btn.srw-btn-fit:first-child { border-top-left-radius: 4px; border-bottom-left-radius: 4px; }
+.srw-sort-bar .btn.srw-btn-fit:last-child { border-top-right-radius: 4px; border-bottom-right-radius: 4px; }
+.srw-result-list { display: flex; flex-direction: column; gap: 0.45rem; }
+.srw-result-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 0.35rem 1rem; padding: 0.55rem 0.75rem; }
+.srw-result-main { display: flex; flex-direction: column; gap: 0.3rem; min-width: 0; }
+.srw-result-head { display: flex; flex-wrap: wrap; align-items: center; gap: 0.2rem 0.6rem; min-width: 0; overflow-wrap: anywhere; font-weight: 600; }
+.srw-result-facts { display: flex; flex-wrap: wrap; align-items: center; gap: 0.25rem 0.5rem; }
+.srw-result-actions { display: flex; align-items: center; gap: 0.4rem; justify-content: flex-end; white-space: nowrap; }
+.srw-chips { display: inline-flex; flex-wrap: wrap; gap: 0.25rem; }
+.srw-chip { padding: 0.05rem 0.5rem; border-radius: 999px; background: rgba(128, 128, 128, 0.22); font-size: 0.86em; white-space: nowrap; }
+@media (max-width: 700px) { .srw-result-row { grid-template-columns: minmax(0, 1fr); } .srw-result-actions { justify-content: flex-start; flex-wrap: wrap; white-space: normal; } }
+
+/* Search modal (v0.236.6): the scene under the heading, the filter bar in the sort row. */
+.srw-modal-heading { min-width: 0; display: flex; flex-direction: column; gap: 0.15rem; }
+.srw-modal-sub { display: flex; flex-direction: column; gap: 0.1rem; }
+.srw-modal-sub-title { font-weight: 600; overflow-wrap: anywhere; user-select: text; }
+.srw-modal-sub-meta { opacity: 0.75; font-size: 0.93em; overflow-wrap: anywhere; user-select: text; }
+.srw-sort-filter { display: contents; }
+.srw-sort-row .srw-filter-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; margin: 0 0 0 auto; padding: 0; background: none; border: 0; }
+.srw-sort-row .srw-filter-bar .srw-filter-select { min-width: 9.5rem; }
+.srw-sort-row .srw-filter-bar .srw-search-input { min-width: 12rem; }
+
+/* The result text of Now / Whisparr under the buttons of a release row, out of the flow (v0.236.8). */
+.srw-release-row .srw-rr-actions .srw-search-actions { position: relative; }
+.srw-release-row .srw-search-actions .srw-search-status-line {
+  position: absolute; top: calc(100% + 0.3rem); right: 0; max-width: 28rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  font-size: 0.93em; opacity: 0.9;
+}
+.srw-release-row .srw-search-actions .srw-search-status-line:empty { display: none; }
+
+/* Upgrade wanted (v0.237.0): toolbar, bulk bar, rows with a checkbox, thumbnail, info and actions. */
+.srw-upgrade-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+.srw-bulk-bar {
+  position: sticky; top: 0; z-index: 4; display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1rem;
+  padding: 0.5rem 0.75rem; margin: 0.5rem 0; border: 1px solid rgba(111, 168, 224, 0.5); border-radius: 6px; background: #1c2630;
+}
+.srw-bulk-bar[hidden] { display: none; }
+.srw-bulk-count { font-weight: 600; }
+.srw-bulk-all { margin-left: 0.6rem; }
+.srw-bulk-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; }
+.srw-bulk-profile { display: inline-flex; align-items: center; gap: 0.3rem; margin-left: 0.5rem; }
+.srw-upgrade-row { display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto; align-items: center; gap: 0.5rem 0.8rem; }
+.srw-upgrade-row .srw-vr-thumb-link { margin-right: 0; }
+.srw-upgrade-info { min-width: 0; display: flex; flex-direction: column; gap: 0.25rem; }
+.srw-upgrade-selectall { list-style: none; padding: 0.2rem 0.3rem; opacity: 0.85; }
+.srw-upgrade-note:empty { display: none; }
+@media (max-width: 800px) { .srw-upgrade-row { grid-template-columns: auto minmax(0, 1fr); } .srw-upgrade-row .srw-upgrade-actions { grid-column: 1 / -1; justify-content: flex-start; } }

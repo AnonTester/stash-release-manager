@@ -281,7 +281,7 @@ _DAY_EXPR = "COALESCE(release.scene_date, substr(release.scene_created, 1, 10))"
 
 def query_releases(db, statuses=("new",), q="", search_description=False, entity_type=None, vr=None,
                    providers=None, date_from=None, date_until=None, page=1, per_page=100, ids_only=False,
-                   entities=None, late_addition=None, order="day", search_tags=False):
+                   entities=None, late_addition=None, order="day", search_tags=False, upgrades=None):
     """Server-side filtered + paged release listing (2026-09-26, List view
     paging -- replaces loading up to list_view_limit rows and filtering
     in the browser). Filters apply per release ROW, exactly like the old
@@ -301,7 +301,7 @@ def query_releases(db, statuses=("new",), q="", search_description=False, entity
     provider id). `late_addition`: True/False to show only / hide
     back-catalogue additions (see watcher._is_late_addition()). `order`:
     'day' (scene day, newest first -- default), 'handoff' (newest
-    hand-off first, for the wishlist section) or 'imported'."""
+    hand-off first, for the wishlist section) or 'imported'. `upgrades`: 'only' / 'hide' rows that replace a library file (release.upgrade_of)."""
     where = [f"release.status IN ({','.join('?' * len(statuses))})"]
     params = list(statuses)
     if q and q.strip():
@@ -331,6 +331,10 @@ def query_releases(db, statuses=("new",), q="", search_description=False, entity
         where.append("(" + " OR ".join("(release.entity_type = ? AND release.entity_stashdb_id = ?)" for _ in pairs) + ")")
         for pair in pairs:
             params += list(pair)
+    if upgrades == "only":  # v0.237.0: rows that replace a library file (upgrades / re-adds) -- On Wishlist's "Only upgrades"
+        where.append("release.upgrade_of IS NOT NULL")
+    elif upgrades == "hide":
+        where.append("release.upgrade_of IS NULL")
     if late_addition is not None:
         where.append("release.late_addition = ?")
         params.append(1 if late_addition else 0)
@@ -779,6 +783,25 @@ def get_review_rejected_titles(db, provider, scene_stashdb_id):
     if row is None or not row["review_rejected_titles"]:
         return []
     return json.loads(row["review_rejected_titles"])
+
+
+def remove_review_rejected_title(db, provider, scene_stashdb_id, title):
+    """The inverse of add_review_rejected_title(): takes `title` off the scene's blocklist again (every release row of the scene), for the Undo of
+    "Not this one" / Reject (v0.236.3). Returns how many rows had it."""
+    removed = 0
+    with db.connect() as conn:
+        rows = conn.execute(
+            "SELECT rowid, review_rejected_titles FROM release WHERE provider = ? AND scene_stashdb_id = ?",
+            (provider, scene_stashdb_id),
+        ).fetchall()
+        for row in rows:
+            existing = json.loads(row["review_rejected_titles"]) if row["review_rejected_titles"] else []
+            if title in existing:
+                existing.remove(title)
+                conn.execute("UPDATE release SET review_rejected_titles = ? WHERE rowid = ?",
+                             (json.dumps(existing) if existing else None, row["rowid"]))
+                removed += 1
+    return removed
 
 
 def add_review_rejected_title(db, provider, scene_stashdb_id, title, exact=False):
