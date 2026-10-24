@@ -11,7 +11,7 @@
   // rule and the bug it caused when this drifted). Change this if you
   // install under a different folder name.
   // Must equal `version:` in stash-release-manager.yml (scripts/test_plugin_version.py checks it).
-  const PLUGIN_VERSION = '0.242.0';
+  const PLUGIN_VERSION = '0.242.2';
   const PLUGIN_ID = 'stash-release-manager';
   const PLUGIN_NAME = 'StashReleaseManager';
 
@@ -193,6 +193,16 @@
     await loadProviders();
     Object.values(providerRegistry).forEach((p) => { if (p.url) metadataProviderUrls[p.key] = p.url; });
     return metadataProviderUrls;
+  }
+
+  // A picture link from Stash (GraphQL image_path ...) can carry the address Stash knows itself by (an internal host); the browser has to
+  // load it from the address the page was opened with, or it is blocked (Local Network Access) or unreachable. Only path and query are kept.
+  function stashUrl(url) {
+    if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) return url;
+    try {
+      const u = new URL(url);
+      return /^\/(performer|studio|scene|group|image|gallery|tag)\//.test(u.pathname) ? u.pathname + u.search : url;
+    } catch (e) { return url; }
   }
 
   function sceneUrl(provider, sceneStashdbId) {
@@ -2762,7 +2772,7 @@
   window.SRW = {
     PLUGIN_ID, PLUGIN_NAME,
     getContentScope, resetContentScope, scopeAllows,
-    getSettings, runOp, sidecarWsUrl,
+    getSettings, runOp, sidecarWsUrl, stashUrl,
     getRoute, onNavigate, initNavigationWatcher,
     el, waitForElement, entityIcon, buildPageHeader,
     watchKind, keepResult, recallResult, forgetResult, keptNote, searchStatusLabel, setBusy, openModal, sceneSubtitle, iconButton, busyIcon, ageWords, ageWarning, confirmInline, buildManagedList, buildSearchActions, whenNoOpenPanel, buildManualSearch, getSearchCapabilities,

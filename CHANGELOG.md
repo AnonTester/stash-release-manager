@@ -6,6 +6,12 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.242.2
+- The numbers behind the Maintenance menu links are centered in their pill: a long label (Performers without scenes) no longer squeezes the pill so that 141 broke out of it, 3342 sat tight to the right edge and 70 looked shifted. Same padding left and right for every number; on the selected link the pill is a lighter shade so it stays visible.
+
+## 0.242.1
+- Pictures from Stash (Maintenance > Performers without scenes, the entity pictures on Releases) are loaded from the address the page was opened with. Stash hands out its picture links with the address it knows itself by (an internal host), which the browser blocked as a "Local Network Access" request when Stash is opened over an outside address. The sidecar now sends only the path, and the plugin turns such a link into a path too (also for results kept from before).
+
 ## 0.242.0 (with 0.238.1 - 0.241.10)
 - **One look for all of Maintenance.** Sections are tabs with their numbers, the details of a list entry open in a wide dialog, rows share one layout, long harmless buttons are icon buttons (the words are the tooltip), changing actions keep their words and a question, and fields, dropdown lists and the video bar follow the Stash theme. The side menu shows a number behind every page that has something waiting for a decision.
 - **Results are kept.** What a check found (the Organize plans, the unidentified scenes, the movie and group lists, provider look-ups per scene, the last Search) is kept in the sidecar or in the browser until a change takes an entry out of it, so opening a page again does not repeat the work; the button "Reload" (circular arrow) asks again.

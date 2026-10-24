@@ -2199,7 +2199,7 @@
       const note = el('span', { className: 'srw-key-status' });
       const card = el('div', { className: `srw-search-card srw-perf-card${p.on_watchlist ? ' srw-perf-card-watched' : ''}` });
       const img = p.image_path
-        ? el('img', { className: 'srw-search-card-image', src: p.image_path, loading: 'lazy', alt: p.name })
+        ? el('img', { className: 'srw-search-card-image', src: window.SRW.stashUrl(p.image_path), loading: 'lazy', alt: p.name })
         : el('div', { className: 'srw-search-card-image srw-search-card-noimage' });
       card.appendChild(el('a', { href: `/performers/${p.id}`, target: '_blank', rel: 'noopener noreferrer', title: 'Open the performer in Stash (new tab)' }, [img]));
       card.appendChild(el('div', { className: 'srw-search-card-title' }, [

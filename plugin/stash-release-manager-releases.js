@@ -1490,7 +1490,7 @@
       });
       const result = await response.json();
       const list = isStudio ? result?.data?.findStudios?.studios : result?.data?.findPerformers?.performers;
-      imagePath = list?.[0]?.image_path || null;
+      imagePath = window.SRW.stashUrl(list?.[0]?.image_path) || null;
     } catch (e) {
       imagePath = null;
     }

@@ -1747,6 +1747,15 @@
   text-align: center;
 }
 .srw-activity-badge[hidden], .srw-nav-dot[hidden] { display: none; }
+/* Numbers behind the side menu links: never squeezed by a long label (a 3-4 digit number broke out of the pill), digits centered, kept at the right edge. */
+.srw-sidenav .nav-link { gap: 0.45em; }
+.srw-sidenav .srw-icon { margin-right: 0; }
+.srw-sidenav-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  flex: 0 0 auto; box-sizing: border-box; min-width: 2em; margin-left: auto; padding: 0 0.55em;
+  white-space: nowrap; font-variant-numeric: tabular-nums;
+}
+.srw-sidenav .nav-link.active .srw-sidenav-badge { background: rgba(255, 255, 255, 0.25); }
 /* Plugin icon among Stash's utility icons (MainNavBar.UtilityItems): no drop-down caret, the activity dot sits on the icon. */
 .srw-safety-error { color: #f85149; }
 .srw-safety-warning { color: #d29922; }
