@@ -259,10 +259,19 @@ def _save(db, scene, file, result, phash_match, provider, provider_scene_id):
 
 
 def list_findings(db, status="pending"):
+    """The findings of the VR page. 'pending' (v0.239.0) holds only what needs the user's eye: a file the automatic check judged 2D ('mono') or could
+    not judge ('unclear'). A verdict the user set by hand ends the finding -- 2D / VR mono go on to Upgrade wanted, Stereo is done -- and
+    a 'vr_mono' file (name marker) is clear anyway, so neither is listed. A hand-set 'unclear' (older versions had that button) stays listed."""
     with db.connect() as conn:
-        rows = conn.execute(
-            """SELECT rowid AS id, * FROM vr_file_check WHERE finding_status = ? ORDER BY verdict DESC, scene_title""",
-            (status,)).fetchall()
+        if status == "pending":
+            rows = conn.execute(
+                """SELECT rowid AS id, * FROM vr_file_check WHERE finding_status = 'pending'
+                   AND ((verdict_manual = 0 AND verdict IN ('mono', 'unclear')) OR (verdict_manual = 1 AND verdict = 'unclear'))
+                   ORDER BY verdict DESC, scene_title""").fetchall()
+        else:
+            rows = conn.execute(
+                """SELECT rowid AS id, * FROM vr_file_check WHERE finding_status = ? ORDER BY verdict DESC, scene_title""",
+                (status,)).fetchall()
     return [dict(r) for r in rows]
 
 
@@ -271,7 +280,7 @@ def set_finding_status(db, finding_id, status):
         conn.execute("UPDATE vr_file_check SET finding_status = ? WHERE rowid = ?", (status, int(finding_id)))
 
 
-MANUAL_VERDICTS = ("mono", "vr_mono", "unclear")  # what the user can choose: 2D / VR mono / unclear
+MANUAL_VERDICTS = ("mono", "vr_mono", "stereo")  # what the user can choose: 2D / VR mono / stereo 3D (v0.239.0; "unclear" is only the automatic check's answer)
 
 
 def set_verdict(db, finding_id, verdict, manual=True):

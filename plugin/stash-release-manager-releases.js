@@ -1184,7 +1184,7 @@
         }));
       } else {
         if (status === 'imported') { // the downloaded scene in Stash, with the other buttons of the row
-          const open = el('a', { className: 'srw-btn srw-open-scene', textContent: 'Open scene', target: '_blank', rel: 'noopener noreferrer', hidden: true,
+          const open = window.SRW.iconButton('a', 'faPlay', 'Open scene', { className: 'srw-btn srw-open-scene', target: '_blank', rel: 'noopener noreferrer', hidden: true,
             title: 'Open this scene in Stash (new tab)' });
           open.dataset.provider = r.provider; open.dataset.scene = r.scene_stashdb_id;
           li.push(open);

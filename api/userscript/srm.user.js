@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         StashReleaseManager for stash-box sites
 // @namespace    stash-release-manager
-// @version      0.234.4
+// @version      0.240.20
 // @description  On scene pages and scene cards: Send to wishlist, Send and search, Open in Stash, Copy Stash-ID, plus a status colour. On performer and studio pages: Watch / Unwatch.
 // @match        https://stashdb.org/*
 // @grant        GM_xmlhttpRequest
@@ -315,7 +315,8 @@
     .srm-bar { display: inline-flex; gap: 4px; align-items: center; padding: 3px 4px; border: 2px solid var(--srm-color, rgba(255,255,255,.4)); border-radius: 6px; background: rgba(0,0,0,.55); }
     .srm-bar.srm-page { margin: 4px 0 4px 8px; vertical-align: middle; }
     .srm-card { position: relative; }
-    .srm-card > .srm-bar { position: absolute; top: 6px; left: 6px; z-index: 5; padding: 4px; }
+    /* z-index 0: StashDB's own dropdown lists (react-select menus, z-index 1) open OVER the bars instead of under them (v0.240.20). */
+    .srm-card > .srm-bar { position: absolute; top: 6px; left: 6px; z-index: 0; padding: 4px; }
     .srm-chip { display: none; align-items: center; gap: 4px; font-size: 12px; padding: 0 5px; color: inherit; }
     .srm-page .srm-chip { display: inline-flex; }
     .srm-chip-dot { width: 10px; height: 10px; border-radius: 50%; background: rgba(255,255,255,.4); }

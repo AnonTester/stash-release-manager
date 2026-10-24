@@ -95,27 +95,64 @@ class UpgradeLibraryCheck:
             return None
 
     def _add_duration_candidates(self):
-        stash_client = self.get_stash_client()
-        findings = duration_check.list_findings(self.db, threshold_pct=DURATION_THRESHOLD_PCT)  # as the Duration mismatch page's default
-        added = skipped = 0
-        self.status.update(done=0, total=len(findings))
-        for i, row in enumerate(findings):
-            self.status["done"] = i
-            with self.db.connect() as conn:
-                have = conn.execute("SELECT 1 FROM upgrade_candidate WHERE scene_id = ? AND file_path = ?",
-                                    (str(row["scene_id"]), row.get("file_path"))).fetchone()
-            if have:
-                continue
-            try:
-                out = upgrades.add_manual_candidate(self.db, stash_client, row["scene_id"], "duration", row.get("provider_sec"))
-            except Exception as e:  # noqa: BLE001 -- e.g. the scene was deleted in Stash since the duration check read it (v0.237.6)
-                logger.warning("library check: scene %s skipped (%s)", row["scene_id"], e)
-                skipped += 1
-                continue
-            if out.get("id"):
-                # Not searched automatically: a length that disagrees with the provider's is as often the provider's mistake as the file's, so
-                # these wait for a look ('check', v0.237.8) -- "Queue for search" releases them, "To wishlist" / Dismiss decide at once.
-                upgrades.set_candidate(self.db, out["id"], status="check")
-                added += 1
-        self.status.update(skipped_duration=skipped)
-        return added
+        result = sync_duration_candidates(self.db, self.get_stash_client(), duration_threshold(self.db), self.status)
+        self.status.update(skipped_duration=result["skipped"])
+        return result["added"]
+
+
+def duration_threshold(db):
+    """The deviation (percent) from which a file counts as "wrong length": the setting duration_threshold_pct, default 5 (v0.241.0; the Duration
+    mismatch page that held it moved into Upgrade wanted)."""
+    with db.connect() as conn:
+        row = conn.execute("SELECT value FROM setting WHERE key = 'duration_threshold_pct'").fetchone()
+    try:
+        return max(1.0, min(90.0, float(row["value"]))) if row else DURATION_THRESHOLD_PCT
+    except (TypeError, ValueError):
+        return DURATION_THRESHOLD_PCT
+
+
+def set_duration_threshold(db, pct):
+    pct = max(1.0, min(90.0, float(pct)))
+    with db.connect() as conn:
+        conn.execute("""INSERT INTO setting (key, value) VALUES ('duration_threshold_pct', ?)
+                        ON CONFLICT (key) DO UPDATE SET value = excluded.value""", (str(pct),))
+    return pct
+
+
+def sync_duration_candidates(db, stash_client, threshold_pct, status=None):
+    """Makes the 'wrong length' candidates of Upgrade wanted match the stored length comparison at this threshold (v0.241.0): every scene outside
+    the movie groups (those have their own page) that deviates more than the threshold, was not dismissed and is no candidate yet becomes one,
+    waiting in the state 'check' (not searched automatically: a length that disagrees with the provider's is as often the provider's mistake as the
+    file's -- "Queue for search" releases it, "To wishlist" / Dismiss decide at once). Candidates still in 'check' that no longer qualify (a higher
+    threshold, a replaced file) are dropped. Decided candidates are never touched. Returns {added, removed, skipped}."""
+    findings = duration_check.list_findings(db, threshold_pct=threshold_pct, groups="exclude")
+    # A file parked in _UNMATCHED is not identified yet (it waits in Review: Identify Scene): its length says nothing about an upgrade.
+    findings = [f for f in findings if "/_UNMATCHED/" not in (f.get("file_path") or "")]
+    added = skipped = 0
+    if status is not None:
+        status.update(done=0, total=len(findings))
+    for i, row in enumerate(findings):
+        if status is not None:
+            status["done"] = i
+        with db.connect() as conn:
+            have = conn.execute("SELECT 1 FROM upgrade_candidate WHERE scene_id = ? AND file_path = ?",
+                                (str(row["scene_id"]), row.get("file_path"))).fetchone()
+        if have:
+            continue
+        try:
+            out = upgrades.add_manual_candidate(db, stash_client, row["scene_id"], "duration", row.get("provider_sec"))
+        except Exception as e:  # noqa: BLE001 -- e.g. the scene was deleted in Stash since the duration check read it (v0.237.6)
+            logger.warning("duration candidates: scene %s skipped (%s)", row["scene_id"], e)
+            skipped += 1
+            continue
+        if out.get("id"):
+            upgrades.set_candidate(db, out["id"], status="check")
+            added += 1
+    keep = {str(r["scene_id"]) for r in findings}
+    removed = 0
+    with db.connect() as conn:
+        for r in conn.execute("SELECT id, scene_id FROM upgrade_candidate WHERE reason = 'duration' AND status = 'check'").fetchall():
+            if str(r["scene_id"]) not in keep:
+                conn.execute("DELETE FROM upgrade_candidate WHERE id = ?", (r["id"],))
+                removed += 1
+    return {"added": added, "removed": removed, "skipped": skipped}

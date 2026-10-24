@@ -1,8 +1,12 @@
 """Compare scenes endpoints (2026-09-30, see scene_compare.py)."""
 from fastapi import APIRouter, HTTPException
 
+import duration_check
+import kept_lists
+import library_check_repo
 import scene_compare
 import upgrades
+import vr_check
 
 router = APIRouter(prefix="/maintenance/compare", tags=["compare"])
 
@@ -21,11 +25,30 @@ def counts():
     """What waits for a decision, for the badges of the Maintenance side menu (v0.153.0): Review scenes still open, Compare pairs
     still open, Upgrade candidates still wanted or to be reviewed. Local only (this DB, one Stash request for the Review ids)."""
     out = {"pairs_open": len(scene_compare.list_pairs(_db, "pending")),
-           "upgrades_open": len(upgrades.list_candidates(_db, ("wanted", "review"))), "review_open": None}
+           "upgrades_open": len(upgrades.list_candidates(_db, ("wanted", "review", "check"))), "review_open": None}
     try:
         out["review_open"] = _compare().review_open_count()
     except Exception:
         pass  # Stash not reachable: no badge for Review
+    # The other checks that keep their findings in this DB (v0.239.1): Fingerprint check (corrections + needs manual review), the VR page's list,
+    # Duration mismatch at the page's default threshold.
+    # Organize library (v0.240.25): the files of the studios whose real plan has something to do -- only once a Recount has been made (the rough
+    # local count is not a list of things to do), so no badge before that.
+    try:
+        import library_organize
+        stored = library_organize.stored_overview(_db)
+        out["organize_open"] = sum(x["total"] for x in stored) if stored is not None else None
+    except Exception:
+        out["organize_open"] = None
+    for key, count in (
+        ("library_check_open", lambda: len(library_check_repo.list_findings(_db, status="pending"))),
+        ("vr_open", lambda: len(vr_check.list_findings(_db, "pending"))),
+        ("duration_movies_open", lambda: len(duration_check.list_findings(_db, 5.0, "", groups="only"))),
+    ):
+        try:
+            out[key] = count()
+        except Exception:
+            out[key] = None
     return out
 
 
@@ -122,9 +145,9 @@ def review_list():
 
 
 @router.get("/unidentified")
-def unidentified():
-    """Scenes without any provider id outside the film folders (v0.170.0), one Stash request."""
-    return _compare().unidentified_list()
+def unidentified(refresh: bool = False):
+    """Scenes without any provider id outside the film folders (v0.170.0): the list that is kept, or a new one with refresh=true (v0.241.6)."""
+    return _compare().unidentified_list(refresh=refresh)
 
 
 @router.post("/unidentified/check")
@@ -174,12 +197,16 @@ def review_movie_search(scene_id: str, body: dict):
 def review_movie_create(scene_id: str, body: dict):
     if not body.get("tpdb_id"):
         raise HTTPException(400, "tpdb_id is required")
-    return _compare().movie_create(scene_id, body["tpdb_id"])
+    result = _compare().movie_create(scene_id, body["tpdb_id"])
+    kept_lists.invalidate(_db, *kept_lists.MOVIE_LISTS)  # a group was made / filled
+    return result
 
 
 @router.post("/review/{scene_id}/movie-create-manual")
 def review_movie_create_manual(scene_id: str, body: dict):
-    return _compare().movie_create_manual(scene_id, body.get("name"))
+    result = _compare().movie_create_manual(scene_id, body.get("name"))
+    kept_lists.invalidate(_db, *kept_lists.MOVIE_LISTS)
+    return result
 
 
 @router.post("/review/{scene_id}/group-studio")
@@ -191,7 +218,9 @@ def review_group_studio(scene_id: str, body: dict):
 def review_group_add(scene_id: str, body: dict):
     if not body.get("group_id"):
         raise HTTPException(400, "group_id is required")
-    return _compare().group_add(scene_id, str(body["group_id"]))
+    result = _compare().group_add(scene_id, str(body["group_id"]))
+    kept_lists.invalidate(_db, *kept_lists.MOVIE_LISTS)
+    return result
 
 
 @router.post("/review/{scene_id}/done")

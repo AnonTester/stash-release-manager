@@ -9,6 +9,7 @@ One row per local scene in `duration_check`: the primary file's length against t
 only for scenes it has no recent answer for, and stores every answer -- also "no length" -- so the next run is cheap.
 """
 import logging
+import re
 import threading
 from datetime import datetime, timedelta, timezone
 
@@ -22,7 +23,7 @@ SCENES_QUERY = """
 query($f: FindFilterType) {
   findScenes(filter: $f) {
     count
-    scenes { id title files { path size duration } stash_ids { endpoint stash_id } }
+    scenes { id title files { path size duration } stash_ids { endpoint stash_id } groups { group { id } } }
   }
 }
 """
@@ -41,6 +42,15 @@ def provider_ref(scene, endpoints):
     return None, None
 
 
+_FILM_PATH = re.compile(r"^/[^/]+/movies/", re.I)
+
+
+def in_film(scene, file):
+    """True for a scene that belongs to a film (v0.241.5): it is in a Stash group, or its file lies in a movie folder (/<root>/movies/..., also a
+    film file nobody made a group for yet). Those are looked at on Maintenance > Movies > Duration: movie scenes, not as upgrade candidates."""
+    return bool(scene.get("groups")) or bool(_FILM_PATH.match((file or {}).get("path") or ""))
+
+
 def deviation(file_sec, provider_sec):
     """(file - provider) / provider: -0.4 = the file is 40 % shorter than the provider's length. None when either is missing."""
     if not file_sec or not provider_sec or float(provider_sec) < MIN_PROVIDER_SEC:
@@ -48,8 +58,9 @@ def deviation(file_sec, provider_sec):
     return (float(file_sec) - float(provider_sec)) / float(provider_sec)
 
 
-def list_findings(db, threshold_pct=5.0, direction="", include_ignored=False):
-    """Rows whose deviation is above the threshold, the biggest first. direction: '' | 'shorter' | 'longer'."""
+def list_findings(db, threshold_pct=5.0, direction="", include_ignored=False, groups="exclude"):
+    """Rows whose deviation is above the threshold, the biggest first. direction: '' | 'shorter' | 'longer'. groups: 'exclude' (the library page:
+    scenes that are part of a movie group are left out) | 'only' (the Movies page: just those) (v0.240.0)."""
     t = abs(float(threshold_pct)) / 100.0
     where = ["file_sec > 0", "provider_sec >= ?", "ABS(file_sec - provider_sec) / provider_sec > ?"]
     params = [MIN_PROVIDER_SEC, t]
@@ -57,6 +68,7 @@ def list_findings(db, threshold_pct=5.0, direction="", include_ignored=False):
         where.append("file_sec < provider_sec")
     elif direction == "longer":
         where.append("file_sec > provider_sec")
+    where.append("in_group = 1" if groups == "only" else "in_group = 0")
     if not include_ignored:
         where.append("status != 'ignored'")
     with db.connect() as conn:
@@ -96,13 +108,14 @@ def _save(db, scene, file, provider, pid, provider_sec):
         old = conn.execute("SELECT status FROM duration_check WHERE scene_id = ?", (str(scene["id"]),)).fetchone()
         conn.execute(
             """INSERT INTO duration_check (scene_id, file_path, file_size, scene_title, provider, provider_scene_id, file_sec, provider_sec,
-                                           status, checked_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                           status, checked_at, in_group)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(scene_id) DO UPDATE SET file_path = excluded.file_path, file_size = excluded.file_size,
                  scene_title = excluded.scene_title, provider = excluded.provider, provider_scene_id = excluded.provider_scene_id,
-                 file_sec = excluded.file_sec, provider_sec = excluded.provider_sec, checked_at = excluded.checked_at""",
+                 file_sec = excluded.file_sec, provider_sec = excluded.provider_sec, checked_at = excluded.checked_at,
+                 in_group = excluded.in_group""",
             (str(scene["id"]), file["path"], file.get("size"), scene.get("title") or "", provider, pid,
-             file.get("duration"), provider_sec, (old["status"] if old else "checked"), _now()))
+             file.get("duration"), provider_sec, (old["status"] if old else "checked"), _now(), int(in_film(scene, file))))
 
 
 class DurationCheckJob:
@@ -156,7 +169,8 @@ class DurationCheckJob:
                          and old["checked_at"] >= cutoff)
                 if fresh:
                     # The provider's answer is still good; the FILE may have changed (replaced), which is cheap to keep current.
-                    if old["file_path"] != f["path"] or old["file_size"] != f.get("size") or old["file_sec"] != f.get("duration"):
+                    if (old["file_path"] != f["path"] or old["file_size"] != f.get("size") or old["file_sec"] != f.get("duration")
+                            or bool(old.get("in_group")) != in_film(sc, f)):
                         _save(self.db, sc, f, provider, pid, old["provider_sec"])
                     continue
                 todo[provider].append((sc, f, pid))

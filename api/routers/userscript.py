@@ -9,6 +9,7 @@ from fastapi.responses import Response
 
 import metadata_provider_repo
 import release_repo
+import watchlist_repo
 import watchlist_source
 from routers import search as search_router
 from routers import watchlist as watchlist_router
@@ -98,11 +99,11 @@ def _find_local(kind, provider, entity_id):
 
 
 @router.get("/entity-state")
-def entity_state(origin: str, kind: str, id: str):
+def entity_state(kind: str, id: str, origin: str = "", provider: str = ""):
     """One performer / studio of a stash-box page: does Stash have it (`local_id`) and is it on the watchlist (v0.234.0)? The watchlist
     follows the Favorite flag or the watchlist tag, see watchlist_source.py."""
     kind = _kind(kind)
-    provider = _provider(origin)
+    provider = provider or _provider(origin)  # the plugin's Search page names the provider itself (v0.240.20)
     try:
         stash_client, local = _find_local(kind, provider, id)
         watched = False
@@ -122,7 +123,7 @@ def watch(body: dict):
     """Put a performer / studio on the watchlist (created in Stash first when Stash does not have it) or take it off. Taking it off only
     clears the watchlist mark (Favorite flag or tag) -- nothing is deleted in Stash."""
     kind = _kind(body.get("kind"))
-    provider = _provider(body.get("origin"))
+    provider = body.get("provider") or _provider(body.get("origin"))
     entity_id = str(body.get("id") or "").strip()
     if not entity_id:
         raise HTTPException(400, "No id")
@@ -133,6 +134,10 @@ def watch(body: dict):
         make = search_router.favorite_studio if kind == "studio" else search_router.favorite_performer
         result = make(provider, entity_id, {"name": name})
         watchlist_router._on_watch_changed(kind, int(result["id"]), True)
+        # The watchlist rows of this program are made from Stash at the next scan's sync; the entry the user just watched is added at once, so the
+        # Watchlist page shows it now (v0.240.22). ThePornDB rows need a lookup of their native id: those stay with the sync.
+        if provider != "theporndb":
+            watchlist_repo.add_to_watchlist(_db, provider, kind, entity_id, name, local_id=int(result["id"]))
         return {"ok": True, "local_id": result["id"], "watched": True, "created": result.get("created", False)}
     _stash_client, local = _find_local(kind, provider, entity_id)
     if not local:

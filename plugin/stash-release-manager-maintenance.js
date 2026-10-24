@@ -37,7 +37,6 @@
     { key: 'performers', group: 'check', icon: 'faUserSlash', label: 'Performers without scenes', build: (c) => c.appendChild(buildPerformersArea()) },
     { key: 'unidentified', group: 'check', icon: 'faCircleQuestion', label: 'Unidentified scenes', build: (c) => c.appendChild(buildUnidentifiedArea()) },
     { key: 'vr-check', group: 'check', icon: 'faVrCardboard', label: 'VR: 2D / mono files', build: (c) => c.appendChild(flatten(buildVrCheckSection())) },
-    { key: 'duration', group: 'check', icon: 'faStopwatch', label: 'Duration mismatch', build: (c) => c.appendChild(buildDurationArea()) },
     { key: 'unknown-quality', group: 'check', icon: 'faQuestion', label: 'Unknown quality', build: (c) => { c.appendChild(window.SRW.el('p', { className: 'srw-hint', textContent: unknownQualityReason })); c.appendChild(buildUnknownQualitySection()); } },
     { key: 'review', group: 'resolve', icon: 'faFingerprint', label: 'Review: Identify Scene', build: (c) => buildReviewArea(c) },
     { key: 'compare', group: 'resolve', icon: 'faCodeCompare', label: 'Compare scenes', build: (c) => { c.appendChild(buildSenseNotice()); c.appendChild(flatten(buildCompareSection('compare'))); } },
@@ -45,7 +44,7 @@
     { key: 'organize', group: 'files', icon: 'faFolderTree', label: 'Organize library', build: (c) => { c.appendChild(window.SRW.buildSafetyPanel({ compact: true })); c.appendChild(buildOrganizeSection()); } },
     { key: 'upgrades', group: 'files', icon: 'faCircleUp', label: 'Upgrade wanted', build: (c) => c.appendChild(flatten(buildUpgradeSection())) },
     { key: 'movies', group: 'movies', icon: 'faFilm', label: 'Movies & groups', build: (c) => c.appendChild(buildMoviesSection()) },
-    { key: 'compare-groups', group: 'movies', icon: 'faCodeCompare', label: 'Compare groups', build: (c) => c.appendChild(buildCompareGroupsArea()) },
+    { key: 'duration-movies', group: 'movies', icon: 'faStopwatch', label: 'Duration: movie scenes', build: (c) => c.appendChild(buildDurationArea(true)) },
   ];
 
   // A tool that used to be a collapsible <details> panel is shown open and without the fold-away behaviour.
@@ -61,6 +60,16 @@
   // "Unknown quality" (v0.106.2) only matters where Whisparr names/imports files itself (preset full_whisparr -- every other preset
   // imports with this sidecar's own naming, which no longer writes "Unknown"), or when such files are still in the library.
   let unknownQualityReason = '';
+  // The badge of Organize library: the files of the checked studio list (v0.240.25). The list the page keeps in the browser is the newest (it is lowered
+  // by every rename / move at once); the sidecar's number serves when this browser has none. No badge before the first Recount.
+  function organizeBadge(fromSidecar) {
+    try {
+      const last = JSON.parse(window.localStorage.getItem('srw:organize-studios') || 'null');
+      if (last && last.verified && Array.isArray(last.studios)) return last.studios.reduce((n, x) => n + (x.total || 0), 0);
+    } catch (e) { /* no storage */ }
+    return fromSidecar;
+  }
+  let watchSource = 'favorites'; // Settings > Watchlist source, read when the page is drawn: decides which button / icon a performer card shows
 
   // The area named in the address; without one the first area where something waits for a decision (Review, then Compare), else the first.
   let defaultAreaKey = null;
@@ -104,12 +113,15 @@
     container.appendChild(window.SRW.buildPageHeader('maintenance'));
 
     unknownQualityReason = '';
+    let unknownQualityCount = 0;
     try {
       const settings = (await window.SRW.runOp('settings_get_all')) || {};
+      watchSource = settings.watchlist_source === 'tag' ? 'tag' : 'favorites';
       if (settings.whisparr_scope_preset === 'full_whisparr') {
         unknownQualityReason = 'Shown because Whisparr imports files itself (Settings > Whisparr scope: full Whisparr management) -- its naming can write "Unknown".';
       } else {
         const found = (await window.SRW.runOp('unknown_quality_list')) || {};
+        unknownQualityCount = (found.items || []).length;
         if ((found.items || []).length) unknownQualityReason = `Shown because ${found.items.length} file(s) with "Unknown" in the name are still in the library.`;
       }
     } catch (e) { /* hidden */ }
@@ -118,12 +130,14 @@
     const scope = await window.SRW.getContentScope();
     contentScope = scope;
     visibleAreas = AREAS.filter((a) => (a.key !== 'unknown-quality' || unknownQualityReason)
-      && !(scope === 'movies' && SCENE_AREAS.includes(a.key)) && !(scope === 'scenes' && a.key === 'movies'));
+      && !(scope === 'movies' && SCENE_AREAS.includes(a.key)) && !(scope === 'scenes' && ['movies', 'duration-movies'].includes(a.key)));
 
     // What waits for a decision (one cheap local request): numbers behind Review, Compare and Upgrade wanted, and the area opened when the
     // address names none -- the first of Review, Compare that has something open.
-    const countFor = (counts) => ({ review: counts && counts.review_open, compare: counts && counts.pairs_open, upgrades: counts && counts.upgrades_open });
-    let badges = countFor(null);
+    const countFor = (counts) => ({ review: counts && counts.review_open, compare: counts && counts.pairs_open, upgrades: counts && counts.upgrades_open,
+      'library-check': counts && counts.library_check_open, 'vr-check': counts && counts.vr_open,
+      'duration-movies': counts && counts.duration_movies_open, organize: organizeBadge(counts && counts.organize_open) });
+    let badges = { ...countFor(null), 'unknown-quality': unknownQualityCount };
     try { badges = countFor(await window.SRW.runOp('maintenance_counts')); } catch (e) { /* no badges */ }
     defaultAreaKey = ['review', 'compare'].find((k) => badges[k] > 0 && visibleAreas.some((a) => a.key === k)) || null;
 
@@ -161,8 +175,16 @@
     async function refreshBadges() {
       try {
         const fresh = countFor(await window.SRW.runOp('maintenance_counts'));
-        ['review', 'compare', 'upgrades'].forEach((k) => side.setBadge(k, fresh[k]));
+        ['review', 'compare', 'upgrades', 'library-check', 'vr-check', 'duration-movies', 'organize'].forEach((k) => side.setBadge(k, fresh[k]));
       } catch (e) { /* keep the old numbers */ }
+      refreshSlowBadges();
+    }
+    // The numbers that need Stash (performers, unidentified scenes, compare groups) come after the page is drawn; the sidecar keeps them for a minute.
+    async function refreshSlowBadges() {
+      try {
+        const slow = (await window.SRW.runOp('maintenance_counts_slow')) || {};
+        ['performers', 'unidentified', 'movies'].forEach((k) => { if (slow[k] != null) side.setBadge(k, slow[k]); });
+      } catch (e) { /* no badge */ }
     }
     // Review (and others) tell the page when they changed what is open: the numbers behind the links follow at once.
     window.addEventListener('srw:counts-changed', refreshBadges);
@@ -426,6 +448,7 @@
   // totals (see renderProgress()'s docstring above), so the caller can
   // reconcile the progress summary with what this function just
   // rendered.
+  let uploadEnabled = false; // Settings > fingerprint_upload_enabled, set by renderFindings(), read by the Needs-manual-review rows
   async function renderFindings(resultsWrap) {
     const { el } = window.SRW;
     resultsWrap.innerHTML = '';
@@ -441,6 +464,9 @@
       ]);
       mismatches = mRes.findings || [];
       others = [...(aRes.findings || []), ...(uRes.findings || [])];
+      // Settings > Schedule & Import: may the fingerprints of a confirmed file be submitted to StashDB?
+      const appSettings = await window.SRW.runOp('settings_get_all').catch(() => ({}));
+      uploadEnabled = !!appSettings && appSettings.fingerprint_upload_enabled === 'true';
     } catch (e) {
       resultsWrap.appendChild(el('span', { className: 'srw-release-mismatch-warning', textContent: `Failed to load findings: ${e.message}` }));
       return { mismatchCount: 0, reviewCount: 0 };
@@ -650,6 +676,27 @@
           }
         },
       });
+      // "File is correct" / "+ submit to StashDB" (v0.238.2, as on Activity > Import failed): only where StashDB simply has no fingerprint for the
+      // file; the scene's id is right and the finding closes. The submit button is hidden while Settings > Schedule & Import > "Allow submitting
+      // fingerprints" is off.
+      const noMatch = f.kind === 'unverifiable' && /no fingerprint match/.test(f.reason || '');
+      const confirmOp = (submit) => async () => {
+        window.SRW.setBusy(note, submit ? 'submitting…' : 'applying…');
+        const res = await window.SRW.runOp('maintenance_check_confirm', { finding_id: f.id, submit });
+        if (res.error) { note.textContent = ` error: ${res.error}`; window.SRW.notify('File is correct', res.error, 'error'); return; }
+        window.SRW.notify('File is correct', submit ? `"${f.scene_title}" is confirmed and its fingerprints were submitted to StashDB.`
+          : `"${f.scene_title}" is confirmed.`, 'success');
+        await renderFindings(resultsWrap);
+      };
+      const confirmBtn = noMatch ? window.SRW.iconButton('button', 'faCheck', 'File is correct', {
+        title: 'The scene\'s StashDB id is right (nobody registered a fingerprint for this file): close the finding',
+        onClick: (e) => window.SRW.confirmInline(e.currentTarget, `Mark "${f.scene_title}" as correct and close the finding?`, confirmOp(false)),
+      }) : null;
+      const submitBtn = noMatch && uploadEnabled ? window.SRW.iconButton('button', 'faCloudArrowUp', 'Correct + submit to StashDB', {
+        title: 'Like "File is correct", and the fingerprints of the file are submitted to StashDB (public, cannot be undone)',
+        onClick: (e) => window.SRW.confirmInline(e.currentTarget,
+          `Mark "${f.scene_title}" as correct AND submit its fingerprints to StashDB? That is public and cannot be undone.`, confirmOp(true), { danger: true }),
+      }) : null;
       const pathLines = (f.file_paths || []).map((p) => el('div', { className: 'srw-maintenance-file-path', textContent: p }));
       return el('li', { className: 'srw-release-item' }, [
         el('div', {}, [
@@ -659,6 +706,8 @@
         ]),
         f.scene_id ? window.SRW.buildStashLink('scene', f.scene_id) : null,
         recheckBtn,
+        confirmBtn,
+        submitBtn,
         dismissBtn,
       ]);
     };
@@ -719,10 +768,10 @@
       // What the pills lead to (v0.103.4): this page only LISTS findings; the search for a better file is a separate area.
       el('p', { className: 'srw-hint' }, [
         el('strong', { textContent: 'What happens with a finding: ' }),
-        '“2D” and “VR mono” files become upgrade candidates in ',
+        'This list holds the files the check could not judge (“unclear”) and the ones it judged flat although the scene is tagged VR: it is a suspicion until you say what the file is (Frame from file). ',
+        '“2D” and “VR mono” make the file an upgrade candidate in ',
         el('a', { href: '/plugins/stash-release-manager/maintenance/upgrades', textContent: 'Upgrade wanted' }),
-        ' (searched there: Dry run / Search now). “Unclear” stays a finding for you to look at (Frame from file) -- there is no search for it. ',
-        '“Dismiss” means: this file is fine -- a dismissed 2D file gets no upgrade search (it stays under “Dismissed”, with Restore).',
+        ' (searched there); “Stereo (3D)” says it is fine as it is. “Dismiss” also means fine, without a verdict (it stays under “Dismissed”, with Restore). A file the check judged “VR mono” by its name goes to Upgrade wanted without waiting here.',
       ]),
       el('div', { className: 'srw-toolbar' }, [quickBtn, fullBtn, status]),
       window.SRW.buildPaneTabs([
@@ -846,20 +895,24 @@
         },
       });
       // Own verdict (v0.105.0): the check can be wrong (a 360° mono file judged "2D"). Kept over re-checks of the same file.
-      const verdictBtns = [['mono', '2D'], ['vr_mono', 'VR mono'], ['unclear', 'Unclear']].map(([value, label]) => el('button', {
-        className: `srw-btn srw-btn-sm${f.verdict === value ? ' srw-btn-primary' : ''}`, textContent: label,
-        title: f.verdict === value ? `Currently: ${label}${f.verdict_manual ? ' (set by you)' : ''}` : `This file is: ${label}`,
-        ...(f.verdict === value ? { disabled: true } : {}),
+      const verdictBtns = [['mono', '2D'], ['vr_mono', 'VR mono'], ['stereo', 'Stereo (3D)']].map(([value, label]) => el('button', {
+        // The check's own judgement ("2D") is only a suspicion: the same button confirms it (v0.239.0). Disabled only once it is YOUR verdict.
+        className: `srw-btn srw-btn-sm${f.verdict === value && f.verdict_manual ? ' srw-btn-primary' : ''}`, textContent: label,
+        title: f.verdict === value && f.verdict_manual ? `Currently: ${label} (set by you)`
+          : (f.verdict === value ? `The check judged this file ${label}: click to confirm` : `This file is: ${label}`),
+        ...(f.verdict === value && f.verdict_manual ? { disabled: true } : {}),
         onClick: async () => {
           const r = await window.SRW.runOp('vr_check_set_verdict', { finding_id: f.id, verdict: value });
           if (r.error) { window.SRW.notify('VR check', r.error, 'error'); return; }
           const prev = r.previous || {};
-          f.verdict = value; f.verdict_manual = 1; view.reload();
+          // The finding is decided: it leaves this list (loadFindings below), 2D / VR mono go on to Upgrade wanted.
+          await loadFindings();
           window.SRW.dismissedNotice(`Marked as ${label}: ${f.scene_title || 'file'}`,
-            'Kept when the check runs again. “2D” and “VR mono” show up in Upgrade wanted at its next refresh.',
+            value === 'stereo' ? 'Kept when the check runs again. A stereo file is fine; it is only an upgrade candidate when its bitrate is low.'
+              : 'Kept when the check runs again. The file shows up in Upgrade wanted at its next refresh.',
             () => window.SRW.runOp('vr_check_restore_verdict', { finding_id: f.id, verdict: prev.verdict, manual: !!prev.verdict_manual,
               finding_status: prev.finding_status || 'pending' }),
-            () => { f.verdict = prev.verdict; f.verdict_manual = prev.verdict_manual; view.reload(); });
+            () => loadFindings());
         },
       }));
       const identifyBtn = el('button', {
@@ -949,11 +1002,11 @@
     vr_low_quality: ['VR quality', 'VR below 4K or below the minimum bitrate'],
     below_cutoff: ['below cutoff', 'below the quality profile\'s cutoff resolution'],
     readd: ['re-added', 'you asked for this scene again (Search page: Re-add)'],
-    duration: ['wrong length', 'the file is clearly shorter or longer than the provider\'s length (Duration mismatch)'],
+    duration: ['wrong length', 'the file is clearly shorter or longer than the provider\'s length (a cut or partial rip, a sample, or a wrong length at the provider)'],
   };
 
   // Duration mismatch (v0.209.0, api/duration_check.py): library scenes whose file is clearly shorter / longer than the provider says.
-  function buildDurationArea() {
+  function buildDurationArea(inGroup = false) {
     const { el, confirmInline, notify } = window.SRW;
     let findings = [];
     let direction = '';
@@ -970,7 +1023,7 @@
       return h ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
     };
     const view = window.SRW.buildFilteredPagedList({
-      filters: ['search'], perPage: 30, showFilterBarFrom: 10, emptyText: 'No scene deviates from the provider\'s length by more than the threshold.',
+      filters: ['search'], perPage: 30, showFilterBarFrom: 10, emptyText: inGroup ? 'No scene of a movie deviates from the provider\'s length by more than the threshold.' : 'No scene deviates from the provider\'s length by more than the threshold.',
       fetchPage: window.SRW.localPageFetcher(() => findings, { text: (x) => `${x.scene_title} ${x.file_path}` }),
       renderItems: (page) => el('ul', { className: 'srw-release-list' }, page.map((x) => {
         const rowStatus = el('span', { className: 'srw-key-status' });
@@ -989,19 +1042,26 @@
           x.upgrade_status = res.grabbed ? 'grabbed' : 'wanted';
           view.reload();
         };
-        const ignoreBtn = el('button', { className: 'srw-btn srw-btn-sm', textContent: x.status === 'ignored' ? 'Show again' : 'Ignore',
-          title: x.status === 'ignored' ? 'Put it back on the list' : 'The length is right (or does not matter): take it off the list',
+        // "Dismiss" / "Restore" like everywhere else (v0.239.2; it was "Ignore" / "Show again"), with the usual Undo.
+        const wasDismissed = x.status === 'ignored';
+        const ignoreBtn = el('button', { className: 'srw-btn srw-btn-sm', textContent: wasDismissed ? 'Restore' : 'Dismiss',
+          title: wasDismissed ? 'Put it back on the list' : 'The length is right (or does not matter): take it off the list',
           onClick: async () => {
-            const res = await window.SRW.runOp('duration_check_ignore', { scene_id: x.scene_id, restore: x.status === 'ignored' });
+            const res = await window.SRW.runOp('duration_check_ignore', { scene_id: x.scene_id, restore: wasDismissed });
             if (res.error) { rowStatus.textContent = ` error: ${res.error}`; return; }
             findings = findings.filter((f) => f.scene_id !== x.scene_id); view.reset(); updateSummary();
+            if (!wasDismissed) {
+              window.SRW.dismissedNotice(`Dismissed: ${x.scene_title || 'scene'}`, 'Find it again with “show dismissed”.',
+                () => window.SRW.runOp('duration_check_ignore', { scene_id: x.scene_id, restore: true }), () => load());
+            }
           } });
         const actions = [
-          el('a', { className: 'srw-btn srw-btn-sm', href: providerUrl, target: '_blank', rel: 'noopener noreferrer', textContent: 'Provider page ↗' }),
-          queued ? null : el('button', { className: 'srw-btn srw-btn-sm', textContent: 'Re-add',
+          window.SRW.iconButton('a', 'faArrowUpRightFromSquare', 'Provider page', { className: 'srw-btn srw-btn-sm', href: providerUrl, target: '_blank', rel: 'noopener noreferrer',
+            title: 'Open the scene on the provider\'s website (new tab)' }),
+          queued || inGroup ? null : window.SRW.iconButton('button', 'faRotateRight', 'Re-add', { className: 'srw-btn srw-btn-sm',
             title: 'Put it on the upgrade list: the scheduled search looks for a release of the right length; a verified download replaces this file (the old one goes to the recycle bin)',
             onClick: (e) => confirmInline(e.currentTarget, `Re-add “${x.scene_title}”? A release of the right length replaces this file after a verified download; the old file goes to the recycle bin. It is searched by the schedule, not right now.`, () => run(false)) }),
-          queued ? null : el('button', { className: 'srw-btn srw-btn-sm srw-btn-primary', textContent: 'Re-add + search',
+          queued || inGroup ? null : window.SRW.iconButton('button', ['faRotateRight', 'faMagnifyingGlass'], 'Re-add + search', { className: 'srw-btn srw-btn-sm srw-btn-primary',
             title: 'The same, and ask the indexers right now',
             onClick: (e) => confirmInline(e.currentTarget, `Re-add “${x.scene_title}” and search now? A release of the right length replaces this file after a verified download; the old file goes to the recycle bin.`, () => run(true)) }),
           ignoreBtn,
@@ -1038,7 +1098,7 @@
     }
     async function load() {
       const [f, st] = await Promise.all([
-        window.SRW.runOp('duration_check_findings', { threshold, direction, ignored: showIgnored }),
+        window.SRW.runOp('duration_check_findings', { threshold, direction, ignored: showIgnored, groups: inGroup ? 'only' : 'exclude' }),
         window.SRW.runOp('duration_check_status'),
       ]);
       if (f.error) { status.textContent = ` error: ${f.error}`; return; }
@@ -1060,8 +1120,10 @@
     });
     poll();
     return el('div', { className: 'srw-settings-section' }, [
-      el('p', { className: 'srw-hint', textContent: 'Library scenes whose file is clearly shorter or longer than the length the provider has — samples, cut or broken downloads. Scenes the provider has no length for are not checked. “Re-add” puts the scene on the upgrade list: a release of about the right length replaces the file (the old one goes to the recycle bin).' }),
-      el('div', { className: 'srw-toolbar' }, [runBtn, dirSel, el('label', {}, ['deviation over ', thrInput, ' %']), el('label', {}, [ignoredBox, ' show ignored']), status]),
+      el('p', { className: 'srw-hint', textContent: inGroup
+        ? 'Scenes that belong to a movie (a group) whose file is clearly shorter or longer than the length the provider has. They are kept apart from the library list because a movie’s scenes are cut and numbered differently from a normal scene; there is no “Re-add” here — look at the file and the movie yourself. “Run check” is the same run as the duration check in Upgrade wanted (reason: wrong length).'
+        : 'Library scenes whose file is clearly shorter or longer than the length the provider has — samples, cut or broken downloads. Scenes that are part of a movie are checked under Movies > Duration: movie scenes. Scenes the provider has no length for are not checked. “Re-add” puts the scene on the upgrade list: a release of about the right length replaces the file (the old one goes to the recycle bin).' }),
+      el('div', { className: 'srw-toolbar' }, [runBtn, dirSel, el('label', {}, ['deviation over ', thrInput, ' %']), el('label', {}, [ignoredBox, ' show dismissed']), status]),
       summary, view.node,
     ]);
   }
@@ -1070,7 +1132,9 @@
     const { el, confirmInline } = window.SRW;
     let studios = [];
     const status = el('span', { className: 'srw-key-status' });
+    // The plan of one studio opens in a modal (v0.240.10); planSlot is its content.
     const planSlot = el('div');
+    let planModal = null;
     const short = (p) => p.replace(/^.*?\/scenes\//, '');
     const studioView = window.SRW.buildFilteredPagedList({
       filters: ['search'],
@@ -1079,19 +1143,56 @@
       fetchPage: window.SRW.localPageFetcher(() => studios, { text: (x) => x.studio }),
       renderItems: (page) => el('ul', { className: 'srw-release-list' }, page.map((x) => el('li', { className: 'srw-release-item' }, [
         el('strong', { textContent: x.studio }),
-        el('span', { className: 'srw-release-date', textContent: `${x.rename} rename · ${x.move} move` }),
-        el('button', { className: 'srw-btn srw-btn-sm', textContent: 'Organize…', onClick: () => showPlan(x) }),
+        el('span', { className: 'srw-release-date', textContent: `${x.rename} rename · ${x.move} move${x.other ? ` · ${x.other} to check` : ''}` }),
+        el('button', { className: 'srw-btn srw-btn-sm', textContent: 'Details…', title: 'Show which files would be renamed / moved, and rename or move them', onClick: () => showPlan(x) }),
       ]))),
     });
 
-    async function loadStudios(refresh) {
+    // "Load studios" reads the sidecar's list (the rough local count until the first Recount); "Recount" runs in the background (v0.240.17): every studio
+    // with local candidates gets its real plan -- provider data and fingerprints -- and only studios with something to do stay in the list.
+    let studiosVerified = false;
+    const recountBtn = el('button', { className: 'srw-btn', textContent: 'Recount',
+      title: 'Check every studio against StashDB (takes a few minutes, runs in the background); studios with nothing to do leave the list', onClick: () => recount() });
+    async function loadStudios() {
       status.textContent = ' loading…';
-      const r = await window.SRW.runOp('organize_studios', { refresh: Boolean(refresh) });
+      const r = await window.SRW.runOp('organize_studios', { refresh: false });
       if (r.error) { status.textContent = ` error: ${r.error}`; return; }
       studios = r.studios || [];
+      studiosVerified = Boolean(r.verified);
+      const at = Date.now();
+      try { window.localStorage.setItem(STUDIOS_KEY, JSON.stringify({ studios, at, verified: studiosVerified })); } catch (e) { /* too big or blocked: just not remembered */ }
+      showStudios(at);
+    }
+    async function pollRecount() {
+      recountBtn.disabled = true;
+      for (;;) {
+        const st = await window.SRW.runOp('organize_recount_status');
+        if (st.error) { status.textContent = ` error: ${st.error}`; break; }
+        if (!st.running) {
+          if (st.error) status.textContent = ` Recount failed: ${st.error}`;
+          else await loadStudios();
+          break;
+        }
+        status.textContent = st.studio ? ` checking ${st.studio} (${st.done || 0} / ${st.total || '?'})…`
+          : ` ${st.phase || 'starting'}…${st.total ? ` (${st.total} studios to check)` : ''}`;
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      }
+      recountBtn.disabled = false;
+    }
+    async function recount() {
+      const r = await window.SRW.runOp('organize_recount_start');
+      if (r.error) { status.textContent = ` error: ${r.error}`; return; }
+      pollRecount();
+    }
+
+    // The list is kept in the browser between visits (v0.240.9), like the analysis on Import folder.
+    const STUDIOS_KEY = 'srw:organize-studios';
+    function showStudios(at) {
       const files = studios.reduce((n, x) => n + x.total, 0);
-      status.textContent = ` ${studios.length} studio(s), ${files} file(s) differ from the naming scheme`;
+      status.textContent = ` ${studios.length} studio(s), ${files} file(s) to organize (counted ${new Date(at).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })})`
+        + (studiosVerified ? '' : ' — a rough count from the local titles; "Recount" checks every studio against StashDB');
       studioView.reset();
+      window.dispatchEvent(new Event('srw:counts-changed')); // the badge of the side menu follows
     }
 
     function itemRow(x, kind, studio) {
@@ -1105,6 +1206,7 @@
         el('div', { className: 'srw-review-box' }, [
           el('span', { className: 'srw-history-message', textContent: `${short(x.path)}\n→ ${short(x.new_path)}` }),
         ]),
+        window.SRW.buildStashLink('scene', x.scene_id),
       ];
       if (kind === 'rename' || kind === 'move') {
         parts.push(el('button', {
@@ -1120,14 +1222,51 @@
           },
         }), rowStatus);
       } else {
-        parts.push(el('span', { className: 'srw-release-date', textContent: x.reason || x.check }));
+        parts.push(el('span', { className: 'srw-release-date', textContent: x.reason || x.check }), rowStatus);
+        if (kind === 'check') {
+          // A file the fingerprints could not confirm (v0.240.15): find out what it is, send it to Identify Scene, or say it is the right one.
+          const sameFolder = x.path.slice(0, x.path.lastIndexOf('/')) === x.new_path.slice(0, x.new_path.lastIndexOf('/'));
+          const verb = sameFolder ? 'Rename' : 'Move';
+          parts.push(window.SRW.iconButton('button', 'faFingerprint', 'Check what the file is', {
+            className: 'srw-btn srw-btn-sm', title: 'Ask StashDB what this file is, by its fingerprints (nothing is changed)',
+            onClick: async (e) => {
+              const b = e.currentTarget;
+              b.disabled = true; window.SRW.setBusy(rowStatus, 'asking StashDB…');
+              try {
+                const r = await window.SRW.runOp('organize_check_file', { scene_id: x.scene_id });
+                rowStatus.textContent = r.error ? ` error: ${r.error}` : ` ${r.message}`;
+              } finally { b.disabled = false; }
+            },
+          }));
+          parts.push(window.SRW.iconButton('button', ['faFingerprint', 'faMagnifyingGlass'], 'Send to Identify Scene', {
+            className: 'srw-btn srw-btn-sm', title: 'The file is not the scene it is tagged with: send this scene to Review > Identify Scene',
+            onClick: async (e) => {
+              const b = e.currentTarget;
+              b.disabled = true;
+              const r = await window.SRW.runOp('compare_review_add', { scene_id: x.scene_id });
+              if (r.error) { rowStatus.textContent = ` error: ${r.error}`; b.disabled = false; return; }
+              rowStatus.textContent = r.already ? ' is in Review: Identify Scene already' : ' sent to Review: Identify Scene';
+            },
+          }));
+          parts.push(el('button', {
+            className: 'srw-btn srw-btn-sm', textContent: `${verb} anyway`,
+            title: `The file is the right one although the fingerprints could not confirm it: ${verb.toLowerCase()} it to the name shown`,
+            onClick: (e) => confirmInline(e.currentTarget, `${verb} "${x.title}" although its fingerprints could not confirm it? Stash keeps the scene.`, async () => {
+              rowStatus.textContent = ' working…';
+              const r = await window.SRW.runOp('organize_apply', { studio_id: studio.studio_id, file_ids: [x.file_id], kinds: ['check'] });
+              const failed = (r.failed || [])[0];
+              rowStatus.textContent = r.error ? ` error: ${r.error}` : failed ? ` failed: ${failed.reason}` : ' done';
+              if (!r.error && !failed) showPlan(studio, true);
+            }),
+          }));
+        }
       }
-      return el('li', { className: 'srw-release-item' }, parts);
+      return window.SRW.arrangeReleaseRow(el('li', { className: 'srw-release-item' }, parts), {});
     }
 
+    // One list of the plan: the pane of a tab (v0.240.14; it was a fold-away panel).
     function group(label, items, kind, studio, hint) {
-      const g = el('details', { className: 'srw-date-group' }, [el('summary', { textContent: `${label} — ${items.length}` })]);
-      window.SRW.rememberOpen(g, `organize:${kind}`, kind === 'rename');
+      const g = el('div', { className: 'srw-tab-pane-body' });
       if (hint) g.appendChild(el('p', { className: 'srw-hint', textContent: hint }));
       if ((kind === 'rename' || kind === 'move') && items.length) {
         const bulkStatus = el('span', { className: 'srw-key-status' });
@@ -1140,7 +1279,7 @@
                 studio_id: studio.studio_id, file_ids: items.map((x) => x.file_id), kinds: [kind],
               });
               bulkStatus.textContent = r.error ? ` error: ${r.error}`
-                : ` done ${(r.done || []).length}, failed ${(r.failed || []).length} (details in History)`;
+                : ` done ${(r.done || []).length}, failed ${(r.failed || []).length} (details in History); Stash scans in the background`;
               showPlan(studio, true);
             }),
           }),
@@ -1151,10 +1290,11 @@
         filters: ['search'], perPage: 50, emptyText: 'None.',
         fetchPage: window.SRW.localPageFetcher(() => items, { text: (x) => `${x.title || ''} ${x.path || ''}` }),
         renderItems: (page) => el('ul', { className: 'srw-release-list' }, page.map((x) => (kind === 'multi'
-          ? el('li', { className: 'srw-release-item' }, [
+          ? window.SRW.arrangeReleaseRow(el('li', { className: 'srw-release-item' }, [
             el('a', { className: 'srw-release-title', href: `/scenes/${x.scene_id}`, target: '_blank', rel: 'noopener noreferrer', textContent: x.title }),
-            el('span', { className: 'srw-history-message', textContent: x.paths.map(short).join('\n') }),
-          ])
+            el('div', { className: 'srw-review-box' }, [el('span', { className: 'srw-history-message', textContent: x.paths.map(short).join('\n') })]),
+            window.SRW.buildStashLink('scene', x.scene_id),
+          ]), {})
           : itemRow(x, kind, studio)))),
       });
       g.appendChild(view.node);
@@ -1163,41 +1303,60 @@
     }
 
     const planYears = {}; // studio id -> chosen year, kept across re-plans
-    async function showPlan(studio, keepStatus) {
-      if (!keepStatus) planSlot.replaceChildren(el('p', { className: 'srw-hint', textContent: `Checking ${studio.studio} against StashDB fingerprints…` }));
-      const p = await window.SRW.runOp('organize_plan', { studio_id: studio.studio_id });
+    // The plan of a studio is kept by the sidecar (v0.240.27, table organize_plan) until a rename / move or a reload changes it: opening "Details…" reads it,
+    // nothing is asked of StashDB; "Reload" makes a new one. A rename / move takes its files out of the stored plan on the server. The studio's row in
+    // the list is read again from there (cheap), so its numbers and the badge follow.
+    async function showPlan(studio, keepStatus, fresh = false) {
+      if (!planModal) {
+        planModal = window.SRW.openModal(`Organize: ${studio.studio}`, planSlot, { size: 'modal-xl srw-modal-wide', onClose: () => { planModal = null; planSlot.replaceChildren(); } });
+      }
+      if (!keepStatus) planSlot.replaceChildren(el('p', { className: 'srw-hint', textContent: fresh ? `Checking ${studio.studio} against StashDB (fingerprints, titles, studios)…` : 'Loading…' }));
+      const p = await window.SRW.runOp('organize_plan', { studio_id: studio.studio_id, fresh });
       if (p.error) { planSlot.replaceChildren(el('p', { textContent: `Error: ${p.error}` })); return; }
+      const checkedAt = p.checked_at ? new Date(`${p.checked_at.replace(' ', 'T')}Z`).getTime() : Date.now();
+      if (studiosVerified) loadStudios(); // the list, its numbers and the badge from the stored plans (before the first Recount that would be the slow rough count)
       // Quick per-studio / per-year view (2026-09-29): the same plan, filtered by the scene's year.
       const years = [...new Set(['rename', 'move', 'conflict', 'needs_check'].flatMap((k) => (p[k] || []).map((x) => (x.date || '').slice(0, 4)).filter(Boolean)))].sort();
       let year = planYears[studio.studio_id] || '';
       if (year && !years.includes(year)) year = '';
       const byYear = (items) => (year ? (items || []).filter((x) => (x.date || '').startsWith(year)) : (items || []));
       const body = el('div');
-      const render = () => body.replaceChildren(
-        group('Rename in the same folder (verified)', byYear(p.rename), 'rename', studio),
-        group('Move to another folder (verified)', byYear(p.move), 'move', studio),
-        group('Name conflict (not touched)', byYear(p.conflict), 'conflict', studio,
-          'The target name is already taken (usually two versions of one scene in a folder). Decide which file to keep.'),
-        group('Needs a check first (fingerprints don\'t match the tag)', byYear(p.needs_check), 'check', studio,
-          'Not touched: the file doesn\'t match the scene it\'s tagged with -- a wrong tag must not end up in the file name. Use the Library Check to fix the tag first.'),
-        group('Scenes with several files (not touched)', p.multi_file || [], 'multi', studio),
-      );
+      // The lists are tabs with their counts (v0.240.14), like the other pages; the chosen tab is remembered.
+      const render = () => {
+        const specs = [
+          ['rename', 'Rename', byYear(p.rename), 'rename', 'In the same folder, fingerprints verified.'],
+          ['move', 'Move', byYear(p.move), 'move', 'To another folder, fingerprints verified.'],
+          ['conflict', 'Name conflict', byYear(p.conflict), 'conflict',
+            'Not touched. The target name is already taken (usually two versions of one scene in a folder). Decide which file to keep.'],
+          ['check', 'Check first', byYear(p.needs_check), 'check',
+            'Not touched: the fingerprints don\'t match the tag -- the file doesn\'t match the scene it\'s tagged with, and a wrong tag must not end up in the file name. Use the Fingerprint check to fix the tag first.'],
+          ['multi', 'Several files', p.multi_file || [], 'multi', 'Not touched: scenes with more than one file.'],
+        ];
+        const panes = specs.map(([key, label, items, kind, hint]) => ({ key, label: () => `${label} (${items.length})`, pane: group(label, items, kind, studio, hint) }));
+        const first = specs.find((sp) => sp[2].length);
+        body.replaceChildren(window.SRW.buildPaneTabs(panes, 'srw:organize-plan-tab', first && first[0]), ...panes.map((x) => x.pane));
+      };
       const yearSelect = el('select', {
         className: 'srw-input', onChange: (e) => { year = e.target.value; planYears[studio.studio_id] = year; render(); },
       }, [el('option', { value: '', textContent: 'All years' }), ...years.map((y) => el('option', { value: y, textContent: y }))]);
       yearSelect.value = year;
-      planSlot.replaceChildren(
+      const nothing = !['rename', 'move', 'conflict', 'needs_check', 'multi_file'].some((k) => (p[k] || []).length);
+      planSlot.replaceChildren(...[
         el('h4', { textContent: `${studio.studio} → folder "${p.studio}"` }),
+        nothing ? el('p', { className: 'srw-hint', textContent: 'Nothing to organize: with the provider\'s title and date every file of this studio already sits where it belongs. '
+          + 'The count in the list is made from the local title and date and does not know that.' }) : null,
         el('div', { className: 'srw-toolbar' }, [el('label', {}, ['Year: ', yearSelect]),
-          el('span', { className: 'srw-hint', textContent: ' narrows the lists below and the "all" buttons to one release year' })]),
+          el('span', { className: 'srw-hint', textContent: ' narrows the lists below and the "all" buttons to one release year' }),
+          window.SRW.iconButton('button', 'faRotate', 'Reload', { title: 'Reload: ask StashDB about the fingerprints, titles and studios again (the plan shown was made at the time next to it)',
+            onClick: () => showPlan(studio, false, true) }),
+          el('span', { className: 'srw-hint', textContent: `checked ${new Date(checkedAt).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}` })]),
         body,
-      );
+      ].filter(Boolean)); // (replaceChildren would turn a null into the text "null")
       render();
-      if (keepStatus) loadStudios(false);
     }
 
-    const section = el('div', { className: 'srw-settings-section' }, [
-      el('h3', { textContent: 'Organize library (rename / move)' }),
+    // The two tools are tabs (v0.240.8), like Movies & groups and Import folder: scenes by studio, and the film files against the movie templates.
+    const scenesPane = el('div', {}, [
       el('p', {
         className: 'srw-hint',
         textContent: 'Brings the Whisparr library folder (scenes/) in line with the naming scheme, studio by studio: '
@@ -1207,13 +1366,27 @@
           + '(rating, history); each change is logged in History. Suggested order: renames first, then moves.',
       }),
       el('div', { className: 'srw-toolbar' }, [
-        el('button', { className: 'srw-btn', textContent: 'Load studios', onClick: () => loadStudios(false) }),
-        el('button', { className: 'srw-btn', textContent: 'Recount', onClick: () => loadStudios(true) }),
+        el('button', { className: 'srw-btn', textContent: 'Load studios', onClick: () => loadStudios() }),
+        recountBtn,
         status,
       ]),
       studioView.node,
-      planSlot,
-      buildOrganizeMoviesSection(),
+    ]);
+    try {
+      const last = JSON.parse(window.localStorage.getItem(STUDIOS_KEY) || 'null');
+      if (last && Array.isArray(last.studios)) { studios = last.studios; studiosVerified = Boolean(last.verified); showStudios(last.at); }
+    } catch (e) { /* nothing remembered */ }
+    // A Recount that is still running (the page was reloaded meanwhile) is picked up again.
+    window.SRW.runOp('organize_recount_status').then((st) => { if (st && st.running) pollRecount(); }).catch(() => {});
+    const moviesPane = buildOrganizeMoviesSection();
+    const panes = [
+      { key: 'scenes', label: 'Scenes by studio', pane: scenesPane },
+      { key: 'movies', label: 'Films vs. movie templates', pane: moviesPane },
+    ];
+    const section = el('div', { className: 'srw-settings-section' }, [
+      el('h3', { textContent: 'Organize library (rename / move)' }),
+      window.SRW.buildPaneTabs(panes, 'srw:organize-tab'),
+      ...panes.map((x) => x.pane),
     ]);
     return section;
   }
@@ -1229,16 +1402,16 @@
     function itemRow(x, kind) {
       const rowStatus = el('span', { className: 'srw-key-status' });
       const parts = [
-        window.SRW.buildStashLink('scene', x.scene_id),
-        el('span', { className: 'srw-release-title', textContent: ` ${x.title}` }),
+        el('a', { className: 'srw-release-title', href: `/scenes/${x.scene_id}`, target: '_blank', rel: 'noopener noreferrer', textContent: x.title }),
         x.diff ? el('span', { className: 'srw-history-category', textContent: x.diff }) : null,
         el('div', { className: 'srw-review-box' }, [
           el('span', { className: 'srw-history-message', textContent: x.new_path ? `${short(x.path)}\n→ ${short(x.new_path)}` : short(x.path) }),
         ]),
+        window.SRW.buildStashLink('scene', x.scene_id),
       ];
       if (kind === 'rename' || kind === 'move') {
         parts.push(el('button', {
-          className: 'srw-btn', textContent: kind === 'rename' ? 'Rename' : 'Move',
+          className: 'srw-btn srw-btn-sm', textContent: kind === 'rename' ? 'Rename' : 'Move',
           onClick: async (e) => {
             e.target.disabled = true; rowStatus.textContent = ' working…';
             const r = await window.SRW.runOp('organize_movies_apply', { file_ids: [x.file_id], kinds: [kind] });
@@ -1248,14 +1421,14 @@
           },
         }), rowStatus);
       } else {
-        parts.push(el('span', { className: 'srw-release-date', textContent: x.reason || x.check || '' }));
+        parts.push(el('span', { className: 'srw-release-date', textContent: x.reason || x.check || '' }), rowStatus);
       }
-      return el('li', { className: 'srw-release-item' }, parts);
+      return window.SRW.arrangeReleaseRow(el('li', { className: 'srw-release-item' }, parts), {});
     }
 
+    // One list of the check: the pane of a tab (v0.240.14; it was a fold-away panel).
     function group(label, items, kind, hint) {
-      const g = el('details', { className: 'srw-date-group' }, [el('summary', { textContent: `${label} — ${items.length}` })]);
-      window.SRW.rememberOpen(g, `organize-movies:${kind}`, kind === 'rename' || kind === 'move');
+      const g = el('div', { className: 'srw-tab-pane-body' });
       if (hint) g.appendChild(el('p', { className: 'srw-hint', textContent: hint }));
       if ((kind === 'rename' || kind === 'move') && items.length) {
         // "All at once" works one KIND of difference at a time (year, capitals, title, ...): the kinds differ a lot in how safe a bulk change is.
@@ -1286,11 +1459,11 @@
         filters: ['search'], perPage: 50, emptyText: 'None.',
         fetchPage: window.SRW.localPageFetcher(() => items, { text: (x) => `${x.title || ''} ${x.path || ''}` }),
         renderItems: (page) => el('ul', { className: 'srw-release-list' }, page.map((x) => (kind === 'multi'
-          ? el('li', { className: 'srw-release-item' }, [
+          ? window.SRW.arrangeReleaseRow(el('li', { className: 'srw-release-item' }, [
+            el('a', { className: 'srw-release-title', href: `/scenes/${x.scene_id}`, target: '_blank', rel: 'noopener noreferrer', textContent: x.title }),
+            el('div', { className: 'srw-review-box' }, [el('span', { className: 'srw-history-message', textContent: x.paths.map(short).join('\n') })]),
             window.SRW.buildStashLink('scene', x.scene_id),
-            el('span', { className: 'srw-release-title', textContent: ` ${x.title}` }),
-            el('span', { className: 'srw-history-message', textContent: x.paths.map(short).join('\n') }),
-          ])
+          ]), {})
           : itemRow(x, kind)))),
       });
       g.appendChild(view.node);
@@ -1298,23 +1471,62 @@
       return g;
     }
 
+    // The files of the check open in a modal (v0.240.11); the page keeps the counts and a "Details…" button to open it again.
+    const detailSlot = el('div');
+    let detailModal = null;
+    let lastPlan = null;
+    function renderDetails() {
+      const p = lastPlan;
+      if (!p) return;
+      const specs = [
+        ['rename', 'Rename', p.rename || [], 'rename', 'In the same folder.'],
+        ['move', 'Move', p.move || [], 'move', 'To another folder.'],
+        ['conflict', 'Name conflict', p.conflict || [], 'conflict', 'Not touched. The target name is already taken, or two files want the same name. Decide which file to keep.'],
+        ['check', 'Check first', p.needs_check || [], 'check',
+          'Not touched. A film of several scenes where a scene has no scene number in its group, or a scene in several groups. Fix it in Stash (Group > scene number), then check again.'],
+        ['multi', 'Several files', p.multi_file || [], 'multi', 'Not touched: scenes with more than one file.'],
+      ];
+      const panes = specs.map(([key, label, items, kind, hint]) => ({ key, label: () => `${label} (${items.length})`, pane: group(label, items, kind, hint) }));
+      const first = specs.find((sp) => sp[2].length);
+      detailSlot.replaceChildren(window.SRW.buildPaneTabs(panes, 'srw:organize-films-tab', first && first[0]), ...panes.map((x) => x.pane));
+    }
+    function openDetails() {
+      if (!lastPlan) return;
+      if (!detailModal) {
+        detailModal = window.SRW.openModal('Films vs. movie templates', detailSlot, { size: 'modal-xl srw-modal-wide', onClose: () => { detailModal = null; detailSlot.replaceChildren(); } });
+      }
+      renderDetails();
+    }
+
     async function check(keep) {
       if (!keep) slot.replaceChildren(el('p', { className: 'srw-hint', textContent: 'Checking the film files…' }));
       status.textContent = '';
       const p = await window.SRW.runOp('organize_movies_plan');
       if (p.error) { slot.replaceChildren(el('p', { textContent: `Error: ${p.error}` })); return; }
+      const at = Date.now();
+      try { window.localStorage.setItem(FILMS_KEY, JSON.stringify({ plan: p, at })); } catch (e) { /* too big or blocked: not remembered */ }
+      showSummary(p, at);
+      if (detailModal) renderDetails(); // after a rename / move the open list is refreshed
+      else if (!keep) openDetails();
+    }
+
+    // The last check is kept in the browser (v0.240.12): the page shows it when it is opened again; "Check films" makes a new one.
+    const FILMS_KEY = 'srw:organize-films';
+    function showSummary(p, at) {
+      lastPlan = p;
       const differing = ['rename', 'move', 'conflict', 'needs_check'].reduce((n, k) => n + (p[k] || []).length, 0);
+      const counts = [['rename', 'rename'], ['move', 'move'], ['conflict', 'name conflict'], ['needs_check', 'to check first'], ['multi_file', 'with several files']]
+        .map(([k, label]) => `${(p[k] || []).length} ${label}`).join(' · ');
       slot.replaceChildren(
-        el('p', { className: 'srw-hint', textContent: `${p.in_place || 0} film file(s) already sit where the templates put them; ${differing} differ.` }),
-        group('Rename in the same folder', p.rename || [], 'rename'),
-        group('Move to another folder', p.move || [], 'move'),
-        group('Name conflict (not touched)', p.conflict || [], 'conflict',
-          'The target name is already taken, or two files want the same name. Decide which file to keep.'),
-        group('Needs a check first (not touched)', p.needs_check || [], 'check',
-          'A film of several scenes where a scene has no scene number in its group, or a scene in several groups. Fix it in Stash (Group > scene number), then check again.'),
-        group('Scenes with several files (not touched)', p.multi_file || [], 'multi'),
+        el('p', { className: 'srw-hint', textContent: `${p.in_place || 0} film file(s) already sit where the templates put them; ${differing} differ (${counts}); checked ${new Date(at).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}.` }),
+        el('div', { className: 'srw-toolbar' }, [el('button', { className: 'srw-btn srw-btn-primary', textContent: 'Details…',
+          title: 'Show which files would be renamed / moved, and rename or move them', onClick: openDetails })]),
       );
     }
+    try {
+      const last = JSON.parse(window.localStorage.getItem(FILMS_KEY) || 'null');
+      if (last && last.plan) showSummary(last.plan, last.at);
+    } catch (e) { /* nothing remembered */ }
 
     return el('div', { className: 'srw-settings-section' }, [
       el('h4', { textContent: 'Movies / groups: existing films vs. the movie templates' }),
@@ -1611,14 +1823,16 @@
       const input = el('input', { type: 'search', className: 'srw-search-input', value: x.title || '' });
       const results = el('div');
       const searchStatus = el('span', { className: 'srw-key-status' });
-      async function search() {
+      async function search(fresh = false) {
         const q = input.value.trim();
         if (!q) return;
         window.SRW.setBusy(searchStatus, 'searching…');
         results.replaceChildren();
-        const res = await window.SRW.runOp('movies_tpdb_search', { q, minutes: x.minutes });
+        const kept = fresh ? null : window.SRW.recallResult(`tpdb:${x.group_id}:${q}`);
+        const res = kept ? kept.value : await window.SRW.runOp('movies_tpdb_search', { q, minutes: x.minutes });
         if (res.error) { searchStatus.textContent = ` error: ${res.error}`; return; }
-        searchStatus.textContent = '';
+        if (!kept) window.SRW.keepResult(`tpdb:${x.group_id}:${q}`, res);
+        searchStatus.textContent = kept ? `kept from ${new Date(kept.at).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}` : '';
         if (!(res.results || []).length) { results.appendChild(el('p', { className: 'srw-hint', textContent: 'ThePornDB found nothing. Try fewer words.' })); return; }
         res.results.forEach((c) => results.appendChild(el('div', { className: 'srw-manual-search-result' }, [
           el('span', { className: 'srw-release-title', textContent: c.title || '?' }),
@@ -1637,13 +1851,13 @@
           }),
         ])));
       }
-      input.addEventListener('keydown', (e) => { if (e.key === 'Enter') search(); });
+      input.addEventListener('keydown', (e) => { if (e.key === 'Enter') search(true); });
       const btn = el('button', {
         className: 'srw-btn srw-btn-sm', textContent: 'Complete via ThePornDB…',
         title: 'Search the movie at ThePornDB and link it to this Group; the import then takes the Group for a confirmed film',
         onClick: () => {
           if (panel.childNodes.length) { panel.replaceChildren(); return; }
-          panel.replaceChildren(el('span', {}, [input, el('button', { className: 'srw-btn srw-btn-sm', textContent: 'Go', onClick: search }), searchStatus]), results);
+          panel.replaceChildren(el('span', {}, [input, el('button', { className: 'srw-btn srw-btn-sm', textContent: 'Go', onClick: () => search(true) }), searchStatus]), results);
           search();
         },
       });
@@ -1837,14 +2051,15 @@
         const r = results[x.id];
         const sdbLink = (m) => el('a', { href: `https://stashdb.org/scenes/${m.id}`, target: '_blank', rel: 'noopener noreferrer', textContent: `${m.title || m.id} ↗` });
         const remove = () => { items = items.filter((i) => i.id !== x.id); view.reset(); updateSummary(); };
-        const review = el('button', { className: 'srw-btn srw-btn-sm', textContent: 'Send to Identify Scene',
+        const review = window.SRW.iconButton('button', ['faFingerprint', 'faMagnifyingGlass'], 'Send to Identify Scene', {
           title: 'Adds the tag “Review: Identify Scene” (nothing else changes); the tools to identify it are there',
           onClick: async () => {
             const res = await window.SRW.runOp('compare_review_add', { scene_id: x.id });
             if (res.error) { rowStatus.textContent = ` error: ${res.error}`; return; }
             remove();
           } });
-        return el('li', { className: 'srw-release-item' }, [
+        // The row layout of the Wishlist / Stuck lists (v0.238.7): the text on the left, the buttons in one column on the right, never wrapped.
+        return window.SRW.arrangeReleaseRow(el('li', { className: 'srw-release-item' }, [
           el('span', { className: 'srw-release-title', textContent: x.title || x.file }),
           el('span', { className: 'srw-release-date', textContent: [x.studio_folder, x.minutes ? `${x.minutes} min` : null, x.height ? `${x.height}p` : null, x.mb ? `${x.mb} MB` : null].filter(Boolean).join(' · ') }),
           el('div', { className: 'srw-hint', textContent: x.folder }),
@@ -1862,8 +2077,8 @@
           review,
           // A scene that will not be identified (no provider has it) and lies in the wrong folder: park the file like Review's
           // "Move to _UNMATCHED" (v0.228.3). The tag it needs for that is added and taken off by the move itself.
-          /\/_UNMATCHED\//.test(`${x.folder}/`) ? null : el('button', {
-            className: 'srw-btn srw-btn-sm', textContent: 'Park in _UNMATCHED',
+          /\/_UNMATCHED\//.test(`${x.folder}/`) ? null : window.SRW.iconButton('button', ['faFolderOpen', 'faQuestion'], 'Park in _UNMATCHED', {
+            className: 'srw-btn srw-btn-sm',
             title: 'Moves the file to scenes/_UNMATCHED/<its folders> until it can be identified; the Stash scene and its data stay (a backup is made)',
             onClick: (e) => confirmInline(e.currentTarget, `Move the file of "${x.title || x.file}" to scenes/_UNMATCHED? The scene and its data stay; a backup is made.`, async () => {
               rowStatus.textContent = ' parking…';
@@ -1875,7 +2090,7 @@
             }),
           }),
           rowStatus,
-        ]);
+        ]), {});
       })),
     });
     const filterSel = el('select', { onChange: (e) => { resultFilter = e.target.value; view.reset(); } },
@@ -1893,18 +2108,22 @@
       assignBtn.hidden = !unique;
       assignBtn.textContent = `Assign the ${unique} clear match(es)`;
     }
+    // The list is kept by the sidecar (v0.241.6): opening the page reads it at once; "Reload" asks Stash again. Identified / sent scenes leave it on their own.
+    let forceFresh = false;
     async function load() {
-      const r = await window.SRW.runOp('compare_unidentified');
+      const fresh = forceFresh;
+      forceFresh = false;
+      const r = await window.SRW.runOp('compare_unidentified', { refresh: fresh });
       if (r.error) { status.textContent = ` error: ${r.error}`; return false; }
       items = r.scenes || [];
       inReview = r.in_review || 0;
       Object.keys(results).forEach((k) => delete results[k]);
       Object.assign(results, r.checks || {}); // the stored results of the last checks (they survive a reload)
       view.reset(); updateSummary();
-      return ` ${items.length} scene(s)`;
+      return ` ${items.length} scene(s)${r.listed_at ? `, listed ${new Date(`${r.listed_at.replace(' ', 'T')}Z`).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}` : ''}`;
     }
     const loader = autoLoader(status, load);
-    const checkBtn = el('button', { className: 'srw-btn', textContent: 'Check fingerprints (dry run)',
+    const checkBtn = window.SRW.iconButton('button', 'faFingerprint', 'Check fingerprints (dry run)', {
       title: 'Asks StashDB which scene each file is, by exact fingerprint: one request per 40 files. Nothing is changed.' });
     const runCheck = async (all) => {
       const todo = items.filter((i) => all || !results[i.id]).map((i) => i.id);
@@ -1922,7 +2141,7 @@
       } finally { checkBtn.disabled = false; }
     };
     checkBtn.addEventListener('click', () => runCheck(false));
-    const recheckBtn = el('button', { className: 'srw-btn', textContent: 'Check everything again',
+    const recheckBtn = window.SRW.iconButton('button', 'faArrowsRotate', 'Check everything again', {
       title: 'Asks StashDB again for every listed file, also the ones checked before (one request per 40 files)' });
     recheckBtn.addEventListener('click', () => confirmInline(recheckBtn, `Ask StashDB again for all ${items.length} files (about ${Math.ceil(items.length / 40)} requests)?`, () => runCheck(true)));
     assignBtn.addEventListener('click', () => confirmInline(assignBtn,
@@ -1938,7 +2157,7 @@
         status.textContent = ` ${done} assigned${failed ? `, ${failed} failed (see History)` : ''}`;
         view.reset(); updateSummary();
       }));
-    const bulkReview = el('button', { className: 'srw-btn', textContent: 'Send the shown ones to Identify Scene',
+    const bulkReview = window.SRW.iconButton('button', ['faFingerprint', 'faMagnifyingGlass'], 'Send the shown ones to Identify Scene', {
       title: 'Adds the review tag to every scene the current search / filter shows' });
     bulkReview.addEventListener('click', async () => {
       const q = view.state.search || '';
@@ -1958,7 +2177,7 @@
       el('p', { className: 'srw-hint', textContent: 'Files in your scene folders that Stash has no StashDB / ThePornDB id for (the film folders and the import folder are left out). '
         + '“Check fingerprints” asks StashDB which scene each file is and changes nothing (the results are kept, also after a reload; files already checked are skipped); only a file that matches exactly ONE StashDB scene, which no other file of yours has, can be assigned. '
         + 'Several matches, none or doubtful cases go to Review: Identify Scene (name search, ThePornDB, playing).' }),
-      el('div', { className: 'srw-toolbar' }, [el('button', { className: 'srw-btn', textContent: 'Refresh', onClick: () => loader(true) }), checkBtn, recheckBtn, assignBtn, bulkReview,
+      el('div', { className: 'srw-toolbar' }, [window.SRW.iconButton('button', 'faRotate', 'Reload', { title: 'Reload: read the list from Stash again (it is kept until then; scenes you identify or send to Review leave it at once)', onClick: () => { forceFresh = true; loader(true); } }), checkBtn, recheckBtn, assignBtn, bulkReview,
         el('label', {}, ['show: ', filterSel]), status]),
       summary,
       view.node,
@@ -1968,42 +2187,94 @@
   }
 
   function buildPerformersArea() {
-    const { el } = window.SRW;
+    const { el, confirmInline } = window.SRW;
     let performers = [];
-    let hideWatchlist = true;
+    let hideWatchlist = false;
+    const wk = window.SRW.watchKind(watchSource); // the watchlist (eye) or Stash's favorites (heart), as Settings says
+    const wkWord = watchSource === 'tag' ? 'watchlist' : 'favorites';
     const perfStatus = el('span', { className: 'srw-key-status' });
+    // One card per performer (v0.238.3, like the Search page's): the picture, the name linking to Stash, a heart badge + accent frame for the ones on the
+    // watchlist (a watchlist performer may well have no scene yet), and the actions: take it off the watchlist, or delete it from Stash.
+    function buildCard(p) {
+      const note = el('span', { className: 'srw-key-status' });
+      const card = el('div', { className: `srw-search-card srw-perf-card${p.on_watchlist ? ' srw-perf-card-watched' : ''}` });
+      const img = p.image_path
+        ? el('img', { className: 'srw-search-card-image', src: p.image_path, loading: 'lazy', alt: p.name })
+        : el('div', { className: 'srw-search-card-image srw-search-card-noimage' });
+      card.appendChild(el('a', { href: `/performers/${p.id}`, target: '_blank', rel: 'noopener noreferrer', title: 'Open the performer in Stash (new tab)' }, [img]));
+      card.appendChild(el('div', { className: 'srw-search-card-title' }, [
+        p.on_watchlist ? el('span', { className: 'srw-perf-watch-badge', title: wk.on }, [window.SRW.icon(wk.badge) || '●']) : null,
+        el('a', { href: `/performers/${p.id}`, target: '_blank', rel: 'noopener noreferrer', textContent: p.name + (p.disambiguation ? ` (${p.disambiguation})` : '') }),
+      ]));
+      if (p.on_watchlist) card.appendChild(el('span', { className: 'srw-history-category', textContent: wk.on }));
+      const actions = [];
+      if (p.on_watchlist) {
+        actions.push(window.SRW.iconButton('button', wk.remove, wk.removeLabel, {
+          title: `${wk.removeLabel}: the performer stays in Stash`,
+          onClick: async (e) => {
+            const b = e.currentTarget;
+            b.disabled = true;
+            window.SRW.setBusy(note, 'removing…');
+            try {
+              const res = await window.SRW.runOp('movies_performer_unwatch', { performer_id: p.id });
+              if (res.error) { note.textContent = ` error: ${res.error}`; b.disabled = false; return; }
+              p.on_watchlist = false;
+              perfView.reset(); updateSummary();
+            } catch (err) { note.textContent = ` error: ${err.message}`; b.disabled = false; }
+          },
+        }));
+      }
+      actions.push(window.SRW.iconButton('button', 'faTrash', 'Delete performer', {
+        className: 'srw-btn srw-btn-danger', title: 'Delete the performer from Stash (only possible while it has no scene)',
+        onClick: (e) => confirmInline(e.currentTarget,
+          `Delete "${p.name}" from Stash${p.on_watchlist ? ' (and so from the watchlist)' : ''}? This cannot be undone.`,
+          async () => {
+            window.SRW.setBusy(note, 'deleting…');
+            const res = await window.SRW.runOp('movies_performer_delete', { performer_id: p.id });
+            if (res.error) { note.textContent = ` error: ${res.error}`; return; }
+            performers = performers.filter((x) => x.id !== p.id);
+            perfView.reset(); updateSummary();
+          }, { danger: true }),
+      }));
+      card.appendChild(el('div', { className: 'srw-search-card-actions' }, [...actions, note]));
+      return card;
+    }
     const perfView = window.SRW.buildFilteredPagedList({
-      filters: ['search'], perPage: 50, emptyText: 'No performers without scenes.',
+      filters: ['search'], perPage: 48, emptyText: 'No performers without scenes.',
       fetchPage: window.SRW.localPageFetcher(() => performers.filter((p) => !(hideWatchlist && p.on_watchlist)), { text: (x) => x.name }),
-      renderItems: (page) => el('ul', { className: 'srw-release-list' }, page.map((p) => el('li', { className: 'srw-release-item' }, [
-        el('a', { className: 'srw-release-title', href: `/performers/${p.id}`, target: '_blank', rel: 'noopener noreferrer', textContent: p.name + (p.disambiguation ? ` (${p.disambiguation})` : '') }),
-        p.on_watchlist ? el('span', { className: 'srw-history-category', textContent: 'watchlist / favorite' }) : null,
-      ]))),
+      renderItems: (page) => el('div', { className: 'srw-search-grid' }, page.map(buildCard)),
     });
+    const summary = el('p', { className: 'srw-hint' });
+    function updateSummary() {
+      summary.textContent = `${performers.length} performer(s) without scenes, ${performers.filter((p) => p.on_watchlist).length} of them on the ${wkWord} (marked with ${watchSource === 'tag' ? 'an eye' : 'a heart'}).`;
+    }
     async function loadPerformers() {
       const r = await window.SRW.runOp('movies_performers_empty');
       if (r.error) { perfStatus.textContent = ` error: ${r.error}`; return false; }
       performers = r.performers || [];
       perfView.reset();
-      return ` ${performers.length} performer(s) without scenes, ${performers.filter((p) => p.on_watchlist).length} of them on the watchlist`;
+      updateSummary();
+      return '';
     }
     const loader = autoLoader(perfStatus, loadPerformers);
-    const hideBox = el('input', { type: 'checkbox', checked: true, onChange: (e) => { hideWatchlist = e.target.checked; perfView.reset(); } });
+    const hideBox = el('input', { type: 'checkbox', checked: false, onChange: (e) => { hideWatchlist = e.target.checked; perfView.reset(); } });
     const perfPane = el('div', {}, [
       el('div', { className: 'srw-toolbar' }, [
         el('button', { className: 'srw-btn', textContent: 'Refresh', onClick: () => loader(true) }),
-        el('label', {}, [hideBox, ' hide watchlist / favorites (they are meant to have none yet)']), perfStatus,
+        el('label', {}, [hideBox, ` hide the ones on the ${wkWord} (they are meant to have no scene yet)`]), perfStatus,
       ]),
+      summary,
       perfView.node,
     ]);
     loader(); // loads itself when the page opens
     return perfPane;
-
   }
 
   // ==================== Compare groups (v0.213.0, api/group_compare.py) ====================
   // Film folders without a group next to the EMPTY groups they may be (the same film under a slightly different name). Only suggestions:
   // "Add to that group" puts the video(s) in that group, "Not this" hides the pair; nothing happens without a click.
+  // Compare groups is a tab of Movies & groups (v0.242.0; it was its own page, and its list of empty groups was the tab "Groups without files").
+  // The tab loads when it is shown; `root.srwCount` = the open suggestions + namesakes for the tab label.
   function buildCompareGroupsArea() {
     const { el, confirmInline } = window.SRW;
     let pairs = [];
@@ -2015,6 +2286,46 @@
       filters: ['search'], perPage: 25, emptyText: 'No video matches an empty group by name.',
       fetchPage: window.SRW.localPageFetcher(() => pairs, { text: (p) => `${p.title} ${p.candidates.map((c) => c.group.name).join(' ')}` }),
       renderItems: (page) => el('ul', { className: 'srw-release-list' }, page.map(buildPairRow)),
+    });
+    // Empty groups that have a namesake WITH files (v0.241.9): usually a duplicate group made by a scrape or an import.
+    let namesakes = [];
+    const namesakeStatus = el('span', { className: 'srw-key-status' });
+    const namesakeView = window.SRW.buildFilteredPagedList({
+      filters: ['search'], perPage: 25, emptyText: 'No empty group has a namesake with files.',
+      fetchPage: window.SRW.localPageFetcher(() => namesakes, { text: (n) => `${n.group.name} ${n.namesakes.map((x) => x.name).join(' ')}` }),
+      renderItems: (page) => el('ul', { className: 'srw-release-list' }, page.map((n) => {
+        const rowStatus = el('span', { className: 'srw-key-status' });
+        const delBtn = el('button', { className: 'srw-btn srw-btn-sm srw-btn-danger', textContent: 'Delete empty group',
+          title: 'Deletes the empty group in Stash (the groups with files stay; scenes without a file stay as scenes)',
+          onClick: (e) => confirmInline(e.currentTarget, `Delete the empty group "${n.group.name}"? The namesake with files stays.`, async () => {
+            rowStatus.textContent = ' deleting…';
+            const r = await window.SRW.runOp('movies_group_delete', { group_id: n.group.id });
+            if (r.error) { rowStatus.textContent = ` error: ${r.error}`; return; }
+            namesakes = namesakes.filter((x) => x.group.id !== n.group.id);
+            namesakeView.reset();
+            namesakeStatus.textContent = ` "${r.name}" deleted`;
+          }, { danger: true }) });
+        // "Dismiss": it is another film with a similar name -- the pair stays hidden (the same table as "Not this"), with Undo.
+        const dismissBtn = el('button', { className: 'srw-btn srw-btn-sm', textContent: 'Dismiss',
+          title: 'Not the same film: hide this empty group with these namesakes',
+          onClick: async () => {
+            const ids = n.namesakes.map((x) => x.id);
+            const r = await window.SRW.runOp('movies_group_namesakes_dismiss', { group_id: n.group.id, namesake_ids: ids });
+            if (r.error) { rowStatus.textContent = ` error: ${r.error}`; return; }
+            namesakes = namesakes.filter((x) => x.group.id !== n.group.id);
+            namesakeView.reset();
+            window.SRW.dismissedNotice(`Dismissed: ${n.group.name}`, 'Not the same film as its namesake(s).',
+              () => window.SRW.runOp('movies_group_namesakes_dismiss', { group_id: n.group.id, namesake_ids: ids, undo: true }), () => load());
+          } });
+        return window.SRW.arrangeReleaseRow(el('li', { className: 'srw-release-item' }, [
+          el('a', { className: 'srw-release-title', href: `/groups/${n.group.id}`, target: '_blank', rel: 'noopener noreferrer', textContent: n.group.name }),
+          el('span', { className: 'srw-release-date', textContent: `${n.group.date || 'no date'} · ${n.group.scenes ? `${n.group.scenes} scene(s) without a file` : 'no scene'}` }),
+          el('div', { className: 'srw-hint' }, ['namesake with files: ', ...n.namesakes.flatMap((x, i) => [i ? ', ' : '',
+            el('a', { href: `/groups/${x.id}`, target: '_blank', rel: 'noopener noreferrer', textContent: `${x.name}${x.date ? ` (${x.date.slice(0, 4)})` : ''}` }),
+            ` — ${x.with_files} file scene(s)${x.exact ? '' : `, similar ${Math.round(x.score * 100)} %`}`])]),
+          delBtn, dismissBtn, rowStatus,
+        ]), {});
+      })),
     });
     const groupView = window.SRW.buildFilteredPagedList({
       filters: ['search'], perPage: 50, emptyText: 'Every empty group has a suggestion.',
@@ -2083,28 +2394,38 @@
       return li;
     }
 
-    async function load() {
+    async function load(fresh = false) {
       status.textContent = ' loading…';
-      const r = await window.SRW.runOp('movies_compare_groups');
+      const r = await window.SRW.runOp('movies_compare_groups', { refresh: fresh === true });
       if (r.error) { status.textContent = ` error: ${r.error}`; return; }
       pairs = r.pairs || []; unmatched = r.unmatched_groups || []; ignored = r.ignored || 0;
-      status.textContent = '';
+      root.srwCount = pairs.length; // set before the summary changes: the tab label watches the summary
+      status.textContent = keptText(r.kept_at).replace(/^, /, ' ');
       summary.textContent = `${pairs.length} video folder(s) with a possible group, ${unmatched.length} empty group(s) without a suggestion`
         + (ignored ? `, ${ignored} suggestion(s) hidden by "Not this"` : '') + '.';
       pairView.reset(); groupView.reset();
+      const nr = await window.SRW.runOp('movies_group_namesakes', { refresh: fresh === true });
+      if (nr.error) { namesakeStatus.textContent = ` error: ${nr.error}`; return; }
+      namesakes = nr.namesakes || [];
+      namesakeStatus.textContent = (namesakes.length ? ` ${namesakes.length} empty group(s) with a namesake${keptText(nr.kept_at)}` : '')
+        + (nr.hidden ? `${namesakes.length ? ', ' : ' '}${nr.hidden} dismissed` : '');
+      namesakeView.reset();
     }
     const root = el('div', {}, [
-      el('h3', { textContent: 'Compare groups' }),
-      el('p', { className: 'srw-hint', textContent: 'A film folder without a group next to the empty groups it may belong to (the same film under a slightly different name). '
+      el('p', { className: 'srw-hint', textContent: 'Every group without a file is listed here: next to the video it may belong to, as a duplicate of a group with files, or without any suggestion. A film folder without a group next to the empty groups it may belong to (the same film under a slightly different name). '
         + 'The numbers in the names must be the same, the year is only a hint. Nothing changes until you click.' }),
-      el('div', { className: 'srw-toolbar' }, [el('button', { className: 'srw-btn', textContent: 'Refresh', onClick: load }), status]),
+      el('div', { className: 'srw-toolbar' }, [window.SRW.iconButton('button', 'faRotate', 'Reload', { title: 'Reload: read the movie folders and the groups from Stash again (they are kept until then)', onClick: () => load(true) }), status]),
       summary,
       el('h4', { textContent: 'Possible matches' }), pairView.node,
+      el('h4', { textContent: 'Empty groups with a namesake that has files' }),
+      el('p', { className: 'srw-hint' }, ['A group without files whose name is the same film as a group WITH files (accents, "Vol.", ", The" and brackets do not count; the numbers must agree): usually a duplicate. ', namesakeStatus]),
+      namesakeView.node,
       el('h4', { textContent: 'Empty groups without a suggestion' }),
       el('p', { className: 'srw-hint', textContent: 'No video of the movie folders has a similar name: these groups probably still wait for their file.' }),
       groupView.node,
     ]);
-    load();
+    root.srwLoad = load;
+    root.srwSummary = summary;
     return root;
   }
 
@@ -2137,15 +2458,17 @@
           () => onCreate({ scrape_url: url })),
       }),
     ]);
-    async function run() {
+    async function run(fresh = false) {
       const q = input.value.trim();
       if (!q) return;
       results.replaceChildren();
       if (select.value === PAGE) { results.appendChild(resultRow(q, null, null, 'page address')); return; }
       window.SRW.setBusy(status, 'searching…');
-      const res = await window.SRW.runOp('movies_group_search', { source: select.value, q });
+      const kept = fresh ? null : window.SRW.recallResult(`groupsearch:${select.value}:${q}`);
+      const res = kept ? kept.value : await window.SRW.runOp('movies_group_search', { source: select.value, q });
       if (res.error) { status.textContent = ` error: ${res.error}`; return; }
-      status.textContent = '';
+      if (!kept) window.SRW.keepResult(`groupsearch:${select.value}:${q}`, res);
+      status.textContent = kept ? `kept from ${new Date(kept.at).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}` : '';
       const rows = res.results || [];
       if (!rows.length) { results.appendChild(el('p', { className: 'srw-hint', textContent: 'Nothing found.' })); return; }
       rows.forEach((hit) => results.appendChild(resultRow(hit.url, hit.title, hit.image, hit.type || 'video on demand')));
@@ -2157,8 +2480,8 @@
       results.replaceChildren();
     }
     select.addEventListener('change', modeChanged);
-    goBtn.addEventListener('click', run);
-    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') run(); });
+    goBtn.addEventListener('click', () => run(true));
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') run(true); });
     (async () => {
       groupSourcesCache = groupSourcesCache || await window.SRW.runOp('movies_group_sources');
       const info = groupSourcesCache;
@@ -2173,6 +2496,9 @@
     })();
     return el('div', {}, [el('span', {}, [select, input, goBtn, status]), sitesNote, results]);
   }
+
+  // "listed 18:32" from a kept list's 'YYYY-MM-DD HH:MM:SS' UTC time (v0.241.7)
+  const keptText = (at) => (at ? `, listed ${new Date(`${String(at).replace(' ', 'T')}Z`).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}` : '');
 
   function buildMoviesSection() {
     const { el, confirmInline } = window.SRW;
@@ -2265,46 +2591,27 @@
         ]);
       })),
     });
+    // The lists of this page are kept by the sidecar (v0.241.7): opening reads them at once, a group that is created takes them out of date, "Reload" asks Stash again.
+    let forceNoGroup = false;
     async function loadNoGroup() {
-      const r = await window.SRW.runOp('movies_no_group');
+      const fresh = forceNoGroup;
+      forceNoGroup = false;
+      const r = await window.SRW.runOp('movies_no_group', { refresh: fresh });
       if (r.error) { noGroupStatus.textContent = ` error: ${r.error}`; return false; }
       folders = r.folders || [];
       noGroupLoaded = true;
       noGroupView.reset();
-      return ` ${folders.length} film folder(s) / video(s) without a group`;
+      return ` ${folders.length} film folder(s) / video(s) without a group${keptText(r.kept_at)}`;
     }
     const noGroupLoader = autoLoader(noGroupStatus, loadNoGroup);
     const noGroupPane = el('div', {}, [
       el('p', { className: 'srw-hint', textContent: 'Videos in the movie folders that are not in a group yet.' }),
-      el('div', { className: 'srw-toolbar' }, [el('button', { className: 'srw-btn', textContent: 'Refresh', onClick: () => noGroupLoader(true) }), noGroupStatus]),
+      el('div', { className: 'srw-toolbar' }, [window.SRW.iconButton('button', 'faRotate', 'Reload', { title: 'Reload: read the movie folders from Stash again (the list is kept until then)', onClick: () => { forceNoGroup = true; noGroupLoader(true); } }), noGroupStatus]),
       noGroupView.node,
     ]);
 
-    // -- groups without files
-    let groups = [];
-    let groupsLoaded = false;
-    const groupStatus = el('span', { className: 'srw-key-status' });
-    const groupView = window.SRW.buildFilteredPagedList({
-      filters: ['search'], perPage: 50, emptyText: 'No empty groups.',
-      fetchPage: window.SRW.localPageFetcher(() => groups, { text: (x) => x.name }),
-      renderItems: (page) => el('ul', { className: 'srw-release-list' }, page.map((g) => el('li', { className: 'srw-release-item' }, [
-        el('a', { className: 'srw-release-title', href: `/groups/${g.id}`, target: '_blank', rel: 'noopener noreferrer', textContent: g.name }),
-        el('span', { className: 'srw-release-date', textContent: `${g.date || ''} ${g.reason}` }),
-      ]))),
-    });
-    async function loadGroups() {
-      const r = await window.SRW.runOp('movies_groups_empty');
-      if (r.error) { groupStatus.textContent = ` error: ${r.error}`; return false; }
-      groups = r.groups || [];
-      groupsLoaded = true;
-      groupView.reset();
-      return ` ${groups.length} group(s) without files`;
-    }
-    const groupLoader = autoLoader(groupStatus, loadGroups);
-    const groupPane = el('div', {}, [
-      el('div', { className: 'srw-toolbar' }, [el('button', { className: 'srw-btn', textContent: 'Refresh', onClick: () => groupLoader(true) }), groupStatus]),
-      groupView.node,
-    ]);
+    // -- compare groups: every group without a file (matched with a video, a namesake, or without a suggestion)
+    const comparePane = buildCompareGroupsArea();
 
     // -- already in the library (stage D, v0.160.0): wanted movies whose file Whisparr / Stash already have
     let libItems = [];
@@ -2325,7 +2632,7 @@
           const r = await window.SRW.runOp('films_library_apply', { film_ids: [v.film_id], force });
           const one = (r.applied || [])[0] || {};
           rowStatus.textContent = r.error ? ` error: ${r.error}` : (one.error ? ` error: ${one.error}` : ` ${one.status}`);
-          if (!r.error && !one.error) { libItems = libItems.filter((x) => x.film_id !== v.film_id); libView.reset(); }
+          if (!r.error && !one.error) { libItems = libItems.filter((x) => x.film_id !== v.film_id); keepLibrary(); libView.reset(); }
         };
         return el('li', { className: 'srw-release-item' }, [
           el('span', { className: 'srw-release-title', textContent: `${v.title}${v.year ? ` (${v.year})` : ''}` }),
@@ -2338,15 +2645,21 @@
             onClick: (e) => confirmInline(e.currentTarget, v.verdict === 'clear' ? `Use the existing file for "${v.title}"? Nothing is downloaded, moved or deleted.`
               : `The length does not fit. Use the existing file for "${v.title}" anyway? Nothing is downloaded, moved or deleted.`, () => act(v.verdict !== 'clear')) }),
           el('button', { className: 'srw-btn srw-btn-sm', textContent: 'Keep searching', title: 'The file is not good enough (e.g. 480p): the movie stays on the wishlist and leaves this list',
-            onClick: async () => { await window.SRW.runOp('films_library_keep', { id: v.film_id }); libItems = libItems.filter((x) => x.film_id !== v.film_id); libView.reset(); } }),
+            onClick: async () => { await window.SRW.runOp('films_library_keep', { id: v.film_id }); libItems = libItems.filter((x) => x.film_id !== v.film_id); keepLibrary(); libView.reset(); } }),
           rowStatus,
         ]);
       })),
     });
-    async function loadLibrary() {
+    // The result of "Check" is kept in the browser (v0.240.12; it reads Whisparr's whole movie list): shown again after a reload, and
+    // lowered by what is decided in the list.
+    const LIB_KEY = 'films-library';
+    const keepLibrary = (other) => window.SRW.keepResult(LIB_KEY, { clear: libItems.filter((x) => x.verdict === 'clear'), manual: libItems.filter((x) => x.verdict !== 'clear'),
+      other: other != null ? other : ((window.SRW.recallResult(LIB_KEY) || { value: {} }).value.other || 0) });
+    async function loadLibrary(restored) {
       libStatus.textContent = ' checking (reads Whisparr\'s movie list once, can take half a minute)…';
-      const r = await window.SRW.runOp('films_library_check');
+      const r = restored || await window.SRW.runOp('films_library_check');
       if (r.error) { libStatus.textContent = ` error: ${r.error}`; return; }
+      if (!restored) window.SRW.keepResult(LIB_KEY, r);
       libItems = [...(r.clear || []), ...(r.manual || [])];
       libLoaded = true;
       const clear = (r.clear || []).length;
@@ -2367,18 +2680,22 @@
     const libraryPane = el('div', {}, [
       el('p', { className: 'srw-hint', textContent: 'Wanted movies whose file is ALREADY in the library (Whisparr imported it earlier, often under another ThePornDB id) -- they would be downloaded again. “Clear” = the length fits '
         + 'and the scene is in at most one group; “to decide” = the length does not fit (ThePornDB sometimes lists one disc only) or the file is in several groups. Using the existing file downloads, moves and deletes nothing.' }),
-      el('div', { className: 'srw-toolbar' }, [el('button', { className: 'srw-btn', textContent: 'Check', onClick: loadLibrary }), applyClearBtn, libStatus]),
+      el('div', { className: 'srw-toolbar' }, [el('button', { className: 'srw-btn', textContent: 'Check', onClick: () => loadLibrary() }), applyClearBtn, libStatus]),
       libSummary,
       libView.node,
     ]);
     libSummary.textContent = 'Click Check to look for wanted movies whose file is already in the library.';
+    const lastLibrary = window.SRW.recallResult(LIB_KEY, 30 * 86400000);
+    if (lastLibrary && lastLibrary.value) {
+      loadLibrary(lastLibrary.value).then(() => { libStatus.textContent = `kept from ${new Date(lastLibrary.at).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })} — "Check" asks again`; });
+    }
 
     const panes = [
       { key: 'whisparr', label: 'Whisparr', pane: whisparrPane },
       { key: 'library', label: () => `Already in the library${libLoaded ? ` (${libItems.length})` : ''}`, pane: libraryPane, watch: libSummary },
       { key: 'seed', label: 'Look-up on ThePornDB', pane: seedPane },
       { key: 'no-group', label: () => `Videos without a group${noGroupLoaded ? ` (${folders.length})` : ''}`, pane: noGroupPane, watch: noGroupStatus, onShow: () => noGroupLoader() },
-      { key: 'groups', label: () => `Groups without files${groupsLoaded ? ` (${groups.length})` : ''}`, pane: groupPane, watch: groupStatus, onShow: () => groupLoader() },
+      { key: 'compare', label: () => `Compare groups${comparePane.srwCount != null ? ` (${comparePane.srwCount})` : ''}`, pane: comparePane, watch: comparePane.srwSummary, onShow: () => comparePane.srwLoad() },
     ];
     section.appendChild(window.SRW.buildPaneTabs(panes, 'srw:maintenance-movies-tab'));
     panes.forEach((p) => section.appendChild(p.pane));
@@ -2502,14 +2819,19 @@
     } });
     unidentifiedBox.checked = includeUnidentified;
     const hiddenLine = el('span', { className: 'srw-hint' });
-    const matchesState = (c, want) => want === 'all' || stateOf(c) === want;
+    // "Open" is everything still undecided -- the "To check" ones (found by a check, waiting for a look) are part of it (v0.241.1); "To check" narrows it.
+    const matchesState = (c, want) => want === 'all' || stateOf(c) === want || (want === 'open' && stateOf(c) === 'check');
     const matchesReason = (c, want) => {
       if (!want) return true;
       if (want.startsWith('below_cutoff:')) return c.reason === 'below_cutoff' && resBucket(c) === want.slice(13);
       return c.reason === want;
     };
     const passesId = (c) => includeUnidentified || Boolean(c.provider_scene_id);
-    const visible = (c) => passesId(c) && matchesState(c, stateSelect.value) && matchesReason(c, reasonSelect.value);
+    // "Wrong length" (v0.241.0, moved here from the Duration mismatch page): shorter / longer than the provider says, with the threshold below.
+    let durDirection = '';
+    const passesDirection = (c) => !(reasonSelect.value === 'duration' && durDirection)
+      || (c.reason === 'duration' && c.cur_duration && c.provider_duration && (durDirection === 'shorter' ? c.cur_duration < c.provider_duration : c.cur_duration > c.provider_duration));
+    const visible = (c) => passesId(c) && passesDirection(c) && matchesState(c, stateSelect.value) && matchesReason(c, reasonSelect.value);
     // The counts behind each choice (the other choices and the id filter applied) and how many rows the id filter hides.
     function refreshCounts() {
       Array.from(reasonSelect.options).forEach((o, i) => {
@@ -2665,6 +2987,62 @@
         }
       } finally { polling = false; }
     }
+    // ---- wrong length: the threshold, shorter / longer, and the duration check itself ----
+    const durStatus = el('span', { className: 'srw-key-status' });
+    const durThreshold = el('input', { type: 'number', min: '1', max: '90', value: '5', className: 'srw-input-narrow', title: 'Deviation in percent from which a file counts as "wrong length"' });
+    const durDirSelect = el('select', { title: 'Only files shorter / longer than the provider says' },
+      [['', 'shorter or longer'], ['shorter', 'file shorter'], ['longer', 'file longer']].map(([v, t]) => el('option', { value: v, textContent: t })));
+    durDirSelect.addEventListener('change', () => { durDirection = durDirSelect.value; refreshCounts(); if (view) view.reset(); });
+    let durPolling = false;
+    let durSeenFinish; // the run that was already over when the page opened is not loaded again
+    async function pollDuration() {
+      if (durPolling) return;
+      durPolling = true;
+      durRunBtn.disabled = true;
+      try {
+        for (;;) {
+          const st = await window.SRW.runOp('upgrades_duration_status');
+          if (st.error) { durStatus.textContent = ` error: ${st.error}`; break; }
+          if (st.threshold != null && document.activeElement !== durThreshold) durThreshold.value = String(st.threshold);
+          const j = st.job || {};
+          const sync = st.sync || {};
+          if (sync.running) {
+            if (durSeenFinish === undefined) durSeenFinish = null;
+            durStatus.textContent = j.running ? ` asking the providers: ${j.phase || ''} ${j.done || 0} / ${j.total || 0}…`
+              : ` ${sync.phase || 'working'}${sync.total ? ` (${sync.done || 0} / ${sync.total})` : ''}…`;
+            await new Promise((resolve) => setTimeout(resolve, 3000));
+            continue;
+          }
+          if (sync.error) durStatus.textContent = ` error: ${sync.error}`;
+          else if (sync.result) {
+            durStatus.textContent = ` ${sync.result.added} added, ${sync.result.removed} dropped${sync.result.skipped ? `, ${sync.result.skipped} skipped` : ''}`
+              + `${st.last_checked ? ` — last answer of a provider ${st.last_checked} UTC` : ''}`;
+            if (durSeenFinish !== undefined && durSeenFinish !== sync.finished_at) await load();
+          } else durStatus.textContent = st.last_checked ? ` last answer of a provider ${st.last_checked} UTC, ${st.checked} scenes compared` : ' not run yet';
+          durSeenFinish = sync.finished_at || null;
+          break;
+        }
+      } finally { durPolling = false; durRunBtn.disabled = false; }
+    }
+    const durRunBtn = window.SRW.iconButton('button', 'faStopwatch', 'Run duration check', {
+      title: 'Run duration check: ask the providers (StashDB / ThePornDB) for the length of every scene without a recent answer and compare it with the file; the first run takes long, later runs only ask about new scenes',
+      onClick: (e) => confirmInline(e.currentTarget, 'Run the duration check? The providers are asked for the length of every scene without a recent answer (the first run can take an hour or more); then the "wrong length" list is updated.', async () => {
+        const r = await window.SRW.runOp('upgrades_duration_sync', { run_check: true, threshold: Number(durThreshold.value) || 5 });
+        if (r.error) { notify('Duration check', r.error, 'error'); return; }
+        pollDuration();
+      }),
+    });
+    durThreshold.addEventListener('change', async () => {
+      durThreshold.value = String(Math.max(1, Math.min(90, Number(durThreshold.value) || 5)));
+      const r = await window.SRW.runOp('upgrades_duration_sync', { threshold: Number(durThreshold.value) });
+      if (r.error) { notify('Wrong length', r.error, 'error'); return; }
+      pollDuration();
+    });
+    // The check itself is in the toolbar always; the threshold and shorter / longer only mean something for the reason "wrong length".
+    const durBox = el('div', { className: 'srw-toolbar', hidden: true }, [
+      el('label', {}, ['wrong length: deviation over ', durThreshold, ' %']), durDirSelect,
+    ]);
+    reasonSelect.addEventListener('change', () => { durBox.hidden = reasonSelect.value !== 'duration'; refreshCounts(); if (view) view.reset(); });
     const libraryCheckBtn = el('button', {
       type: 'button', className: 'srw-btn', textContent: 'Check the whole library…',
       title: 'Look at every scene of your library once: wrong length, 2D / mono / low-bitrate VR files, files below the quality profile cutoff',
@@ -2683,14 +3061,16 @@
         className: 'srw-hint',
         textContent: 'Library files that should be replaced by a better version: 2D files of VR scenes → real VR, '
           + 'monoscopic VR → stereoscopic, VR below 4K / low bitrate → higher resolution (never above 6K / 15 GB), '
-          + 'non-VR below the profile cutoff, and files with a wrong length. Only candidates that are actually better are grabbed; after the '
+          + 'non-VR below the profile cutoff, and files with a wrong length (cut or partial rips: choose the reason "wrong length" for the threshold, shorter / longer and the duration check). Only candidates that are actually better are grabbed; after the '
           + 'verified import the old file goes to the recycle bin.',
       }),
       el('div', { className: 'srw-toolbar srw-upgrade-toolbar' }, [
-        refreshBtn, libraryCheckBtn, reasonSelect, stateSelect, sortSelect, sortDir,
+        refreshBtn, libraryCheckBtn, durRunBtn, reasonSelect, stateSelect, sortSelect, sortDir,
         el('label', { title: 'Without an id the scene cannot be searched yet; identify it first (Maintenance > Unidentified scenes)' },
           [unidentifiedBox, ' include scenes without StashDB / ThePornDB id']), status,
       ]),
+      durBox,
+      el('p', { className: 'srw-hint' }, [durStatus]),
       el('p', { className: 'srw-hint' }, [checkLine]),
       el('p', { className: 'srw-hint' }, [hiddenLine]),
       el('p', { className: 'srw-hint' }, [autoLine, ' ', el('a', { href: '/plugins/stash-release-manager/settings#jobs', textContent: 'Change in Settings > Jobs' })]),
@@ -2698,6 +3078,7 @@
       list,
     ]);
 
+    pollDuration(); // shows the threshold and the last check; a run that is still going is picked up again
     let candidates = [];
     let view = null;
     let dryRunButton = false;
@@ -2761,6 +3142,7 @@
 
     function buildRow(c) {
       const [badge, why] = UPGRADE_REASON[c.reason] || [c.reason, ''];
+      const durDir = c.reason === 'duration' && c.cur_duration && c.provider_duration ? (c.cur_duration < c.provider_duration ? 'shorter' : 'longer') : null;
       const sceneHref = `/scenes/${c.scene_id}`;
       const result = el('div', { className: 'srw-hint srw-upgrade-note' });
       const statusText = {
@@ -2847,8 +3229,18 @@
         } else {
           actions.push(
             el('span', { className: 'srw-hint', textContent: 'No StashDB / ThePornDB id yet -- identify the scene first.' }),
-            el('a', { className: 'srw-btn', href: `${MAINTENANCE_PATH}/unidentified`, textContent: 'Unidentified scenes',
-              title: 'Maintenance > Unidentified scenes: find out what the scene is (fingerprints, name search) and apply it' }),
+            // The scene goes straight to Review: Identify Scene (v0.241.5; the link to Unidentified scenes only opened that page, and a scene that is
+            // parked in _UNMATCHED or already tagged is not listed there).
+            window.SRW.iconButton('button', ['faFingerprint', 'faMagnifyingGlass'], 'Send to Identify Scene', {
+              title: 'Send to Identify Scene: adds the tag "Review: Identify Scene" (nothing else changes); the tools to find out what the scene is are there (Maintenance > Review: Identify Scene)',
+              onClick: async (e) => {
+                const b = e.currentTarget;
+                b.disabled = true;
+                const r = await window.SRW.runOp('compare_review_add', { scene_id: c.scene_id });
+                b.disabled = false;
+                result.textContent = r.error ? ` error: ${r.error}` : (r.already ? ' is in Review: Identify Scene already' : ' sent to Review: Identify Scene');
+              },
+            }),
             dismissBtn);
         }
       } else if (c.status === 'dismissed') {
@@ -2863,7 +3255,7 @@
       }
       const chips = [`${c.cur_width}×${c.cur_height}`, fmtGb(c.cur_size), c.cur_mbps ? `${Math.round(c.cur_mbps)} Mbit/s` : null,
         c.reason === 'duration' && c.cur_duration && c.provider_duration
-          ? `file ${fmtMin(c.cur_duration)} · provider ${fmtMin(c.provider_duration)} (${c.cur_duration < c.provider_duration ? 'shorter' : 'longer'})` : fmtMin(c.cur_duration),
+          ? `file ${fmtMin(c.cur_duration)} · provider ${fmtMin(c.provider_duration)} (${c.cur_duration < c.provider_duration ? 'shorter' : 'longer'} by ${Math.round(Math.abs(c.cur_duration - c.provider_duration) / c.provider_duration * 100)} %)` : fmtMin(c.cur_duration),
         c.quality_profile_id && profileName(c.quality_profile_id) ? `profile: ${profileName(c.quality_profile_id)}` : null,
         c.studio_name || null, c.scene_date || null].filter(Boolean);
       return el('li', { className: 'srw-release-item srw-upgrade-row' }, [
@@ -2872,7 +3264,11 @@
           [el('img', { className: 'srw-vr-thumb', src: `/scene/${c.scene_id}/screenshot`, loading: 'lazy', alt: '' })]),
         el('div', { className: 'srw-upgrade-info' }, [
           el('div', { className: 'srw-result-head' }, [
-            el('span', { className: `srw-upgrade-reason srw-upgrade-reason-${c.reason}`, textContent: badge, title: why }),
+            // A wrong-length file shows its direction in the pill (v0.241.2: "file shorter" / "file longer", the colours of the old Duration page).
+            el('span', { className: `srw-upgrade-reason srw-upgrade-reason-${durDir ? (durDir === 'shorter' ? 'dur_short' : 'dur_long') : c.reason}`,
+              textContent: durDir ? `file ${durDir}` : badge,
+              title: durDir ? (durDir === 'shorter' ? 'The file is shorter than the provider\'s length: a cut or partial rip, a sample, or a wrong length at the provider'
+                : 'The file is longer than the provider\'s length (a wrong length at the provider, or a film in one file)') : why }),
             el('a', { className: 'srw-release-title', href: sceneHref, target: '_blank', rel: 'noopener noreferrer', textContent: c.scene_title || `Scene ${c.scene_id}` }),
           ]),
           el('div', { className: 'srw-result-facts' }, [el('span', { className: 'srw-chips' }, chips.map((t) => el('span', { className: 'srw-chip', textContent: t })))]),
@@ -3044,8 +3440,8 @@
       const each = (fn) => videos.forEach((pl) => { try { fn(pl); } catch (e) { /* not ready yet */ } });
       const playAll = () => each((pl) => { const pr = pl.video.play(); if (pr && pr.catch) pr.catch(() => { /* autoplay policy: needs a user gesture */ }); });
       const bar = el('div', { className: 'srw-toolbar srw-cmp-bar' }, [
-        el('button', { className: 'srw-btn srw-btn-sm', textContent: '▶ both', onClick: playAll }),
-        el('button', { className: 'srw-btn srw-btn-sm', textContent: '⏸ both', onClick: () => each((pl) => pl.video.pause()) }),
+        window.SRW.iconButton('button', 'faPlay', 'Play both', { className: 'srw-btn srw-btn-sm', onClick: playAll }),
+        window.SRW.iconButton('button', 'faPause', 'Pause both', { className: 'srw-btn srw-btn-sm', onClick: () => each((pl) => pl.video.pause()) }),
         el('button', { className: 'srw-btn srw-btn-sm', textContent: '−10 s', onClick: () => each((pl) => pl.seek(pl.time() - 10)) }),
         el('button', { className: 'srw-btn srw-btn-sm', textContent: '+10 s', onClick: () => each((pl) => pl.seek(pl.time() + 10)) }),
         el('button', { className: 'srw-btn srw-btn-sm', textContent: '+60 s', onClick: () => each((pl) => pl.seek(pl.time() + 60)) }),
@@ -3111,7 +3507,7 @@
         video.addEventListener('error', () => {
           if (pl.transcoded) { note.textContent = 'Stash’s transcode failed too -- open the scene in Stash.'; return; }
           note.replaceChildren('The browser can not play this file directly. ',
-            el('button', { className: 'srw-btn srw-btn-sm', textContent: 'Play through Stash’s transcode', onClick: () => pl.useTranscode() }));
+            window.SRW.iconButton('button', 'faTv', 'Play through Stash’s transcode', { className: 'srw-btn srw-btn-sm', onClick: () => pl.useTranscode() }));
         });
       } else {
         pl.useTranscode(`.${ext || '?'} is not playable in a browser -- played through Stash’s transcode (lower quality, starts slower). `
@@ -3155,8 +3551,19 @@
         ]);
       }) : [el('div', { className: 'srw-hint', textContent: 'No provider id on this scene.' })];
       const wrap = el('div', { className: 'srw-cmp-videowrap', style: 'position: relative' }, [video]);
+      const heading = el('h5', {}, [`${tag}: `, el('a', { href: `/scenes/${s.id}`, target: '_blank', rel: 'noopener noreferrer', textContent: `#${s.id} open in Stash` })]);
+      if (side === 'review') {
+        // The review has the whole width of its dialog (v0.240.7): the player and the facts left, the ids and the tools to identify the scene right.
+        return el('div', { className: 'srw-cmp-col srw-cmp-split' }, [
+          el('div', { className: 'srw-cmp-split-left' }, [heading, wrap, note, buildFaceHint(s), buildFramesStrip(s), table]),
+          el('div', { className: 'srw-cmp-split-right' }, [
+            el('div', { className: 'srw-cmp-ids' }, ids),
+            (s.stash_ids || []).length ? null : buildIdentifyPanel(p, s, tag),
+          ].filter(Boolean)),
+        ]);
+      }
       return el('div', { className: 'srw-cmp-col' }, [
-        el('h5', {}, [`${tag}: `, el('a', { href: `/scenes/${s.id}`, target: '_blank', rel: 'noopener noreferrer', textContent: `#${s.id} open in Stash` })]),
+        heading,
         wrap, note, buildFaceHint(s), buildFramesStrip(s), table,
         el('div', { className: 'srw-cmp-ids' }, ids),
         (s.stash_ids || []).length ? null : buildIdentifyPanel(p, s, tag),
@@ -3226,7 +3633,7 @@
     // Real frames cut from the file (5 positions) -- the Stash screenshot/cover is the provider's image and says nothing about the file.
     function buildFramesStrip(s) {
       const strip = el('div', { className: 'srw-cmp-frames' });
-      const btn = el('button', { className: 'srw-btn srw-btn-sm', textContent: 'Show frames from the file',
+      const btn = window.SRW.iconButton('button', 'faImages', 'Show frames from the file', { className: 'srw-btn srw-btn-sm',
         title: 'Five frames cut from THIS file (10/30/50/70/90 %). Stash’s own screenshot is only the provider’s cover image.',
         onClick: async () => {
           btn.disabled = true; strip.textContent = 'cutting frames…';
@@ -3275,24 +3682,29 @@
           }));
       };
 
-      const idBtn = el('button', { className: 'srw-btn srw-btn-sm', textContent: 'Identify by fingerprint',
+      const idBtn = window.SRW.iconButton('button', 'faFingerprint', 'Identify by fingerprint', { className: 'srw-btn srw-btn-sm',
         title: 'Looks the file\'s hashes up at StashDB (then ThePornDB) -- exact matches only',
         onClick: async () => {
           idBtn.disabled = true; out.textContent = 'looking up…';
           const r = await window.SRW.runOp('compare_identify', { id: p.id, scene_id: s.id });
           idBtn.disabled = false;
           if (r.error) { out.textContent = `error: ${r.error}`; return; }
+          window.SRW.keepResult(`lookup:${s.id}`, { kind: 'id', r });
           renderCandidates(r.matches || [], true);
         } });
-      const searchBtn = el('button', { className: 'srw-btn srw-btn-sm', textContent: 'Search by name',
+      const renderSearch = (r) => {
+        const errs = (r.results || []).filter((x) => x.error);
+        renderCandidates((r.results || []).filter((x) => !x.error), false);
+        errs.forEach((x) => out.appendChild(el('div', { className: 'srw-hint', textContent: `${x.provider}: ${x.error}` })));
+      };
+      const searchBtn = window.SRW.iconButton('button', 'faMagnifyingGlass', 'Search by name', { className: 'srw-btn srw-btn-sm',
         onClick: async () => {
           searchBtn.disabled = true; window.SRW.setBusy(out, 'searching…');
           const r = await window.SRW.runOp('compare_search', { id: p.id, scene_id: s.id, query: q.value });
           searchBtn.disabled = false;
           if (r.error) { out.textContent = `error: ${r.error}`; return; }
-          const errs = (r.results || []).filter((x) => x.error);
-          renderCandidates((r.results || []).filter((x) => !x.error), false);
-          errs.forEach((x) => out.appendChild(el('div', { className: 'srw-hint', textContent: `${x.provider}: ${x.error}` })));
+          window.SRW.keepResult(`lookup:${s.id}`, { kind: 'search', r, query: q.value });
+          renderSearch(r);
         } });
       const resetBtn = el('button', { className: 'srw-btn srw-btn-sm srw-btn-danger', textContent: 'Reset metadata' });
       resetBtn.addEventListener('click', (e) => window.SRW.confirmInline(e.currentTarget,
@@ -3314,11 +3726,7 @@
       scraperSel.addEventListener('change', () => {
         sq.placeholder = nameSearch[scraperSel.value] === false ? 'page URL of the scene (this scraper has no title search)' : 'title, or a page URL';
       });
-      const sBtn = el('button', { className: 'srw-btn srw-btn-sm', textContent: 'Search via Stash scraper', onClick: async () => {
-        sBtn.disabled = true; out.textContent = 'asking the scraper…';
-        const r = await window.SRW.runOp('compare_scrape', { scraper_id: scraperSel.value, query: sq.value });
-        sBtn.disabled = false;
-        if (r.error) { out.textContent = `error: ${r.error}`; return; }
+      const renderScrape = (r) => {
         if (!(r.results || []).length) { out.textContent = 'The scraper found nothing.'; return; }
         out.replaceChildren(el('div', { className: 'srw-hint', textContent: 'Scraper results (no provider id -- "Apply" only fills title/date/details/URL):' }),
           ...r.results.map((x) => {
@@ -3335,7 +3743,24 @@
               el('div', { className: 'srw-hint', textContent: (x.details || '').slice(0, 220) }),
               (x.urls || [])[0] ? el('a', { href: x.urls[0], target: '_blank', rel: 'noopener noreferrer', textContent: x.urls[0] }) : null, ap]);
           }));
+      };
+      const sBtn = window.SRW.iconButton('button', 'faWandMagicSparkles', 'Search via Stash scraper', { className: 'srw-btn srw-btn-sm', onClick: async () => {
+        sBtn.disabled = true; out.textContent = 'asking the scraper…';
+        const r = await window.SRW.runOp('compare_scrape', { scraper_id: scraperSel.value, query: sq.value });
+        sBtn.disabled = false;
+        if (r.error) { out.textContent = `error: ${r.error}`; return; }
+        window.SRW.keepResult(`lookup:${s.id}`, { kind: 'scrape', r, query: sq.value });
+        renderScrape(r);
       } });
+      // The last lookup for this scene is shown again when the dialog is reopened or the page reloaded.
+      const last = window.SRW.recallResult(`lookup:${s.id}`);
+      if (last && last.value) {
+        const v = last.value;
+        if (v.kind === 'id') renderCandidates(v.r.matches || [], true);
+        else if (v.kind === 'search') { q.value = v.query || q.value; renderSearch(v.r); }
+        else if (v.kind === 'scrape') { sq.value = v.query || sq.value; renderScrape(v.r); }
+        out.prepend(window.SRW.keptNote(last.at));
+      }
       return el('div', { className: 'srw-cmp-identify' }, [
         el('div', { className: 'srw-hint', textContent: `${tag} has no provider id -- what is it?` }),
         el('div', { className: 'srw-toolbar' }, [idBtn]),
@@ -3368,7 +3793,7 @@
     let reviewTab = REVIEW_TABS[0][0];
     const reviewTabBtns = REVIEW_TABS.map(([value, label]) => {
       const b = el('button', { className: 'srw-btn srw-btn-sm' });
-      b.addEventListener('click', () => { reviewTab = value; reviewViewer.replaceChildren(); reviewOpenId = null; applyReviewFilter(); });
+      b.addEventListener('click', () => { reviewTab = value; closeReview(); applyReviewFilter(); });
       return { value, label, b };
     });
     const applyReviewFilter = () => {
@@ -3406,7 +3831,7 @@
           if (r.error) { window.SRW.notify('Review', `#${x.id}: ${r.error}`, 'error'); break; }
           done += 1;
         }
-        reviewViewer.replaceChildren(); reviewOpenId = null;
+        closeReview();
         await loadReview();
         window.SRW.notify('Review', `${done} scene(s) removed from the review list.`, 'success');
       });
@@ -3448,24 +3873,45 @@
       ]);
     }
 
+    // The row layout of the Wishlist / Stuck lists (v0.240.1): thumbnail, text on the left, the buttons in one column on the right.
     function buildReviewRow(x) {
-      return el('li', { className: 'srw-release-item' }, [
+      const thumb = el('a', { className: 'srw-release-thumb-link', href: `/scenes/${x.id}`, target: '_blank', rel: 'noopener noreferrer', title: 'Open the scene in Stash (new tab)' },
+        [el('img', { className: 'srw-release-thumb', src: `/scene/${x.id}/screenshot`, alt: '', loading: 'lazy' })]);
+      return window.SRW.arrangeReleaseRow(el('li', { className: 'srw-release-item' }, [
+        thumb,
+        el('span', { className: 'srw-release-title', textContent: x.title || (x.path || '').split('/').pop() || `Scene ${x.id}` }),
         el('span', { className: 'srw-upgrade-reason srw-upgrade-reason-vr_2d', textContent: x.status === 'later' ? 'later' : (x.provider_ids ? 'has id' : 'no id') }),
-        el('div', {}, [
-          el('div', { className: 'srw-release-title', textContent: x.title || x.path || `Scene ${x.id}` }),
-          el('div', { className: 'srw-hint', textContent: `#${x.id} — ${x.height ? `${x.height}p` : '?'}, ${x.minutes == null ? '?' : x.minutes} min, ${x.mb == null ? '?' : x.mb} MB, `
-            + `${x.markers} marker(s)${(x.performers || []).length ? `, ${x.performers.join(', ')}` : ''}` }),
-          reviewCompare(x),
-          el('div', { className: 'srw-hint srw-maintenance-file-path', textContent: x.path || '' }),
-        ]),
+        el('span', { className: 'srw-release-date', textContent: `#${x.id} — ${x.height ? `${x.height}p` : '?'}, ${x.minutes == null ? '?' : x.minutes} min, ${x.mb == null ? '?' : x.mb} MB, `
+          + `${x.markers} marker(s)${(x.performers || []).length ? `, ${x.performers.join(', ')}` : ''}` }),
+        reviewCompare(x),
+        el('div', { className: 'srw-hint srw-maintenance-file-path', textContent: x.path || '' }),
         el('button', { className: 'srw-btn srw-btn-sm srw-btn-primary', textContent: 'Review', onClick: () => openReview(x.id) }),
-      ]);
+      ]), {});
     }
 
+    // The review opens in a modal (v0.240.1) over the list instead of below it; closing it (x, Escape, a click beside it, or any finished action) stops the players.
+    let reviewModal = null;
+    const resetReview = () => {
+      reviewViewer.querySelectorAll('video').forEach((v) => { try { v.pause(); v.removeAttribute('src'); v.load(); } catch (e) { /* gone already */ } });
+      reviewViewer.replaceChildren(); reviewOpenId = null;
+    };
+    function closeReview() {
+      const m = reviewModal; reviewModal = null;
+      resetReview();
+      if (m) m.close();
+    }
     async function openReview(id) {
       reviewOpenId = id;
       reviewViewer.replaceChildren(el('p', { className: 'srw-hint', textContent: 'Loading the scene and its provider entries…' }));
-      reviewViewer.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      if (!reviewModal) {
+        const x = allReview.find((i) => i.id === id) || {};
+        reviewModal = window.SRW.openModal('Review: Identify Scene', reviewViewer, {
+          size: 'modal-xl srw-modal-wide',
+          subtitle: window.SRW.sceneSubtitle({ title: x.title || (x.path || '').split('/').pop() || `Scene ${id}`, cast: (x.performers || []).map((name) => ({ name })),
+            studio_name: x.studio, scene_date: x.date }),
+          onClose: () => { reviewModal = null; resetReview(); },
+        });
+      }
       const s = await window.SRW.runOp('compare_review_scene', { scene_id: id });
       if (reviewOpenId !== id) return;
       if (s.error) { reviewViewer.replaceChildren(el('p', { className: 'srw-hint', textContent: `error: ${s.error}` })); return; }
@@ -3484,7 +3930,7 @@
           const studioIn = el('input', { type: 'text', placeholder: 'studio name (an existing one is used, otherwise it is created)', style: 'width: 24rem' });
           const finish = (r, text) => {
             if (r.error) { window.SRW.notify('Movies', r.error, 'error'); return; }
-            window.SRW.notify('Movies', text, 'success'); reviewViewer.replaceChildren(); reviewOpenId = null; loadReview();
+            window.SRW.notify('Movies', text, 'success'); closeReview(); loadReview();
           };
           const setBtn = el('button', { className: 'srw-btn srw-btn-sm srw-btn-primary', textContent: 'Set studio' });
           setBtn.addEventListener('click', (e) => window.SRW.confirmInline(e.currentTarget,
@@ -3500,7 +3946,7 @@
         }
         const done = (r) => {
           window.SRW.notify('Movies', `Group “${r.name}” created with ${r.scenes} scene(s)${(r.notes || []).length ? ` (${r.notes.join('; ')})` : ''}.`, 'success');
-          reviewViewer.replaceChildren(); reviewOpenId = null; loadReview();
+          closeReview(); loadReview();
         };
         const candidateRow = (c) => {
           const btn = el('button', { className: 'srw-btn srw-btn-sm srw-btn-primary', textContent: 'Create group from this movie' });
@@ -3534,7 +3980,7 @@
                 btn.disabled = false;
                 if (r.error) { window.SRW.notify('Movies', r.error, 'error'); return; }
                 window.SRW.notify('Movies', `Added to the Group “${r.name}”.`, 'success');
-                reviewViewer.replaceChildren(); reviewOpenId = null; loadReview();
+                closeReview(); loadReview();
               }));
             return el('div', { className: 'srw-cmp-id' }, [
               el('div', {}, [el('a', { href: `/groups/${g.id}`, target: '_blank', rel: 'noopener noreferrer', textContent: g.name }),
@@ -3542,15 +3988,21 @@
           })] : []);
         const results = el('div');
         const q = el('input', { type: 'text', value: info.title, style: 'width: 20rem', title: 'ThePornDB movie search text (pre-filled from the folder name)' });
-        const searchBtn = el('button', { className: 'srw-btn srw-btn-sm', textContent: 'Search ThePornDB movies',
+        const searchBtn = window.SRW.iconButton('button', ['faMagnifyingGlass', 'faFilm'], 'Search ThePornDB movies', { className: 'srw-btn srw-btn-sm',
           onClick: async () => {
             searchBtn.disabled = true; results.textContent = 'asking ThePornDB…';
             const r = await window.SRW.runOp('compare_movie_search', { scene_id: s.id, q: q.value });
             searchBtn.disabled = false;
             if (r.error) { results.textContent = `error: ${r.error}`; return; }
-            if (!(r.results || []).length) { results.textContent = `ThePornDB has no movie for “${r.query}”.`; return; }
-            results.replaceChildren(...r.results.map(candidateRow));
+            window.SRW.keepResult(`moviesearch:${s.id}`, { r, q: q.value });
+            showMovieResults(r);
           } });
+        const showMovieResults = (r) => {
+          if (!(r.results || []).length) { results.textContent = `ThePornDB has no movie for “${r.query}”.`; return; }
+          results.replaceChildren(...r.results.map(candidateRow));
+        };
+        const lastMovies = window.SRW.recallResult(`moviesearch:${s.id}`);
+        if (lastMovies && lastMovies.value) { q.value = lastMovies.value.q || q.value; showMovieResults(lastMovies.value.r); results.prepend(window.SRW.keptNote(lastMovies.at)); }
         const nameInput = el('input', { type: 'text', value: info.title, style: 'width: 20rem', title: 'Name of the Group' });
         const manualBtn = el('button', { className: 'srw-btn srw-btn-sm', textContent: 'Create group from the folder name' });
         manualBtn.addEventListener('click', (e) => window.SRW.confirmInline(e.currentTarget,
@@ -3577,11 +4029,11 @@
       const videos = [];
       // p.id 0 = "no pair": the backend then checks the review tag instead of pair membership.
       // After an action the list is read again: a scene that was identified has lost its tag and is gone (v0.171.0); otherwise it stays open.
-      const col = buildColumn({ id: 0, refresh: async () => { await loadReview(); if (allReview.some((x) => x.id === s.id)) openReview(s.id); else { reviewViewer.replaceChildren(); reviewOpenId = null; } } }, 'review', s, videos);
+      const col = buildColumn({ id: 0, refresh: async () => { await loadReview(); if (allReview.some((x) => x.id === s.id)) openReview(s.id); else { closeReview(); } } }, 'review', s, videos);
       const each = (fn) => videos.forEach((pl) => { try { fn(pl); } catch (e) { /* not ready yet */ } });
       const bar = el('div', { className: 'srw-toolbar srw-cmp-bar' }, [
-        el('button', { className: 'srw-btn srw-btn-sm', textContent: '▶', onClick: () => each((pl) => { const pr = pl.video.play(); if (pr && pr.catch) pr.catch(() => {}); }) }),
-        el('button', { className: 'srw-btn srw-btn-sm', textContent: '⏸', onClick: () => each((pl) => pl.video.pause()) }),
+        window.SRW.iconButton('button', 'faPlay', 'Play', { className: 'srw-btn srw-btn-sm', onClick: () => each((pl) => { const pr = pl.video.play(); if (pr && pr.catch) pr.catch(() => {}); }) }),
+        window.SRW.iconButton('button', 'faPause', 'Pause', { className: 'srw-btn srw-btn-sm', onClick: () => each((pl) => pl.video.pause()) }),
         el('button', { className: 'srw-btn srw-btn-sm', textContent: '−10 s', onClick: () => each((pl) => pl.seek(pl.time() - 10)) }),
         el('button', { className: 'srw-btn srw-btn-sm', textContent: '+10 s', onClick: () => each((pl) => pl.seek(pl.time() + 10)) }),
         el('button', { className: 'srw-btn srw-btn-sm', textContent: '+60 s', onClick: () => each((pl) => pl.seek(pl.time() + 60)) }),
@@ -3591,12 +4043,12 @@
         const r = await window.SRW.runOp('compare_review_status', { scene_id: s.id, status: later ? 'later' : 'open' });
         if (r.error) { window.SRW.notify('Review', r.error, 'error'); return; }
         window.SRW.notify('Review', later ? `Scene #${s.id} put on “Later” (still tagged in Stash).` : `Scene #${s.id} is open again.`, 'success');
-        reviewViewer.replaceChildren(); reviewOpenId = null; loadReview();
+        closeReview(); loadReview();
       };
-      const laterBtn = el('button', { className: 'srw-btn', textContent: 'Later (unresolved)',
-        title: 'Looked at, cannot be matched now: stays tagged in Stash, leaves the Open list', onClick: () => setLater(true) });
+      const laterBtn = window.SRW.iconButton('button', 'faClock', 'Later (unresolved)', {
+        title: 'Later (unresolved): looked at, cannot be matched now -- stays tagged in Stash, leaves the Open list', onClick: () => setLater(true) });
       const reopenBtn = el('button', { className: 'srw-btn', textContent: 'Reopen', onClick: () => setLater(false) });
-      const parkBtn = el('button', { className: 'srw-btn', textContent: 'Move to _UNMATCHED',
+      const parkBtn = window.SRW.iconButton('button', ['faFolderOpen', 'faQuestion'], 'Move to _UNMATCHED', {
         title: 'Parks the file in scenes/_UNMATCHED (old sub folders kept) and takes the review tag off, so it leaves this list' });
       parkBtn.hidden = (s.files || []).some((f) => (f.path || '').includes('/_UNMATCHED/')); // already parked (in any _UNMATCHED folder)
       parkBtn.addEventListener('click', (e) => window.SRW.confirmInline(e.currentTarget,
@@ -3607,7 +4059,7 @@
           parkBtn.disabled = false;
           if (r.error) { window.SRW.notify('Review', r.error, 'error'); return; }
           window.SRW.notify('Review', `Moved to ${r.path}`, 'success');
-          reviewViewer.replaceChildren(); reviewOpenId = null; loadReview();
+          closeReview(); loadReview();
         }));
       const doneBtn = el('button', { className: 'srw-btn srw-btn-primary', textContent: 'Review done' });
       doneBtn.addEventListener('click', (e) => window.SRW.confirmInline(e.currentTarget,
@@ -3616,15 +4068,15 @@
           const r = await window.SRW.runOp('compare_review_done', { scene_id: s.id });
           if (r.error) { window.SRW.notify('Review', r.error, 'error'); return; }
           window.SRW.notify('Review', `Scene #${s.id} removed from the review list.`, 'success');
-          reviewViewer.replaceChildren(); reviewOpenId = null; loadReview();
+          closeReview(); loadReview();
         }));
       // (replaceChildren turns a null into the text "null": the film panel is left out of the list for single scenes)
       reviewViewer.replaceChildren(...[
-        el('h4', { textContent: s.title || `Scene ${s.id}` }), bar,
-        el('div', { className: 'srw-cmp-grid' }, [col]),
+        bar,
+        el('div', { className: 'srw-cmp-grid srw-cmp-grid-one' }, [col]),
         (allReview.find((x) => x.id === s.id) || {}).kind === 'movie' ? buildMoviePanel(s) : null,
         el('div', { className: 'srw-toolbar' }, [doneBtn, (allReview.find((x) => x.id === s.id) || {}).status === 'later' ? reopenBtn : laterBtn, parkBtn,
-          el('button', { className: 'srw-btn', textContent: 'Close', onClick: () => { reviewViewer.replaceChildren(); reviewOpenId = null; } })]),
+          el('button', { className: 'srw-btn', textContent: 'Close', onClick: () => { closeReview(); } })]),
       ].filter(Boolean));
     }
 
@@ -3639,7 +4091,6 @@
       REVIEW_TABS.length > 1 ? el('div', { className: 'srw-subtabs' }, reviewTabBtns.map((t) => t.b)) : null,
       el('div', { className: 'srw-toolbar' }, [el('span', { className: 'srw-view-toggle' }, reviewFilterBtns.map((f) => f.b)), el('button', { className: 'srw-btn', textContent: 'Refresh', onClick: () => loadReview() }), closeIdentifiedBtn, reviewStatus]),
       reviewList,
-      reviewViewer,
     ]);
     // Only the part that is shown is loaded (each area is its own page now).
     if (part === 'review') {

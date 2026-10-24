@@ -376,7 +376,7 @@
         el('span', { className: 'srw-film-class srw-film-class-likely', textContent: 'Scene' }), // like the Movie pill
       ].filter(Boolean);
       if (openScene) { // the scene in Stash: the link is set once the page's local scene ids are known (resolveOpenScenes)
-        li.push(el('a', { className: 'srw-btn srw-open-scene', textContent: 'Open scene', target: '_blank', rel: 'noopener noreferrer', hidden: true,
+        li.push(window.SRW.iconButton('a', 'faPlay', 'Open scene', { className: 'srw-btn srw-open-scene', target: '_blank', rel: 'noopener noreferrer', hidden: true,
           'data-provider': r.provider, 'data-scene': r.scene_stashdb_id, title: 'Open this scene in Stash (new tab)' }));
       }
       // The scene's release date comes first in the row (arrangeReleaseRow); this timestamp says what happened when.

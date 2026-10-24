@@ -426,13 +426,18 @@ def main():
     elif mode == "vr_check_run":
         qs = f"?mode={args.get('mode', 'quick')}" + ("&force=true" if args.get("force") else "")
         result = _post(sidecar_url, f"/maintenance/vr-check/run{qs}", {}, timeout=30)
+    elif mode == "upgrades_duration_sync":
+        result = _post(sidecar_url, "/maintenance/upgrades/duration/sync",
+                       {k: args.get(k) for k in ("threshold", "run_check", "force") if args.get(k) is not None}, timeout=30)
+    elif mode == "upgrades_duration_status":
+        result = _get(sidecar_url, "/maintenance/upgrades/duration/status", timeout=15)
     elif mode == "duration_check_run":
         result = _post(sidecar_url, "/maintenance/duration-check/run" + ("?force=true" if args.get("force") else ""), {}, timeout=30)
     elif mode == "duration_check_status":
         result = _get(sidecar_url, "/maintenance/duration-check/status", timeout=15)
     elif mode == "duration_check_findings":
         result = _get(sidecar_url, f"/maintenance/duration-check/findings?threshold={float(args.get('threshold') or 5)}"
-                                   f"&direction={quote(str(args.get('direction') or ''))}&ignored={'true' if args.get('ignored') else 'false'}", timeout=60)
+                                   f"&direction={quote(str(args.get('direction') or ''))}&ignored={'true' if args.get('ignored') else 'false'}&groups={'only' if args.get('groups') == 'only' else 'exclude'}", timeout=60)
     elif mode == "duration_check_ignore":
         result = _post(sidecar_url, f"/maintenance/duration-check/{quote(str(args.get('scene_id')), safe='')}/ignore"
                                     + ("?restore=true" if args.get("restore") else ""), {}, timeout=15)
@@ -449,6 +454,8 @@ def main():
         result = _get(sidecar_url, f"/maintenance/vr-check/findings?status={args.get('status', 'pending')}", timeout=30)
     elif mode == "maintenance_counts":
         result = _get(sidecar_url, "/maintenance/compare/counts", timeout=30)
+    elif mode == "maintenance_counts_slow":
+        result = _get(sidecar_url, "/maintenance/slow-counts", timeout=120)
     elif mode == "compare_pairs":
         # Maintenance > Compare scenes (2026-09-30), see api/scene_compare.py.
         result = _get(sidecar_url, f"/maintenance/compare/pairs?status={quote(str(args.get('status') or ''))}", timeout=120)
@@ -557,11 +564,17 @@ def main():
         qs = "?refresh=true" if args.get("refresh") else ""
         result = _get(sidecar_url, f"/maintenance/organize/studios{qs}", timeout=300)
     elif mode == "organize_plan":
-        result = _get(sidecar_url, f"/maintenance/organize/plan?studio_id={quote(str(args.get('studio_id')))}",
-                      timeout=900)
+        result = _get(sidecar_url, f"/maintenance/organize/plan?studio_id={quote(str(args.get('studio_id')))}"
+                                   f"{'&fresh=true' if args.get('fresh') else ''}", timeout=900)
     elif mode == "organize_apply":
         result = _post(sidecar_url, "/maintenance/organize/apply",
                        {k: args.get(k) for k in ("studio_id", "file_ids", "kinds", "ignore_renamers")}, timeout=3600)
+    elif mode == "organize_recount_start":
+        result = _post(sidecar_url, "/maintenance/organize/studios/recount", {}, timeout=30)
+    elif mode == "organize_recount_status":
+        result = _get(sidecar_url, "/maintenance/organize/studios/recount-status", timeout=15)
+    elif mode == "organize_check_file":
+        result = _post(sidecar_url, "/maintenance/organize/check-file", {"scene_id": args.get("scene_id")}, timeout=120)
     elif mode == "organize_movies_plan":
         result = _get(sidecar_url, "/maintenance/organize/movies/plan", timeout=900)
     elif mode == "organize_movies_apply":
@@ -589,7 +602,7 @@ def main():
     elif mode == "import_finish":
         result = _post(sidecar_url, "/maintenance/import/finish", {"root": args.get("root"), "confirm": True}, timeout=600)
     elif mode == "movies_no_group":
-        result = _get(sidecar_url, "/maintenance/movies/no-group", timeout=300)
+        result = _get(sidecar_url, "/maintenance/movies/no-group" + ("?refresh=true" if args.get("refresh") else ""), timeout=300)
     elif mode == "movies_tpdb_search":
         result = _post(sidecar_url, "/maintenance/movies/tpdb-search", {"q": args.get("q"), "minutes": args.get("minutes")}, timeout=60)
     elif mode == "movies_link_tpdb":
@@ -598,7 +611,7 @@ def main():
         result = _post(sidecar_url, "/maintenance/movies/create-group",
                        {k: args.get(k) for k in ("title", "scene_ids", "group_id", "scrape_url")}, timeout=300)
     elif mode == "movies_compare_groups":
-        result = _get(sidecar_url, "/maintenance/movies/compare-groups", timeout=300)
+        result = _get(sidecar_url, "/maintenance/movies/compare-groups" + ("?refresh=true" if args.get("refresh") else ""), timeout=300)
     elif mode == "movies_compare_groups_ignore":
         result = _post(sidecar_url, "/maintenance/movies/compare-groups/ignore",
                        {"folder_key": args.get("folder_key"), "group_id": args.get("group_id"), "undo": bool(args.get("undo"))}, timeout=30)
@@ -608,8 +621,19 @@ def main():
         result = _get(sidecar_url, f"/maintenance/movies/group-search?source={quote(args.get('source', ''))}&q={quote(args.get('q', ''))}", timeout=60)
     elif mode == "movies_performers_empty":
         result = _get(sidecar_url, "/maintenance/movies/performers-empty", timeout=300)
+    elif mode == "movies_performer_unwatch":
+        result = _post(sidecar_url, f"/maintenance/movies/performers/{quote(str(args.get('performer_id')))}/unwatch", {}, timeout=60)
+    elif mode == "movies_performer_delete":
+        result = _post(sidecar_url, f"/maintenance/movies/performers/{quote(str(args.get('performer_id')))}/delete", {}, timeout=60)
+    elif mode == "movies_group_namesakes":
+        result = _get(sidecar_url, "/maintenance/movies/group-namesakes" + ("?refresh=true" if args.get("refresh") else ""), timeout=300)
+    elif mode == "movies_group_namesakes_dismiss":
+        result = _post(sidecar_url, "/maintenance/movies/group-namesakes/dismiss",
+                       {"group_id": args.get("group_id"), "namesake_ids": args.get("namesake_ids") or [], "undo": bool(args.get("undo"))}, timeout=30)
+    elif mode == "movies_group_delete":
+        result = _post(sidecar_url, f"/maintenance/movies/groups/{quote(str(args.get('group_id')), safe='')}/delete", {}, timeout=60)
     elif mode == "movies_groups_empty":
-        result = _get(sidecar_url, "/maintenance/movies/groups-empty", timeout=300)
+        result = _get(sidecar_url, "/maintenance/movies/groups-empty" + ("?refresh=true" if args.get("refresh") else ""), timeout=300)
     elif mode == "import_suggest":
         result = _post(sidecar_url, "/maintenance/import/suggest",
                        {k: args.get(k) for k in ("root", "scene_ids")}, timeout=900)
@@ -635,7 +659,7 @@ def main():
         result = _post(sidecar_url, f"/maintenance/vr-check/findings/{args.get('finding_id')}/verdict-restore",
                        {"verdict": args.get("verdict"), "manual": bool(args.get("manual")), "finding_status": args.get("finding_status") or "pending"}, timeout=15)
     elif mode == "compare_unidentified":
-        result = _get(sidecar_url, "/maintenance/compare/unidentified", timeout=120)
+        result = _get(sidecar_url, "/maintenance/compare/unidentified" + ("?refresh=true" if args.get("refresh") else ""), timeout=120)
     elif mode == "compare_unidentified_check":
         result = _post(sidecar_url, "/maintenance/compare/unidentified/check", {"scene_ids": args.get("scene_ids") or []}, timeout=300)
     elif mode == "compare_unidentified_apply":
@@ -666,6 +690,9 @@ def main():
         result = _post(sidecar_url, f"/maintenance/vr-check/findings/{args.get('finding_id')}/fix", {}, timeout=120)
     elif mode == "maintenance_check_recheck":
         result = _post(sidecar_url, f"/maintenance/library-check/findings/{args.get('finding_id')}/recheck", {}, timeout=120)
+    elif mode == "maintenance_check_confirm":
+        result = _post(sidecar_url, f"/maintenance/library-check/findings/{args.get('finding_id')}/confirm",
+                       {"submit": bool(args.get("submit"))}, timeout=180)
     elif mode == "maintenance_check_dismiss":
         result = _post(sidecar_url, f"/maintenance/library-check/findings/{args.get('finding_id')}/dismiss", {}, timeout=15)
     elif mode == "file_import_run":
@@ -699,6 +726,14 @@ def main():
     elif mode == "search_favorite_studio":
         path = f"/search/{args.get('provider')}/studios/{quote(args.get('stashdb_id'), safe='')}/favorite"
         result = _post(sidecar_url, path, {"name": args.get("name", "")}, timeout=20)
+    elif mode == "search_entity_state":
+        # The Search page's cards use the browser userscript's own endpoints (v0.240.20): is it in Stash, is it on the watchlist.
+        kind = "studio" if args.get("entity_type") == "studio" else "performer"
+        result = _get(sidecar_url, f"/userscript/entity-state?provider={quote(str(args.get('provider')))}&kind={kind}&id={quote(str(args.get('stashdb_id')), safe='')}", timeout=30)
+    elif mode == "search_entity_watch":
+        kind = "studio" if args.get("entity_type") == "studio" else "performer"
+        result = _post(sidecar_url, "/userscript/watch", {"provider": args.get("provider"), "kind": kind, "id": args.get("stashdb_id"),
+                                                          "name": args.get("name", ""), "watched": bool(args.get("watched"))}, timeout=60)
     elif mode == "search_handoff_scene":
         # A real Whisparr add-movie + indexer-search round trip, same
         # generous timeout class as releases_handoff.

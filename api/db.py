@@ -137,7 +137,7 @@ CREATE TABLE IF NOT EXISTS upgrade_candidate (
 -- vr_check.py) -- one row per checked file: analysis cache (size +
 -- mod_time decide whether it needs re-checking) and finding at once.
 -- finding_status: 'none' (stereo / nothing to show), 'pending',
--- 'dismissed' (user says it's fine), 'fixed' (Fix wrong download ran).
+-- 'dismissed' (user says it's fine), 'fixed' (Fix wrong download ran), 'handled' (our own flat import: blocklisted + upgrade candidate at once).
 CREATE TABLE IF NOT EXISTS vr_file_check (
     scene_id           TEXT NOT NULL,
     file_path          TEXT NOT NULL,
@@ -530,6 +530,7 @@ class Database:
         self._migrate_film_want_whisparr_file(conn)
         self._migrate_film_want_dups(conn)
         self._migrate_duration_check(conn)
+        self._migrate_organize_plan(conn)
         self._migrate_group_match_ignore(conn)
         self._migrate_downloaded_release(conn)
         self._migrate_studio_dismiss_streak(conn)
@@ -832,6 +833,20 @@ class Database:
         if "upgrade_of" not in cols:
             conn.execute("ALTER TABLE release ADD COLUMN upgrade_of TEXT")
 
+    def _migrate_organize_plan(self, conn):
+        """v0.240.27: the plan of every studio of Organize library (what would be renamed / moved, what waits for a check) is kept here until a rename /
+        move or a reload changes it, so opening it again reads this table instead of asking StashDB. organize_state: 'recount_at' = a Recount has run."""
+        conn.execute("""CREATE TABLE IF NOT EXISTS organize_plan (
+            studio_id   TEXT PRIMARY KEY,
+            studio      TEXT NOT NULL DEFAULT '',
+            plan_json   TEXT NOT NULL,
+            checked_at  TEXT NOT NULL DEFAULT (datetime('now'))
+        )""")
+        conn.execute("CREATE TABLE IF NOT EXISTS organize_state (key TEXT PRIMARY KEY, value TEXT)")
+        # v0.241.6: the list of Maintenance > Unidentified scenes (scenes without a provider id) is kept until a change or a reload makes it new.
+        conn.execute("CREATE TABLE IF NOT EXISTS unidentified_scene (scene_id TEXT PRIMARY KEY, payload TEXT NOT NULL)")
+        conn.execute("CREATE TABLE IF NOT EXISTS maintenance_state (key TEXT PRIMARY KEY, value TEXT)")
+
     def _migrate_duration_check(self, conn):
         """v0.209.0: the "Duration mismatch" check (duration_check.py). One row per local scene: the primary file's length against the
         length the provider (StashDB / ThePornDB) has for the scene, plus the two new upgrade_candidate columns the re-add reasons use."""
@@ -847,6 +862,9 @@ class Database:
             status            TEXT NOT NULL DEFAULT 'checked',
             checked_at        TEXT NOT NULL DEFAULT (datetime('now'))
         )""")
+        dcols = {r["name"] for r in conn.execute("PRAGMA table_info(duration_check)")}
+        if "in_group" not in dcols:  # v0.240.0: a scene that belongs to a movie group is checked on its own page (Movies)
+            conn.execute("ALTER TABLE duration_check ADD COLUMN in_group INTEGER NOT NULL DEFAULT 0")
         cols = {r["name"] for r in conn.execute("PRAGMA table_info(upgrade_candidate)")}
         if "cur_duration" not in cols:
             conn.execute("ALTER TABLE upgrade_candidate ADD COLUMN cur_duration REAL")

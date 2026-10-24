@@ -705,6 +705,14 @@ class StashClient:
         results = data["findStudios"]["studios"]
         return results[0] if results else None
 
+    def find_studio_by_name(self, name):
+        """A local studio with exactly this name (Stash allows one studio per name), with its provider ids, or None."""
+        data = self._graphql(
+            "query($n: String!) { findStudios(studio_filter: {name: {value: $n, modifier: EQUALS}}) "
+            "{ studios { id name favorite tags { id } stash_ids { endpoint stash_id } } } }", {"n": name})
+        results = data["findStudios"]["studios"]
+        return results[0] if results else None
+
     def create_or_favorite_performer(self, stashdb_id, name, endpoint, watch_tag_id=None):
         """Backs the Search page's "Favorite" action for a Performer
         this Stash instance may or may not already know about --
@@ -740,6 +748,25 @@ class StashClient:
                     {"id": existing["id"]},
                 )
             return {"id": existing["id"], "name": existing["name"], "created": False}
+        if entity_type == "studio" and name:
+            # Stash allows ONE studio per name: creating a second one with the same name fails (HTTP 500 on the Search page before v0.240.18).
+            # A studio of that name without this provider id is the same studio -- the id is added to it and it is watched.
+            same = self.find_studio_by_name(name)
+            if same:
+                mine = [s for s in same.get("stash_ids") or [] if s["endpoint"] == endpoint]
+                if mine and mine[0]["stash_id"] != stashdb_id:
+                    raise ValueError(f"A studio named \"{name}\" already exists in Stash with another id at this provider "
+                                     f"({mine[0]['stash_id'][:8]}…). Fix or remove that one first.")
+                if not mine:
+                    keep = [{"endpoint": s["endpoint"], "stash_id": s["stash_id"]} for s in same.get("stash_ids") or []]
+                    self._graphql("mutation($i: StudioUpdateInput!) { studioUpdate(input: $i) { id } }",
+                                  {"i": {"id": same["id"], "stash_ids": keep + [{"endpoint": endpoint, "stash_id": stashdb_id}]}})
+                if watch_tag_id:
+                    if str(watch_tag_id) not in {t["id"] for t in same.get("tags") or []}:
+                        self.update_entity_tags("studio", [same["id"]], [watch_tag_id], "ADD")
+                elif not same["favorite"]:
+                    self._graphql("mutation($id: ID!) { studioUpdate(input: {id: $id, favorite: true}) { id } }", {"id": same["id"]})
+                return {"id": same["id"], "name": same["name"], "created": False, "linked": not mine}
         create_input = {"name": name, "stash_ids": [{"endpoint": endpoint, "stash_id": stashdb_id}]}
         if watch_tag_id:
             create_input["tag_ids"] = [str(watch_tag_id)]

@@ -171,8 +171,8 @@ def refresh_candidates(db, stash_client, get_setting, cutoff_resolution=None):
     library's current files. Returns counts per reason."""
     min_mbps = _num(get_setting, "vr_upgrade_min_mbps", 8)
     with db.connect() as conn:
-        verdicts = {(r["scene_id"], r["file_path"]): (r["verdict"], r["finding_status"])
-                    for r in conn.execute("SELECT scene_id, file_path, verdict, finding_status FROM vr_file_check")}
+        verdicts = {(r["scene_id"], r["file_path"]): (r["verdict"], r["finding_status"], bool(r["verdict_manual"]))
+                    for r in conn.execute("SELECT scene_id, file_path, verdict, finding_status, verdict_manual FROM vr_file_check")}
     found = set()
     counts = {r: 0 for r in REASONS}
     tag_id = stash_client.find_tag_id(vr_check.VR_TAG_NAME)
@@ -187,9 +187,11 @@ def refresh_candidates(db, stash_client, get_setting, cutoff_resolution=None):
         for scene in vr_scenes:
             provider, pid = _provider_ref(scene, stash_client)
             for file in scene.get("files") or []:
-                verdict, finding = verdicts.get((scene["id"], file["path"]), (None, None))
+                verdict, finding, manual = verdicts.get((scene["id"], file["path"]), (None, None, False))
                 reason = None
-                if verdict == "mono" and finding != "dismissed":
+                # A file the automatic check judged 2D waits on the VR page for the user's "2D" (v0.239.0): the automatic judgement is only a
+                # suspicion (a tagged VR scene, a flat-looking file); once the user confirms it, the file is handled here.
+                if verdict == "mono" and finding != "dismissed" and (manual or finding == "handled"):
                     reason = "vr_2d"
                 elif verdict == "vr_mono":
                     reason = "vr_mono"
@@ -607,6 +609,12 @@ def flag_2d_import(db, stash_client, scene_id, blocklist, only_path=None):
         scene = {"id": scene_id, "title": r["scene_title"]}
         file = {"path": r["file_path"], "width": r["width"], "height": r["height"], "size": r["file_size"]}
         _upsert(db, scene, file, "vr_2d" if r["verdict"] == "mono" else "vr_mono", r["provider"], r["provider_scene_id"])
+        if r["verdict"] == "mono":
+            # Our own download turned out flat: the decision (blocklist + upgrade) is made here, so it does not wait on the VR page for the user's
+            # "2D" and the next candidate refresh keeps it (v0.239.0).
+            with db.connect() as conn:
+                conn.execute("UPDATE vr_file_check SET finding_status = 'handled' WHERE scene_id = ? AND file_path = ? AND finding_status != 'dismissed'",
+                             (str(scene_id), r["file_path"]))
         flagged.append({"file": r["file_path"], "blocklisted": title})
     logger.warning("VR check: imported scene %s is not stereo VR -- %s", scene_id, flagged)
     history.add("warning", "history", "vr_check", f"Imported file is not stereo VR ({flagged}) -- blocklisted",

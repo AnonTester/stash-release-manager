@@ -17,6 +17,7 @@ pollable independently the whole time."""
 import renamer_check
 import logging
 import threading
+import time
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -31,6 +32,7 @@ import upgrades
 import vr_check
 import duration_check
 import group_compare
+import kept_lists
 
 router = APIRouter(prefix="/maintenance", tags=["maintenance"])
 
@@ -124,6 +126,58 @@ def upgrades_library_check_status():
             "vr_min_mbps": get_setting_value(_db, "vr_upgrade_min_mbps", "8"), **duration_check.summary(_db)}
 
 
+# --- "Wrong length" candidates (v0.241.0): the Duration mismatch page moved into Upgrade wanted ---
+
+_dur_sync = {"running": False, "phase": "", "done": 0, "total": 0, "result": None, "error": None, "finished_at": None}
+
+
+@router.post("/upgrades/duration/sync")
+def upgrades_duration_sync(body: dict | None = None):
+    """Runs in the background: optionally the duration check itself (`run_check`: the providers are asked for the lengths of new scenes;
+    `force` = every scene again), then the 'wrong length' candidates are made to match the stored comparison at `threshold` percent (saved)."""
+    import threading
+    import time
+    import upgrade_library_check
+    body = body or {}
+    if _dur_sync["running"]:
+        return {"started": False, "running": True}
+    if body.get("threshold") is not None:
+        try:
+            upgrade_library_check.set_duration_threshold(_db, body["threshold"])
+        except (TypeError, ValueError):
+            raise HTTPException(400, "threshold must be a number (percent)")
+    run_check, force = bool(body.get("run_check")), bool(body.get("force"))
+
+    def work():
+        _dur_sync.update(running=True, phase="", done=0, total=0, result=None, error=None)
+        try:
+            if run_check:
+                _dur_sync["phase"] = "asking the providers for the lengths"
+                res = _duration_job.run(force)
+                if res.get("skipped"):  # one is already running: join it
+                    while _duration_job.status.get("running"):
+                        time.sleep(3)
+                elif res.get("error"):
+                    raise RuntimeError(f"the duration check failed: {res['error']}")
+            _dur_sync["phase"] = "updating the list"
+            _dur_sync["result"] = upgrade_library_check.sync_duration_candidates(
+                _db, _get_stash_client(), upgrade_library_check.duration_threshold(_db), _dur_sync)
+        except Exception as e:  # noqa: BLE001
+            logger.exception("duration candidates failed")
+            _dur_sync["error"] = f"{type(e).__name__}: {e}"
+        finally:
+            _dur_sync.update(running=False, phase="", finished_at=time.time())
+
+    threading.Thread(target=work, daemon=True, name="duration-candidates").start()
+    return {"started": True}
+
+
+@router.get("/upgrades/duration/status")
+def upgrades_duration_status():
+    import upgrade_library_check
+    return {"sync": dict(_dur_sync), "job": _duration_job.status, "threshold": upgrade_library_check.duration_threshold(_db), **duration_check.summary(_db)}
+
+
 class UpgradeBulkBody(BaseModel):
     ids: list[int]
     action: str  # dismiss | restore | approve | wishlist | unwishlist | profile | search
@@ -215,10 +269,12 @@ def duration_check_status():
 
 
 @router.get("/duration-check/findings")
-def duration_check_findings(threshold: float = 5.0, direction: str = "", ignored: bool = False):
+def duration_check_findings(threshold: float = 5.0, direction: str = "", ignored: bool = False, groups: str = "exclude"):
     if direction not in ("", "shorter", "longer"):
         raise HTTPException(400, "direction must be '', 'shorter' or 'longer'")
-    rows = duration_check.list_findings(_db, threshold, direction, include_ignored=ignored)
+    if groups not in ("exclude", "only"):
+        raise HTTPException(400, "groups must be 'exclude' or 'only'")
+    rows = duration_check.list_findings(_db, threshold, direction, include_ignored=ignored, groups=groups)
     # Which of them are already on the way (an upgrade candidate of this file is wanted / grabbed).
     with _db.connect() as conn:
         busy = {(r["scene_id"]): r["status"] for r in conn.execute(
@@ -256,19 +312,57 @@ def sanity(renamers: bool = False):
 
 @router.get("/organize/studios")
 def organize_studios(refresh: bool = False):
-    return {"studios": _organizer().overview(refresh=refresh)}
+    import library_organize
+    data = _organizer().overview(refresh=refresh)
+    at = library_organize.stored_checked_at(_db)
+    return {"studios": data, "verified": at is not None, "at": at}
+
+
+@router.post("/organize/studios/recount")
+def organize_recount():
+    """Starts the background Recount: every studio with local candidates gets its real plan; only studios with something to do stay (v0.240.17)."""
+    return _organizer().start_recount()
+
+
+@router.get("/organize/studios/recount-status")
+def organize_recount_status():
+    return _organizer().recount_status()
 
 
 @router.get("/organize/plan")
-def organize_plan(studio_id: str):
-    return _organizer().plan(studio_id)
+def organize_plan(studio_id: str, fresh: bool = False):
+    """The studio's stored plan (instant), or a new one with fresh=true / when none is stored (v0.240.27)."""
+    return _organizer().plan_for_studio(studio_id, fresh=fresh)
 
 
 @router.post("/organize/apply")
 def organize_apply(body: dict):
-    kinds = [k for k in (body.get("kinds") or ["rename", "move"]) if k in ("rename", "move")]
+    kinds = [k for k in (body.get("kinds") or ["rename", "move"]) if k in ("rename", "move", "check")]
     return _organizer().apply(body.get("studio_id"), body.get("file_ids") or [], kinds=kinds, force=bool(body.get("force")),
                               ignore_renamers=bool(body.get("ignore_renamers")))
+
+
+@router.post("/organize/check-file")
+def organize_check_file(body: dict):
+    """"Check" on a plan row that waits for a fingerprint check (v0.240.15): asks StashDB what the scene's file is, like the Fingerprint check page does,
+    and only reports (nothing is written)."""
+    scene_id = str(body.get("scene_id") or "")
+    stash = _get_stash_client()
+    scene = stash.scene_for_fingerprint_check(scene_id) if scene_id else None
+    if scene is None:
+        raise HTTPException(status_code=404, detail="Stash has no scene with this id any more")
+    matches, mismatches, ambiguous, unverifiable = library_check.find_library_mismatches(
+        _get_stashdb_client(), [scene], stash.stashdb_endpoint, delay=0)
+    if matches:
+        return {"result": "match", "message": "StashDB has this file's fingerprints on the scene it is tagged with -- the tag is right. Press \"Check again\" to plan it."}
+    if mismatches:
+        names = ", ".join(c.get("title") or c["id"] for c in mismatches[0]["found_as"])
+        return {"result": "mismatch", "message": f"StashDB identifies the file as another scene: {names}. The tag looks wrong -- fix it on the Fingerprint check page."}
+    if ambiguous:
+        return {"result": "ambiguous", "message": f"StashDB lists {len(ambiguous[0]['found_as'])} scenes for this file: "
+                + ", ".join(c.get("title") or c["id"] for c in ambiguous[0]["found_as"])}
+    reason = unverifiable[0]["reason"] if unverifiable else "unknown"
+    return {"result": "unverifiable", "message": f"StashDB cannot tell: {reason}."}
 
 
 @router.get("/organize/movies/plan")
@@ -358,15 +452,18 @@ def import_finish(body: dict):
 # --- Movies & groups lists (2026-09-29, library_movies.py) ---
 
 @router.get("/movies/no-group")
-def movies_no_group():
-    return {"folders": _movies().videos_without_group()}
+def movies_no_group(refresh: bool = False):
+    folders, at = kept_lists.get(_db, "movies_no_group", lambda: _movies().videos_without_group(), refresh)
+    return {"folders": folders, "kept_at": at}
 
 
 @router.post("/movies/create-group")
 def movies_create_group(body: dict):
     try:
-        return _movies().create_group(body.get("title"), body.get("scene_ids") or [], group_id=body.get("group_id"),
-                                      scrape_url=body.get("scrape_url"))
+        result = _movies().create_group(body.get("title"), body.get("scene_ids") or [], group_id=body.get("group_id"),
+                                        scrape_url=body.get("scrape_url"))
+        kept_lists.invalidate(_db, *kept_lists.MOVIE_LISTS)  # the video has a group now, a group has a scene
+        return result
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -407,10 +504,13 @@ def movies_link_tpdb(body: dict):
 
 
 @router.get("/movies/compare-groups")
-def movies_compare_groups():
-    """Film folders without a group next to the empty groups they may belong to (suggestions only, group_compare.py)."""
+def movies_compare_groups(refresh: bool = False):
+    """Film folders without a group next to the empty groups they may belong to (suggestions only, group_compare.py). The two lists it is made
+    from are the kept ones of Movies & groups (v0.241.7); the pairing itself is quick and always uses the current "Not this" choices."""
     m = _movies()
-    return group_compare.build(_db, m.videos_without_group(), m.groups_without_files())
+    folders, at1 = kept_lists.get(_db, "movies_no_group", lambda: m.videos_without_group(), refresh)
+    groups, at2 = kept_lists.get(_db, "movies_groups_empty", lambda: m.groups_without_files(), refresh)
+    return {**group_compare.build(_db, folders, groups), "kept_at": min(at1, at2)}
 
 
 @router.post("/movies/compare-groups/ignore")
@@ -445,9 +545,100 @@ def movies_performers_empty():
     return {"performers": _movies().performers_without_scenes()}
 
 
+@router.post("/movies/performers/{performer_id}/unwatch")
+def movies_performer_unwatch(performer_id: str):
+    """Takes a performer off the watchlist (the tag, or the Favorite flag, by Settings > watchlist source). The performer stays in Stash."""
+    import watchlist_source
+    try:
+        watchlist_source.set_watched(_db, _get_stash_client(), "performer", performer_id, False)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"{type(e).__name__}: {e}")
+    return {"ok": True}
+
+
+@router.post("/movies/performers/{performer_id}/delete")
+def movies_performer_delete(performer_id: str):
+    """Deletes a performer that has no scene from Stash (re-checked here; the next watchlist sync drops it from the watchlist)."""
+    try:
+        result = _movies().delete_empty_performer(performer_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"{type(e).__name__}: {e}")
+    history.event("info", "maintenance", f"Performer \"{result['name']}\" (no scenes) deleted from Stash", details={"performer": performer_id})
+    return result
+
+
+_slow_counts = {"at": 0.0, "data": {}}
+
+
+@router.get("/slow-counts")
+def slow_counts():
+    """Badge numbers of the Maintenance side menu that need Stash (v0.239.1): Performers without scenes (the ones NOT on the watchlist), Unidentified
+    scenes, Compare groups (open suggestions), Movies & groups (videos without a group). Kept for a minute; a number that cannot be read is left out (no badge)."""
+    if time.time() - _slow_counts["at"] < 60:
+        return _slow_counts["data"]
+    import routers.compare as compare_router
+    out = {}
+    for key, count in (
+        ("performers", lambda: len([p for p in _movies().performers_without_scenes() if not p["on_watchlist"]])),
+        ("unidentified", lambda: len(compare_router._compare().unidentified_list()["scenes"])),
+        # Movies & groups: the videos in the movie folders that are in no group yet (v0.241.8), from the kept list of that page. (Compare groups is
+        # a tab of that page since v0.242.0; its number is in the tab.)
+        ("movies", lambda: len(kept_lists.get(_db, "movies_no_group", lambda: _movies().videos_without_group())[0])),
+    ):
+        try:
+            out[key] = count()
+        except Exception:
+            logger.info("slow badge count %s failed", key, exc_info=True)
+    _slow_counts.update(at=time.time(), data=out)
+    return out
+
+
+@router.get("/movies/group-namesakes")
+def movies_group_namesakes(refresh: bool = False):
+    """Empty groups that have a namesake with files (kept like the other lists of the Movies pages)."""
+    rows, at = kept_lists.get(_db, "movies_group_namesakes", lambda: _movies().group_namesakes(), refresh)
+    # What the user dismissed ("not the same film") is left out when the answer is given, so the kept list needs no change for it.
+    ignored = group_compare.ignored_pairs(_db)
+    shown, hidden = [], 0
+    for r in rows:
+        rest = [n for n in r["namesakes"] if (f"group:{r['group']['id']}", str(n["id"])) not in ignored]
+        if rest:
+            shown.append({**r, "namesakes": rest})
+        else:
+            hidden += 1
+    return {"namesakes": shown, "kept_at": at, "hidden": hidden}
+
+
+@router.post("/movies/group-namesakes/dismiss")
+def movies_group_namesakes_dismiss(body: dict):
+    """"Dismiss": the empty group is NOT the same film as these namesakes (undo=true takes it back)."""
+    gid, ids = body.get("group_id"), body.get("namesake_ids") or []
+    if not gid or not ids:
+        raise HTTPException(status_code=400, detail="group_id and namesake_ids are required")
+    for nid in ids:
+        group_compare.set_ignored(_db, f"group:{gid}", str(nid), not body.get("undo"))
+    return {"ok": True}
+
+
+@router.post("/movies/groups/{group_id}/delete")
+def movies_group_delete(group_id: str):
+    try:
+        result = _movies().delete_empty_group(group_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"Stash refused: {e}")
+    kept_lists.invalidate(_db, *kept_lists.MOVIE_LISTS, "movies_group_namesakes")
+    history.event("info", "movies", f"Empty group \"{result['name']}\" deleted from Stash (a namesake with files exists)", details={"group": group_id})
+    return result
+
+
 @router.get("/movies/groups-empty")
-def movies_groups_empty():
-    return {"groups": _movies().groups_without_files()}
+def movies_groups_empty(refresh: bool = False):
+    groups, at = kept_lists.get(_db, "movies_groups_empty", lambda: _movies().groups_without_files(), refresh)
+    return {"groups": groups, "kept_at": at}
 
 
 @router.post("/import/suggest")
@@ -749,6 +940,38 @@ def recheck_finding(finding_id: int):
     if result.get("error"):
         raise HTTPException(status_code=400, detail=result["error"])
     return result
+
+
+@router.post("/library-check/findings/{finding_id}/confirm")
+def confirm_finding(finding_id: int, body: dict | None = None):
+    """"File is correct" on a Needs-manual-review finding that StashDB has no fingerprint match for (v0.238.2): the user says the scene's StashDB id is right,
+    the finding closes (status 'applied', "Confirmed by you"). body {"submit": true} first submits the file's fingerprints to StashDB (public, not undoable;
+    only while the setting fingerprint_upload_enabled is on) -- a failing submission leaves the finding open."""
+    from routers.settings import get_setting_value
+    finding = library_check_repo.get_finding(_db, finding_id)
+    if not finding:
+        raise HTTPException(status_code=404, detail="finding not found")
+    if finding.get("status") != "pending" or finding.get("kind") != "unverifiable":
+        raise HTTPException(status_code=400, detail="only an open 'needs manual review' finding can be confirmed")
+    submitted = False
+    if (body or {}).get("submit"):
+        if get_setting_value(_db, "fingerprint_upload_enabled", "false") != "true":
+            raise HTTPException(status_code=400, detail="fingerprint upload is switched off (Settings > Schedule & Import)")
+        stash_client = _get_stash_client()
+        scene = stash_client.scene_for_fingerprint_check(finding["scene_id"])
+        if scene is None:
+            raise HTTPException(status_code=400, detail="Stash has no scene with this id any more")
+        if not any(sid["endpoint"] == stash_client.stashdb_endpoint for sid in scene["stash_ids"]):
+            raise HTTPException(status_code=400, detail="the scene carries no StashDB id, there is nothing to submit the fingerprints to")
+        try:
+            submitted = stash_client.submit_fingerprints(finding["scene_id"])
+        except Exception as e:
+            logging.getLogger(__name__).exception("fingerprint submission for scene %s failed", finding["scene_id"])
+            raise HTTPException(status_code=400, detail=f"submitting the fingerprints failed: {type(e).__name__}: {e}")
+    library_check_repo.set_finding_status(_db, finding_id, "applied", applied_title="Confirmed by you")
+    history.event("info", "maintenance", f"Fingerprint check: \"{finding.get('scene_title')}\" confirmed by the user"
+                  + (" and its fingerprints submitted to StashDB" if submitted else ""), details={"scene": finding.get("scene_id")})
+    return {"ok": True, "submitted": submitted}
 
 
 @router.post("/library-check/findings/{finding_id}/dismiss")

@@ -118,11 +118,14 @@ Maintenance is for your **existing** library. Nothing in it changes a file until
 
 ![Maintenance](docs/img/09-maintenance.jpg)
 
-1. **Check library**: *Library check* (files whose Stash tag does not match the file, by fingerprint), performers without scenes, unidentified scenes, VR files that are 2D or mono.
+1. **Check library**: *Fingerprint check* (files whose Stash tag does not match the file, by fingerprint; scenes StashDB cannot judge wait under *Needs manual review*), *Performers without scenes*, *Unidentified scenes* (scenes without a provider id), *VR: 2D / mono files* (the check's doubts about VR files; you say what a file is).
 2. **Resolve**: *Review: Identify Scene* (cases nobody could identify yet), *Compare scenes* (several versions of one scene).
-3. **Files & quality**: *Import folder* (files that were not downloaded here, e.g. an old collection), *Organize library* (rename / move files to your naming scheme, scenes and films), *Upgrade wanted*.
-4. **Organize library** also checks your existing films against the movie naming templates (*Check films*).
-5. **Movies & groups**: films and Stash groups.
+3. **Files & quality**: *Import folder* (files that were not downloaded here, e.g. an old collection), *Organize library* and *Upgrade wanted*.
+4. **Organize library** has two tabs: *Scenes by studio* (**Recount** checks every studio against StashDB once, in the background; **Details...** shows what would be renamed or moved, **Reload** checks it again; renaming returns at once and Stash scans in the background) and *Films vs. movie templates* (*Check films*).
+5. **Upgrade wanted** lists files that should be replaced by a better version: VR files that are 2D / mono / low bitrate, files below the quality profile's cutoff, and files whose **length differs** from the provider's (cut or partial rips; choose the reason *wrong length* for the threshold, shorter / longer and the button *Run duration check*). Candidates found by a check wait in *To check*; nothing is searched until you release it (*Queue for search* or *To wishlist*).
+6. **Movies & groups**: films and Stash groups, with the tabs *Videos without a group*, *Compare groups* (every group without a file: matched with a video, a duplicate of a group with files, or without a suggestion) and *Already in the library*; *Duration: movie scenes* is its own entry (scenes of films are not upgrade candidates).
+
+The numbers behind the entries of the menu are what waits for your decision. The results of a check are **kept** (in the sidecar or in your browser) until a change takes an entry out of them: opening a page again does not repeat the work, and the button **Reload** (circular arrow) asks again.
 
 Before the first rename or move, look at *Settings > Import & Naming > Safety check*: another plugin that renames files (renamerOnUpdate ...) must not be active at the same time as the **Organized hook**.
 

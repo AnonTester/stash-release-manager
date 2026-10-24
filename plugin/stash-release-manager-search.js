@@ -43,6 +43,20 @@
   // reinventing its own convention.
   const PAGE_SIZE = 40;
 
+  // The watchlist state of the cards is asked four at a time (every card asks Stash), not all at once.
+  const entityStateQueue = [];
+  let entityStateRunning = 0;
+  function queueEntityState(job) {
+    entityStateQueue.push(job);
+    pumpEntityState();
+  }
+  function pumpEntityState() {
+    while (entityStateRunning < 4 && entityStateQueue.length) {
+      entityStateRunning += 1;
+      entityStateQueue.shift()().finally(() => { entityStateRunning -= 1; pumpEntityState(); });
+    }
+  }
+
   async function render(container) {
     const { el } = window.SRW;
     container.innerHTML = '';
@@ -56,8 +70,8 @@
       className: 'srw-hint',
       textContent: 'Find a Performer, Studio, or Scene that isn’t on the watchlist yet — against '
         + 'whichever metadata provider you pick here, not just whichever one Whisparr itself is '
-        + 'configured against. Favoriting a Performer/Studio adds it to the watchlist the same way '
-        + 'starring it in Stash directly would.',
+        + 'configured against. Adding a Performer/Studio puts it on the watchlist (the eye) or, with Settings > Watchlist source = Favorites, '
+        + 'stars it in Stash (the heart) -- the same way tagging or starring it in Stash directly would.',
     }));
 
     // Per-render UI state, not persisted -- same idea as the Releases
@@ -107,7 +121,7 @@
     // once per page visit, the backend decides the actual action anyway.
     let watchMode = 'favorites';
     let catalogOnWatch = 'off'; // Settings: off / ask / auto -- load the catalog of a newly watched StashDB entity
-    window.SRW.runOp('settings_get_all')
+    const settingsReady = window.SRW.runOp('settings_get_all')
       .then((settings) => {
         try { const parsed = JSON.parse((settings && settings.search_tag_presets) || '[]'); tagPresets = Array.isArray(parsed) ? parsed : []; } catch (e) { tagPresets = []; }
         fillTagPresets('');
@@ -142,6 +156,7 @@
         // tell "here are all the matches" from "here are the first N
         // of many more").
         renderResults(Array.isArray(response.results) ? response.results : [], response.total);
+        window.SRW.keepResult('lastsearch', { provider, type, term, response });
       } catch (e) {
         resultsArea.innerHTML = '';
         resultsArea.appendChild(el('p', { className: 'srw-hint', textContent: `Error: ${e.message}` }));
@@ -418,33 +433,56 @@
       }
       const status = el('span', { className: 'srw-key-status' });
       const tagMode = watchMode === 'tag';
-      const btn = el('button', {
-        className: 'srw-btn srw-btn-primary', textContent: tagMode ? 'Watch' : 'Favorite',
-        title: tagMode ? 'Adds it to the watchlist (watchlist tag in Stash), creating it in Stash if needed' : '',
+      // The same endpoints as the buttons of the browser userscript on stash-box pages (v0.240.20): the card knows whether the entry is on the watchlist,
+      // offers "Add to watchlist" or "Remove from watchlist", and a removal only clears the watchlist mark (nothing is deleted in Stash).
+      // Only the kind chosen in Settings > Watchlist source is offered: the watchlist (eye) or Stash's favorites (heart).
+      const wk = window.SRW.watchKind(watchMode);
+      const addBtn = window.SRW.iconButton('button', wk.add, wk.addLabel, {
+        className: 'srw-btn srw-btn-primary', disabled: true,
+        title: tagMode ? 'Add to watchlist: sets the watchlist tag in Stash, creating the entry in Stash if needed'
+          : 'Add to favorites: stars it in Stash, creating the entry in Stash if needed',
       });
-      btn.addEventListener('click', async () => {
-        btn.disabled = true;
+      const onList = el('span', { className: 'srw-history-category', textContent: wk.on, hidden: true });
+      const removeBtn = window.SRW.iconButton('button', wk.remove, wk.removeLabel, {
+        title: `${wk.removeLabel}: clears ${tagMode ? 'the watchlist tag' : 'the favorite star'} in Stash; nothing is deleted`, hidden: true,
+      });
+      const paintWatch = (watched) => { addBtn.hidden = watched; onList.hidden = !watched; removeBtn.hidden = !watched; };
+      const ask = { provider, entity_type: entityType, stashdb_id: entity.id, name: entity.name };
+      queueEntityState(async () => {
+        try {
+          const st = await window.SRW.runOp('search_entity_state', ask);
+          if (st && !st.error) { paintWatch(Boolean(st.watched)); addBtn.disabled = false; return; }
+        } catch (err) { /* the add button still works without the state */ }
+        addBtn.disabled = false;
+      });
+      addBtn.addEventListener('click', async () => {
+        addBtn.disabled = true;
         status.textContent = ' saving...';
         try {
-          const op = entityType === 'performer' ? 'search_favorite_performer' : 'search_favorite_studio';
-          const result = await window.SRW.runOp(op, { provider, stashdb_id: entity.id, name: entity.name });
-          if (result.error) {
-            status.textContent = ` error: ${result.error}`;
-            btn.disabled = false;
-            return;
-          }
-          const watched = result.watch_mode === 'tag';
-          status.textContent = result.created
-            ? (watched ? ' created & added to watchlist' : ' created & favorited')
-            : (watched ? ' added to watchlist' : ' favorited');
-          btn.textContent = watched ? 'Watching' : 'Favorited';
+          const result = await window.SRW.runOp('search_entity_watch', { ...ask, watched: true });
+          if (result.error) { status.textContent = ` error: ${result.error}`; addBtn.disabled = false; return; }
+          status.textContent = result.created ? ` created in Stash, ${tagMode ? 'on the watchlist' : 'now a favorite'}` : (tagMode ? ' added to the watchlist' : ' now a favorite');
+          paintWatch(true);
+          addBtn.disabled = false;
           if (provider !== 'theporndb' && catalogOnWatch !== 'off') offerCatalogLoad(card, entity, entityType);
         } catch (err) {
           status.textContent = ` error: ${err.message}`;
-          btn.disabled = false;
+          addBtn.disabled = false;
         }
       });
-      card.appendChild(cardFooter(btn, status));
+      removeBtn.addEventListener('click', async () => {
+        removeBtn.disabled = true;
+        status.textContent = ' removing...';
+        try {
+          const result = await window.SRW.runOp('search_entity_watch', { ...ask, watched: false });
+          if (result.error) { status.textContent = ` error: ${result.error}`; return; }
+          status.textContent = tagMode ? ' taken off the watchlist' : ' no longer a favorite';
+          paintWatch(false);
+        } catch (err) {
+          status.textContent = ` error: ${err.message}`;
+        } finally { removeBtn.disabled = false; }
+      });
+      card.appendChild(cardFooter(addBtn, onList, removeBtn, status));
       return card;
     }
 
@@ -577,6 +615,17 @@
       setState(state);
       card.appendChild(footer);
       return card;
+    }
+
+    // The last search (not a tag search) is shown again after a reload or when the page is opened again (v0.240.12); a new search replaces it.
+    await settingsReady; // the cards of a restored search need the watchlist source
+    const lastSearch = window.SRW.recallResult('lastsearch', 24 * 3600000);
+    if (lastSearch && lastSearch.value && PROVIDERS.some((p) => p.key === lastSearch.value.provider) && lastSearch.value.type !== 'tags') {
+      const v = lastSearch.value;
+      provider = v.provider; type = v.type; termInput.value = v.term || '';
+      updateToggles();
+      renderResults(Array.isArray(v.response.results) ? v.response.results : [], v.response.total);
+      resultsArea.prepend(window.SRW.keptNote(lastSearch.at));
     }
   }
 

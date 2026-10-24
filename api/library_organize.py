@@ -29,6 +29,7 @@ Quality part of the new name: the source tag found in the current name
 token they already have (open question whether to switch them to the
 width class).
 """
+import json
 import logging
 import os
 import re
@@ -81,7 +82,34 @@ query($f: FindFilterType, $s: SceneFilterType) {
 }
 """
 
-_overview_cache = {"at": 0, "data": None}
+_overview_cache = {"at": 0, "data": None}  # the rough local count, before the first Recount
+
+
+def stored_overview(db):
+    """The checked studio list from the stored plans (organize_plan), sorted by what is left to do; None before the first Recount."""
+    with db.connect() as conn:
+        if not conn.execute("SELECT 1 FROM organize_state WHERE key = 'recount_at'").fetchone():
+            return None
+        rows = conn.execute("SELECT studio_id, studio, plan_json FROM organize_plan").fetchall()
+    out = []
+    for r in rows:
+        plan = json.loads(r["plan_json"])
+        rename, move = len(plan.get("rename", [])), len(plan.get("move", []))
+        other = len(plan.get("needs_check", [])) + len(plan.get("conflict", []))
+        if rename + move + other:
+            out.append({"studio_id": r["studio_id"], "studio": r["studio"], "rename": rename, "move": move, "other": other, "total": rename + move + other})
+    out.sort(key=lambda x: (-x["total"], x["studio"].lower()))
+    return out
+
+
+def stored_checked_at(db):
+    with db.connect() as conn:
+        row = conn.execute("SELECT value FROM organize_state WHERE key = 'recount_at'").fetchone()
+    return row["value"] if row else None
+_oshash_cache = {"at": 0, "data": None}
+# The background "Recount" (v0.240.17): every studio with local candidates gets its real plan (provider data + fingerprints), so only studios with
+# something to do stay in the list.
+_recount = {"running": False, "done": 0, "total": 0, "studio": "", "phase": "", "error": None, "finished_at": None}
 
 
 def _older_than_release(file, scene_date, slack_days=60):
@@ -181,11 +209,66 @@ class Organizer:
         return self.stash._graphql(_SCENES_QUERY, {"f": {"per_page": -1}})["findScenes"]["scenes"]
 
     def overview(self, refresh=False):
-        """Per studio: how many files would be renamed / moved (by the
-        LOCAL studio name -- the exact StashDB spelling and the fingerprint
-        check come with the per-studio plan). Cached 10 minutes."""
-        if not refresh and _overview_cache["data"] and time.time() - _overview_cache["at"] < 600:
+        """The studio list: after a Recount (start_recount) the checked list read from the stored plans (organize_plan) -- only studios whose real plan
+        has something to do, kept until the next Recount and lowered by every rename / move; before the first Recount the rough local count
+        (_local_overview), cached 10 minutes."""
+        stored = stored_overview(self.db)
+        if stored is not None:
+            return stored
+        if _overview_cache["data"] is not None and not refresh and time.time() - _overview_cache["at"] < 600:
             return _overview_cache["data"]
+        data = self._local_overview()
+        _overview_cache.update(at=time.time(), data=data, verified=False)
+        return data
+
+    # ---------- the stored plans (v0.240.27) ----------
+
+    def _store_plan(self, studio_id, plan):
+        local = plan.get("local_studio") or ""
+        with self.db.connect() as conn:
+            conn.execute(
+                """INSERT INTO organize_plan (studio_id, studio, plan_json, checked_at) VALUES (?, ?, ?, datetime('now'))
+                   ON CONFLICT(studio_id) DO UPDATE SET studio = excluded.studio, plan_json = excluded.plan_json, checked_at = excluded.checked_at""",
+                (str(studio_id), local, json.dumps(plan)))
+
+    def _load_plan(self, studio_id):
+        """(plan, checked_at 'YYYY-MM-DD HH:MM:SS' UTC) of a studio, or None when none is stored."""
+        with self.db.connect() as conn:
+            row = conn.execute("SELECT plan_json, checked_at FROM organize_plan WHERE studio_id = ?", (str(studio_id),)).fetchone()
+        return (json.loads(row["plan_json"]), row["checked_at"]) if row else None
+
+    def plan_for_studio(self, studio_id, fresh=False):
+        """The studio's plan: the stored one (instant) unless `fresh` or none is stored -- then it is made (StashDB: fingerprints, titles, dates,
+        studio) and stored. The answer carries `checked_at`."""
+        if not fresh:
+            stored = self._load_plan(studio_id)
+            if stored:
+                return {**stored[0], "checked_at": stored[1]}
+        plan = self.plan(studio_id)
+        if plan.get("studio") is not None:
+            self._store_plan(studio_id, plan)
+        stored = self._load_plan(studio_id)
+        return {**plan, "checked_at": stored[1] if stored else None}
+
+    def _drop_stored(self, items):
+        """What was just renamed / moved leaves the stored plans of its studios (v0.240.27): the plan stays right without a new check."""
+        by_studio = defaultdict(set)
+        for item in items:
+            if item.get("studio_id") is not None:
+                by_studio[str(item["studio_id"])].add(str(item["file_id"]))
+        for studio_id, ids in by_studio.items():
+            stored = self._load_plan(studio_id)
+            if not stored:
+                continue
+            plan, _ = stored
+            for k in ("rename", "move", "conflict", "needs_check"):
+                plan[k] = [x for x in plan.get(k, []) if str(x["file_id"]) not in ids]
+            with self.db.connect() as conn:
+                conn.execute("UPDATE organize_plan SET plan_json = ? WHERE studio_id = ?", (json.dumps(plan), studio_id))
+
+    def _local_overview(self):
+        """Per studio: how many files would be renamed / moved by the LOCAL title, date and studio name -- no StashDB, so it also counts files that
+        the provider's data would leave where they are."""
         per = defaultdict(lambda: {"rename": 0, "move": 0})
         names = {}
         for scene in self._all_scenes():
@@ -203,8 +286,50 @@ class Organizer:
             per[sid]["rename" if same_folder else "move"] += 1
         data = sorted(({"studio_id": k, "studio": names[k], **v, "total": v["rename"] + v["move"]}
                        for k, v in per.items()), key=lambda x: (-x["total"], x["studio"].lower()))
-        _overview_cache.update(at=time.time(), data=data)
         return data
+
+    def start_recount(self):
+        if _recount["running"]:
+            return {"started": False, "running": True}
+        threading.Thread(target=self._recount_run, daemon=True, name="organize-recount").start()
+        return {"started": True}
+
+    @staticmethod
+    def recount_status():
+        return dict(_recount)
+
+    def _recount_run(self):
+        _recount.update(running=True, done=0, total=0, studio="", phase="counting the files by their local names", error=None)
+        try:
+            local = self._local_overview()
+            _recount.update(total=len(local), phase="reading the library's fingerprints")
+            dup = self._oshash_counts()
+            _recount["phase"] = "checking the studios"
+            scanned = set()
+            for i, row in enumerate(local):
+                _recount.update(done=i, studio=row["studio"])
+                try:
+                    p = self.plan(row["studio_id"], dup=dup)
+                    if p.get("studio") is not None:
+                        p["local_studio"] = p.get("local_studio") or row["studio"]
+                        self._store_plan(row["studio_id"], p)
+                        scanned.add(str(row["studio_id"]))
+                except Exception:
+                    logger.exception("organize recount: plan of %s failed, it keeps its stored plan (if any)", row["studio"])
+                    scanned.add(str(row["studio_id"]))
+            with self.db.connect() as conn:
+                # Studios that no longer have a local candidate leave the store; the state marks "a Recount has run".
+                for (sid,) in conn.execute("SELECT studio_id FROM organize_plan").fetchall():
+                    if sid not in scanned:
+                        conn.execute("DELETE FROM organize_plan WHERE studio_id = ?", (sid,))
+                conn.execute("INSERT INTO organize_state (key, value) VALUES ('recount_at', datetime('now')) "
+                             "ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+            _recount["done"] = len(local)
+        except Exception as e:  # noqa: BLE001
+            logger.exception("organize recount failed")
+            _recount["error"] = f"{type(e).__name__}: {e}"
+        finally:
+            _recount.update(running=False, finished_at=time.time())
 
     # ---------- per-studio plan ----------
 
@@ -219,12 +344,17 @@ class Organizer:
         return studio["name"]
 
     def _oshash_counts(self):
+        """{oshash: number of files} over the whole library, for the "identical copy elsewhere" mark. One query over every scene: kept for 10 minutes
+        (v0.240.26), so a rename right after a plan does not read the library again."""
+        if _oshash_cache["data"] is not None and time.time() - _oshash_cache["at"] < 600:
+            return _oshash_cache["data"]
         counts = defaultdict(int)
         for scene in self._all_scenes():
             for f in scene["files"]:
                 for fp in f["fingerprints"]:
                     if fp["type"] == "oshash":
                         counts[fp["value"]] += 1
+        _oshash_cache.update(at=time.time(), data=counts)
         return counts
 
     def _verify(self, candidates):
@@ -257,7 +387,9 @@ class Organizer:
         return result
 
     def _provider_metadata(self, scene):
-        """{title, date} of the scene at StashDB (or ThePornDB), or None."""
+        """{title, date, studio} of the scene at StashDB (or ThePornDB), or None. `studio` is the scene's OWN studio at StashDB (v0.240.23: a scene
+        of a child studio such as "Brazzers Exxtra" belongs in that folder although its local studio is the parent); None for ThePornDB, whose
+        site names are not the spelling the library uses."""
         ids = {s["endpoint"]: s["stash_id"] for s in scene["stash_ids"]}
         for endpoint, client in ((self.stash.stashdb_endpoint, self.stashdb),
                                  (self.stash.theporndb_endpoint, self.theporndb)):
@@ -268,7 +400,8 @@ class Organizer:
                     logger.exception("organize: metadata lookup failed for scene %s", scene["id"])
                     return None
                 if detail and detail.get("title") and detail.get("date"):
-                    return {"title": detail["title"], "date": detail["date"]}
+                    studio = (detail.get("studio") or {}).get("name") if endpoint == self.stash.stashdb_endpoint else None
+                    return {"title": detail["title"], "date": detail["date"], "studio": studio}
                 return None
         return None
 
@@ -289,7 +422,7 @@ class Organizer:
         hint = f"; matches {other[0]!r} instead" if other else ""
         return (False, f"fingerprints don't match (phash distance {best}{hint})")
 
-    def plan(self, studio_id, scene_id=None):
+    def plan(self, studio_id, scene_id=None, dup=None, only_files=None):
         """Per-studio plan: {studio, rename, move, needs_check, multi_file, conflict}. With `scene_id` only that one scene is planned (the
         Organized hook, v0.203.0): same checks, but no scan of the whole library for byte-identical copies."""
         if scene_id is not None:
@@ -301,11 +434,14 @@ class Organizer:
                 "s": {"studios": {"value": [str(studio_id)], "modifier": "INCLUDES"}},
             })["findScenes"]["scenes"]
             scenes = [s for s in scenes if s["studio"] and str(s["studio"]["id"]) == str(studio_id)]
+            if only_files is not None:
+                # Applying chosen files (v0.240.26): only their scenes are planned and verified, not the whole studio.
+                scenes = [s for s in scenes if any(str(f["id"]) in only_files for f in s["files"])]
         if not scenes:
             return {"studio": None, "rename": [], "move": [], "needs_check": [], "multi_file": [], "conflict": []}
         folder_studio = self._studio_folder_name(scenes[0]["studio"])
-        dup = {} if scene_id is not None else self._oshash_counts()
-        plan = {"studio": folder_studio, "rename": [], "move": [], "needs_check": [], "multi_file": [], "conflict": []}
+        dup = {} if scene_id is not None else (dup if dup is not None else self._oshash_counts())
+        plan = {"studio": folder_studio, "local_studio": scenes[0]["studio"]["name"], "rename": [], "move": [], "needs_check": [], "multi_file": [], "conflict": []}
         candidates = []
         for scene in scenes:
             if not (scene["stash_ids"] and scene["title"] and scene["date"]):
@@ -331,7 +467,7 @@ class Organizer:
                 # date -- "Blow Job Frenzy.flv - 2024-08-16").
                 fresh = self._provider_metadata(scene)
                 if fresh:
-                    expected = self.expected_path({**scene, **fresh}, file, folder_studio)
+                    expected = self.expected_path({**scene, "title": fresh["title"], "date": fresh["date"]}, file, fresh.get("studio") or folder_studio)
                 # A phash NEAR-match is weaker evidence (low-res videos with the
                 # same studio intro can land within a few bits): a file older
                 # than the scene's release can't be that scene (2026-09-28: a
@@ -346,7 +482,7 @@ class Organizer:
             oshash = next((fp["value"] for fp in file["fingerprints"] if fp["type"] == "oshash"), None)
             stashdb_id = next((s["stash_id"] for s in scene["stash_ids"]
                                if s["endpoint"] == self.stash.stashdb_endpoint), None)
-            item = {"scene_id": scene["id"], "file_id": file["id"], "title": (fresh or scene)["title"],
+            item = {"scene_id": scene["id"], "file_id": file["id"], "studio_id": (scene.get("studio") or {}).get("id"), "title": (fresh or scene)["title"],
                     "stashdb_id": stashdb_id, "date": (fresh or scene).get("date"),
                     "path": file["path"], "new_path": expected, "check": how,
                     "duplicate": bool(oshash and dup.get(oshash, 0) > 1)}
@@ -500,27 +636,20 @@ class Organizer:
                 continue
             folders.append(item["new_path"].rsplit("/", 1)[0])
             done.append(item)
-        self._scan_and_wait(folders)
-        confirmed = []
-        for item in done:
-            scene = self.stash.find_scene_by_path(item["new_path"])
-            if scene is not None and str(scene["id"]) == str(item["scene_id"]):
-                self._record_move(item["path"], item["new_path"])
-                confirmed.append(item)
-                history.add("info", "history", "organize",
-                            f"{'Moved' if item['path'].rsplit('/', 1)[0] != item['new_path'].rsplit('/', 1)[0] else 'Renamed'} film file: "
-                            f"{item['path'].rsplit('/', 1)[1]} -> {item['new_path'][len(self._root()):]}",
-                            scene_title=item["title"],
-                            details={"stash_scene": item["scene_id"], "old": item["path"], "new": item["new_path"], "extras": item.get("extras_moved")})
-            else:
-                failed.append({**item, "reason": "moved on disk, but Stash doesn't show the scene there yet"})
-                history.add("warning", "history", "organize", "Moved on disk, Stash not updated yet (rescan)",
-                            scene_title=item["title"], details={"old": item["path"], "new": item["new_path"]})
+        confirmed = list(done)  # like the scene side (v0.240.27): the scan is started and not waited for, a background check confirms later
+        for item in confirmed:
+            self._record_move(item["path"], item["new_path"])
+            history.add("info", "history", "organize",
+                        f"{'Moved' if item['path'].rsplit('/', 1)[0] != item['new_path'].rsplit('/', 1)[0] else 'Renamed'} film file: "
+                        f"{item['path'].rsplit('/', 1)[1]} -> {item['new_path'][len(self._root()):]}",
+                        scene_title=item["title"],
+                        details={"stash_scene": item["scene_id"], "old": item["path"], "new": item["new_path"], "extras": item.get("extras_moved")})
         self._cleanup_movie_dirs(old_dirs)
         if confirmed or failed:
-            history.event("warning" if failed else "info", "organize", f"Organize movies: {len(confirmed)} done, {len(failed)} failed")
+            history.event("warning" if failed else "info", "organize", f"Organize movies: {len(confirmed)} done, {len(failed)} failed (Stash scan started)")
+        self._scan_then_confirm(confirmed, folders)
         self._watch_drift(confirmed)
-        return {"done": confirmed, "failed": failed}
+        return {"done": confirmed, "failed": failed, "scan": "started" if confirmed else None}
 
     # ---------- the Organized hook for a scene of the Whisparr library folder (v0.203.0) ----------
 
@@ -712,12 +841,29 @@ class Organizer:
         if conflict:
             return conflict
         wanted = {str(i) for i in file_ids or []}
-        plan = self.plan(studio_id)
-        items = [i for k in kinds for i in plan.get(k, []) if str(i["file_id"]) in wanted]
-        return self._organize_items(items, plan["studio"])
+        # The plan that was checked (fingerprints, StashDB's title / date / studio) and stored is used as it is -- no new StashDB round trip (v0.240.27);
+        # _move_one still refuses a file that is gone or whose target exists. Without a stored plan the chosen files are planned.
+        stored = self._load_plan(studio_id)
+        plan = stored[0] if stored else self.plan(studio_id, only_files=wanted)
+        items, refused = [], []
+        for k in kinds:
+            for i in plan.get(k if k != "check" else "needs_check", []):
+                if str(i["file_id"]) not in wanted:
+                    continue
+                # "check" (v0.240.15): the user says an unconfirmed file is the right one and renames / moves it anyway; the plan did not test the
+                # target name for these (it does for verified files), so it is tested here.
+                if k == "check" and os.path.exists(self.to_local(i["new_path"])):
+                    refused.append({**i, "reason": "target name already exists"})
+                    continue
+                items.append(i)
+        result = self._organize_items(items, plan["studio"]) if items else {"done": [], "failed": []}
+        result["failed"] = list(result.get("failed") or []) + refused
+        return result
 
     def _organize_items(self, items, label):
-        """Moves/renames the planned items, rescans, checks each scene at its new place, tells Whisparr, logs. Returns {done, failed}."""
+        """Moves/renames the planned items and returns at once, like Whisparr's Stash hook (v0.240.27): sidecar tables and Whisparr follow, the stored
+        plans lose the items, ONE Stash scan is started and NOT waited for, and a background check later confirms each scene at its new path
+        (a failure goes to History). Returns {done, failed}."""
         done, failed, old_dirs, batch_folders = [], [], [], []
         for item in sorted(items, key=lambda x: x["duplicate"]):
             try:
@@ -726,33 +872,54 @@ class Organizer:
                 failed.append({**item, "reason": str(e)})
                 continue
             if item["duplicate"]:
-                # Byte-identical copy elsewhere: scan right away, alone.
+                # Byte-identical copy elsewhere: Stash must see it alone first, or it could take the other copy's scene.
                 self._scan_and_wait([item["new_path"].rsplit("/", 1)[0]])
             else:
                 batch_folders.append(item["new_path"].rsplit("/", 1)[0])
             done.append(item)
-        self._scan_and_wait(batch_folders)
-        confirmed = []
         for item in done:
-            scene = self.stash.find_scene_by_path(item["new_path"])
-            if scene is not None and str(scene["id"]) == str(item["scene_id"]):
-                item["whisparr"] = self.sync_whisparr(item)
-                self._record_move(item["path"], item["new_path"])
-                confirmed.append(item)
-                history.add("info", "history", "organize",
-                            f"{'Moved' if item['path'].rsplit('/', 1)[0] != item['new_path'].rsplit('/', 1)[0] else 'Renamed'}: "
-                            f"{item['path'].rsplit('/', 1)[1]} -> {item['new_path'][len(self._root()):]}",
-                            scene_title=item["title"],
-                            details={"stash_scene": item["scene_id"], "old": item["path"], "new": item["new_path"],
-                                     "extras": item.get("extras_moved")})
-            else:
-                failed.append({**item, "reason": "moved on disk, but Stash doesn't show the scene there yet"})
-                history.add("warning", "history", "organize", "Moved on disk, Stash not updated yet (rescan)",
-                            scene_title=item["title"], details={"old": item["path"], "new": item["new_path"]})
+            item["whisparr"] = self.sync_whisparr(item)
+            self._record_move(item["path"], item["new_path"])
+            history.add("info", "history", "organize",
+                        f"{'Moved' if item['path'].rsplit('/', 1)[0] != item['new_path'].rsplit('/', 1)[0] else 'Renamed'}: "
+                        f"{item['path'].rsplit('/', 1)[1]} -> {item['new_path'][len(self._root()):]}",
+                        scene_title=item["title"],
+                        details={"stash_scene": item["scene_id"], "old": item["path"], "new": item["new_path"], "extras": item.get("extras_moved")})
         self._cleanup_dirs(old_dirs)
-        if confirmed or failed:
-            history.event("warning" if failed else "info", "organize",
-                          f"Organize {label}: {len(confirmed)} done, {len(failed)} failed")
-        _overview_cache["data"] = None
-        self._watch_drift(confirmed)
-        return {"done": confirmed, "failed": failed}
+        self._drop_stored(done)
+        if done or failed:
+            history.event("warning" if failed else "info", "organize", f"Organize {label}: {len(done)} done, {len(failed)} failed (Stash scan started)")
+        self._scan_then_confirm(done, batch_folders)
+        self._watch_drift(done)
+        return {"done": done, "failed": failed, "scan": "started" if done else None}
+
+    def _scan_then_confirm(self, done, folders):
+        """Starts the Stash scan of the folders (not waited for) and, in the background, checks afterwards that each scene stands at its new path."""
+        if not done:
+            return
+        job = None
+        try:
+            if folders:
+                job = self.stash.scan_paths(sorted(set(folders)))
+        except Exception:
+            logger.exception("organize: the Stash scan could not be started")
+            history.add("warning", "history", "organize", "Moved on disk, the Stash scan could not be started (scan the library in Stash)",
+                        details={"files": len(done)})
+
+        def confirm():
+            try:
+                if job is not None:
+                    self.stash.wait_for_job(job, poll_interval=5, timeout=6 * 3600)
+                time.sleep(2)
+            except Exception:
+                logger.exception("organize: Stash scan didn't finish in time")
+            for item in done:
+                try:
+                    scene = self.stash.find_scene_by_path(item["new_path"])
+                except Exception:
+                    logger.exception("organize: could not look for %s in Stash", item["new_path"])
+                    continue
+                if scene is None or str(scene["id"]) != str(item["scene_id"]):
+                    history.add("warning", "history", "organize", "Moved on disk, Stash does not show the scene there (scan again)",
+                                scene_title=item["title"], details={"old": item["path"], "new": item["new_path"], "stash_scene": item["scene_id"]})
+        threading.Thread(target=confirm, daemon=True, name="organize-confirm").start()

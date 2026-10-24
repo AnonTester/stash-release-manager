@@ -214,18 +214,28 @@ def favorite_performer(provider: str, stashdb_id: str, body: dict):
     endpoint = _endpoint_for(provider, stash_client)
     # 'Watch' (2026-09-26): tag mode puts the watchlist tag on it instead
     # of the Favorite flag, see watchlist_source.py.
-    watch_tag_id = watchlist_source.watch_tag_id_for_new_entity(_db, stash_client)
-    return {**stash_client.create_or_favorite_performer(stashdb_id, body.get("name", ""), endpoint, watch_tag_id),
-            "watch_mode": watchlist_source.get_mode(_db)}
+    try:
+        watch_tag_id = watchlist_source.watch_tag_id_for_new_entity(_db, stash_client)
+        result = stash_client.create_or_favorite_performer(stashdb_id, body.get("name", ""), endpoint, watch_tag_id)
+    except Exception as e:  # the reason reaches the page instead of a bare "HTTP 500" (v0.240.18)
+        logger.exception("search: watching performer %s failed", stashdb_id)
+        raise HTTPException(502, f"Stash refused: {e}")
+    return {**result, "watch_mode": watchlist_source.get_mode(_db)}
 
 
 @router.post("/{provider}/studios/{stashdb_id}/favorite")
 def favorite_studio(provider: str, stashdb_id: str, body: dict):
     stash_client = _get_stash_client()
     endpoint = _endpoint_for(provider, stash_client)
-    watch_tag_id = watchlist_source.watch_tag_id_for_new_entity(_db, stash_client)
-    return {**stash_client.create_or_favorite_studio(stashdb_id, body.get("name", ""), endpoint, watch_tag_id),
-            "watch_mode": watchlist_source.get_mode(_db)}
+    try:
+        watch_tag_id = watchlist_source.watch_tag_id_for_new_entity(_db, stash_client)
+        result = stash_client.create_or_favorite_studio(stashdb_id, body.get("name", ""), endpoint, watch_tag_id)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:  # the reason reaches the page instead of a bare "HTTP 500" (v0.240.18)
+        logger.exception("search: watching studio %s failed", stashdb_id)
+        raise HTTPException(502, f"Stash refused: {e}")
+    return {**result, "watch_mode": watchlist_source.get_mode(_db)}
 
 
 @router.post("/{provider}/scenes/readd")

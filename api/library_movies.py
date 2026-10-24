@@ -32,7 +32,7 @@ query { findScenes(filter: {per_page: -1}, scene_filter: {groups: {modifier: IS_
 """
 _PERFORMERS_QUERY = """
 query { findPerformers(filter: {per_page: -1}, performer_filter: {scene_count: {value: 0, modifier: EQUALS}}) {
-  performers { id name disambiguation favorite tags { id name } } } }
+  performers { id name disambiguation favorite image_path scene_count tags { id name } } } }
 """
 _ALL_GROUPS_QUERY = """
 query { findGroups(filter: {per_page: -1}) { groups { id name date scene_count } } }
@@ -389,14 +389,64 @@ class Movies:
     # ---------- performers without scenes ----------
 
     def performers_without_scenes(self):
+        """Performers with 0 scenes. `on_watchlist` follows the watchlist source (v0.238.3): the Favorite flag in 'favorites' mode, the watchlist tag in 'tag'
+        mode (there Favorite is just a favorite again)."""
         wl_name = (self.setting("watchlist_tag_name") or "Watchlist") if self.setting else "Watchlist"
+        tag_mode = bool(self.setting) and self.setting("watchlist_source") == "tag"
         rows = []
         for p in self.stash._graphql(_PERFORMERS_QUERY, {})["findPerformers"]["performers"]:
             tags = [t["name"] for t in p["tags"]]
             rows.append({"id": p["id"], "name": p["name"], "disambiguation": p.get("disambiguation") or "",
-                         "favorite": p["favorite"], "on_watchlist": wl_name in tags or p["favorite"]})
+                         "favorite": p["favorite"], "image_path": p.get("image_path"),
+                         "on_watchlist": (wl_name in tags) if tag_mode else bool(p["favorite"])})
         rows.sort(key=lambda r: r["name"].lower())
         return rows
+
+    def delete_empty_performer(self, performer_id):
+        """Deletes a performer from Stash, but only while it still has no scene (the list may be old). Returns {"ok", "name"} or raises ValueError."""
+        data = self.stash._graphql("query($id: ID!) { findPerformer(id: $id) { id name scene_count } }", {"id": str(performer_id)})["findPerformer"]
+        if not data:
+            raise ValueError("Stash has no performer with this id any more")
+        if data["scene_count"]:
+            raise ValueError(f"{data['name']} has {data['scene_count']} scene(s) now -- not deleted")
+        self.stash._graphql("mutation($i: PerformerDestroyInput!) { performerDestroy(input: $i) }", {"i": {"id": str(performer_id)}})
+        return {"ok": True, "name": data["name"]}
+
+    # ---------- empty groups that have a namesake WITH files (v0.241.9) ----------
+
+    def group_namesakes(self):
+        """Empty groups (no scene with a file) next to groups that have files and a name that is the same film by group_compare's rules
+        (accents, "Vol.", ", The", brackets, the numbers must agree). [{group: {id, name, date, scenes}, namesakes: [{id, name, date, scenes, score, exact}]}].
+        An empty group with such a namesake is usually a duplicate made by a scrape or an import."""
+        import group_compare
+        empties, filled = [], []
+        for g in self.stash._graphql(_GROUPS_QUERY, {})["findGroups"]["groups"]:
+            files = sum(1 for s in g["scenes"] if s["files"])
+            row = {"id": g["id"], "name": g["name"], "date": g.get("date"), "scenes": len(g["scenes"]), "with_files": files}
+            (filled if files else empties).append(row)
+        out = []
+        for e in empties:
+            found = []
+            for f in filled:
+                hit = group_compare.compare(e["name"], f["name"])
+                if hit:
+                    exact = group_compare.normalise(e["name"]) == group_compare.normalise(f["name"])
+                    found.append({**f, "score": hit[0], "note": hit[1], "exact": exact})
+            if found:
+                found.sort(key=lambda x: (-x["exact"], -x["score"], x["name"].lower()))
+                out.append({"group": e, "namesakes": found[:5]})
+        out.sort(key=lambda r: r["group"]["name"].lower())
+        return out
+
+    def delete_empty_group(self, group_id):
+        """Deletes a group that still has no scene with a file (re-checked here); its scenes, if any, stay in Stash. Raises ValueError otherwise."""
+        g = self.stash._graphql("query($id: ID!) { findGroup(id: $id) { id name scenes { id files { id } } } }", {"id": str(group_id)})["findGroup"]
+        if not g:
+            raise ValueError("Stash has no group with this id any more")
+        if any(s["files"] for s in g["scenes"]):
+            raise ValueError(f"\"{g['name']}\" has scenes with files now -- not deleted")
+        self.stash._graphql("mutation($i: GroupDestroyInput!) { groupDestroy(input: $i) }", {"i": {"id": str(group_id)}})
+        return {"ok": True, "name": g["name"]}
 
     # ---------- groups without files ----------
 

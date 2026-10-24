@@ -121,6 +121,44 @@ def fp_rows(db):
     return out
 
 
+def unid_store(db, rows, in_review):
+    """Keeps the list of Unidentified scenes (v0.241.6): it takes a Stash request over every scene without an id (seconds), so it is read once and
+    kept until a change takes an entry out (unid_drop), something may have added one (unid_invalidate) or the user reloads."""
+    with db.connect() as conn:
+        conn.execute("DELETE FROM unidentified_scene")
+        conn.executemany("INSERT INTO unidentified_scene (scene_id, payload) VALUES (?, ?)", [(r["id"], json.dumps(r)) for r in rows])
+        conn.execute("INSERT INTO maintenance_state (key, value) VALUES ('unidentified_at', datetime('now')) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+        conn.execute("INSERT INTO maintenance_state (key, value) VALUES ('unidentified_in_review', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                     (str(in_review),))
+
+
+def unid_load(db):
+    """(rows, in_review, at) of the kept list, or None when there is none (never listed, or invalidated)."""
+    with db.connect() as conn:
+        at = conn.execute("SELECT value FROM maintenance_state WHERE key = 'unidentified_at'").fetchone()
+        if not at:
+            return None
+        n = conn.execute("SELECT value FROM maintenance_state WHERE key = 'unidentified_in_review'").fetchone()
+        rows = [json.loads(r["payload"]) for r in conn.execute("SELECT payload FROM unidentified_scene").fetchall()]
+    rows.sort(key=lambda r: int(r["id"]) if str(r["id"]).isdigit() else 0)
+    return rows, int(n["value"]) if n else 0, at["value"]
+
+
+def unid_drop(db, scene_ids, to_review=False):
+    """Takes scenes out of the kept list (identified, sent to Review); `to_review` counts them as "already in Review"."""
+    with db.connect() as conn:
+        for sid in scene_ids:
+            gone = conn.execute("DELETE FROM unidentified_scene WHERE scene_id = ?", (str(sid),)).rowcount
+            if gone and to_review:
+                conn.execute("UPDATE maintenance_state SET value = CAST(COALESCE(value, '0') AS INTEGER) + 1 WHERE key = 'unidentified_in_review'")
+
+
+def unid_invalidate(db):
+    """The kept list may be wrong now (a scene lost its id or its Review tag): the next reading makes it anew."""
+    with db.connect() as conn:
+        conn.execute("DELETE FROM maintenance_state WHERE key = 'unidentified_at'")
+
+
 def fp_put(db, scene_id, entry):
     with db.connect() as conn:
         conn.execute("INSERT OR REPLACE INTO fingerprint_check (scene_id, state, matches, held_by, note, checked_at) VALUES (?, ?, ?, ?, ?, datetime('now'))",
@@ -236,6 +274,7 @@ class SceneCompare:
         history.add("info", "history", "compare", f"Provider id removed after a side-by-side comparison (pair {pair_id})",
                     scene_id=str(scene_id), scene_title=full["title"] or (full["files"][0]["path"].rsplit("/", 1)[-1] if full["files"] else None),
                     details={"removed": stash_id, "backup": backup})
+        unid_invalidate(self.db)  # the scene may have no provider id now: a candidate for the Unidentified list
         return {"ok": True, "scene": self.scene(scene_id)}
 
     # ---------- identify / adopt / reset (what to do with the scene that lost its id) ----------
@@ -414,9 +453,16 @@ class SceneCompare:
 
     SKIP_ROOTS = ("/data/Movies/", "/data/movies/", "/data/import/", "/data/Import/")  # film folders (scenes there have no ids by design) + the import folder
 
-    def unidentified_list(self):
-        """Scenes with NO provider id (StashDB/ThePornDB) outside the film folders and the import folder, without the review tag. One Stash request.
-        Also returns how many were left out because they already carry the review tag."""
+    def unidentified_list(self, refresh=False):
+        """Scenes with NO provider id (StashDB/ThePornDB) outside the film folders and the import folder, without the review tag. One Stash request,
+        made once: the list is kept (unid_store) until a change takes an entry out or `refresh` asks again (v0.241.6). Also returns how many were
+        left out because they already carry the review tag."""
+        if not refresh:
+            kept = unid_load(self.db)
+            if kept:
+                rows, in_review, at = kept
+                stored = fp_rows(self.db)
+                return {"scenes": rows, "in_review": in_review, "listed_at": at, "checks": {x["id"]: stored[x["id"]] for x in rows if x["id"] in stored}}
         stash = self.get_stash()
         tag_id = stash.find_tag_id(self.REVIEW_TAG)
         data = stash._graphql("""query { findScenes(scene_filter: {stash_id_count: {value: 0, modifier: EQUALS}}, filter: {per_page: -1, sort: "id"}) {
@@ -435,8 +481,11 @@ class SceneCompare:
                         "studio_folder": folder.split("/")[3] if folder.count("/") >= 3 else "", "height": f.get("height"),
                         "minutes": round(f["duration"] / 60, 1) if f.get("duration") else None,
                         "mb": round(f["size"] / 1e6) if f.get("size") else None})
+        unid_store(self.db, out, in_review)
+        kept = unid_load(self.db)
         stored = fp_rows(self.db)
-        return {"scenes": out, "in_review": in_review, "checks": {x["id"]: stored[x["id"]] for x in out if x["id"] in stored}}
+        return {"scenes": out, "in_review": in_review, "listed_at": kept[2] if kept else None,
+                "checks": {x["id"]: stored[x["id"]] for x in out if x["id"] in stored}}
 
     def unidentified_check(self, scene_ids):
         """DRY RUN of the fingerprint assignment (nothing is written): StashDB's exact fingerprint lookup for these scenes (one request per 40;
@@ -507,6 +556,7 @@ class SceneCompare:
                             scene_id=sid, scene_title=after["title"], details={"provider_id": pid, "backup": backup})
                 with _FP_LOCK:
                     fp_delete(self.db, sid)
+                unid_drop(self.db, [sid])
                 out[sid] = {"ok": True, "title": after["title"], "date": after.get("date")}
             except Exception as ex:  # noqa: BLE001
                 out[sid] = {"error": str(ex)}
@@ -530,12 +580,14 @@ class SceneCompare:
         if not sc:
             return {"error": "scene not found in Stash"}
         if any(t["name"] == self.REVIEW_TAG for t in sc["tags"]):
+            unid_drop(self.db, [scene_id])
             return {"ok": True, "already": True}
         tag = str(stash.ensure_tag(self.REVIEW_TAG))
         stash._graphql("mutation($i: BulkSceneUpdateInput!) { bulkSceneUpdate(input: $i) { id } }",
                        {"i": {"ids": [str(scene_id)], "tag_ids": {"ids": [tag], "mode": "ADD"}}})
         history.add("info", "history", "compare", "Scene sent to Review > Identify Scene (tag added)",
                     scene_id=str(scene_id), scene_title=sc["title"])
+        unid_drop(self.db, [scene_id], to_review=True)
         return {"ok": True, "already": False}
 
     def _remove_review_tag(self, scene_id, full, reason):
@@ -546,6 +598,7 @@ class SceneCompare:
                 if str(t["id"]) != tag_id]
         stash._graphql(UPDATE, {"i": {"id": str(scene_id), "tag_ids": keep}})
         set_review_mark(self.db, scene_id, False)
+        unid_invalidate(self.db)  # a scene without an id is a candidate for the Unidentified list again
         history.add("info", "history", "compare", reason, scene_id=str(scene_id), scene_title=full["title"])
 
     def review_done(self, scene_id):
@@ -913,7 +966,8 @@ class SceneCompare:
 
     def resolved_pairs(self):
         """Open ('pending') pairs that need no more decision: one scene is gone (merged/deleted), or both scenes carry a
-        provider id, share none and neither is tagged for review. 'later' pairs are never touched."""
+        provider id, share none and neither is tagged for review, or one scene has an id and the other none and is in Review: Identify Scene
+        (the doubled id is gone, the question lives there). 'later' pairs are never touched."""
         stash = self.get_stash()
         out = []
         for p in list_pairs(self.db, "pending"):
@@ -928,9 +982,16 @@ class SceneCompare:
             ids = [{i["stash_id"] for i in sc["stash_ids"]} for sc in scenes]
             if ids[0] & ids[1]:
                 continue
+            in_review = [any(t["name"] == self.REVIEW_TAG for t in sc["tags"]) for sc in scenes]
+            if bool(ids[0]) != bool(ids[1]):
+                # One scene kept its provider id, the other has none (v0.240.6): the doubled id that made this a pair is gone. When the one
+                # without an id is in Review: Identify Scene, what it is goes on there.
+                if in_review[0 if not ids[0] else 1]:
+                    out.append({"id": p["id"], "label": p["label"], "why": "the doubled provider id is gone; the scene without an id continues in Review: Identify Scene"})
+                continue
             if not ids[0] or not ids[1]:
                 continue
-            if any(t["name"] == self.REVIEW_TAG for sc in scenes for t in sc["tags"]):
+            if any(in_review):
                 continue
             out.append({"id": p["id"], "label": p["label"], "why": "different provider ids, no review tag"})
         return out

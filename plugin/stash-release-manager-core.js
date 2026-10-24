@@ -11,7 +11,7 @@
   // rule and the bug it caused when this drifted). Change this if you
   // install under a different folder name.
   // Must equal `version:` in stash-release-manager.yml (scripts/test_plugin_version.py checks it).
-  const PLUGIN_VERSION = '0.238.0';
+  const PLUGIN_VERSION = '0.242.0';
   const PLUGIN_ID = 'stash-release-manager';
   const PLUGIN_NAME = 'StashReleaseManager';
 
@@ -791,7 +791,11 @@
   // crowded action columns. Without the icon library the words are shown instead.
   function iconButton(tag, name, label, props = {}) {
     const { className = 'srw-btn', title, ...rest } = props;
-    const glyph = icon(name);
+    // `name` may be a pair [main, badge] (v0.238.5): the second icon sits small in the lower right corner of the first (e.g. fingerprint + magnifier).
+    const [mainName, badgeName] = Array.isArray(name) ? name : [name, null];
+    let glyph = icon(mainName);
+    const badge = glyph && badgeName ? icon(badgeName, 'srw-icon-badge') : null;
+    if (badge) glyph = el('span', { className: 'srw-icon-combo' }, [glyph, badge]);
     const node = el(tag, { ...(tag === 'button' ? { type: 'button' } : {}), ...rest, className: glyph ? `${className} srw-btn-icon` : className,
       title: title || label, 'aria-label': label });
     // The zero-width text gives the button the line height of a text button, so a row of them stays level.
@@ -819,7 +823,65 @@
     return badge;
   }
 
+  // The colors of Stash's own form fields, taken from the theme (v0.240.3): a hidden `.form-control` is measured and its background / text / border
+  // become --srw-field-* on <body>, with --srw-color-scheme (dark | light, from the field's brightness) for the browser's own controls (the list of an
+  // open <select>, the video bar, scrollbars). The plugin's selects, text fields and the modals use them, so a theme restyles them like Stash's own.
+  // Called whenever a page header or a modal is built (cheap), so a theme switch is picked up on the next page.
+  function applyThemeColors() {
+    try {
+      const probe = document.createElement('input');
+      probe.className = 'form-control';
+      probe.style.cssText = 'position:absolute;visibility:hidden;left:-9999px;top:0';
+      document.body.appendChild(probe);
+      const cs = getComputedStyle(probe);
+      let bg = cs.backgroundColor; const fg = cs.color; const border = cs.borderTopColor;
+      probe.remove();
+      const rgb = (c) => (c.match(/[\d.]+/g) || []).map(Number);
+      if (!bg || bg === 'transparent' || (rgb(bg).length === 4 && rgb(bg)[3] === 0)) bg = getComputedStyle(document.body).backgroundColor;
+      const [r, g, b] = rgb(bg);
+      if (r == null) return;
+      const dark = (0.299 * r + 0.587 * g + 0.114 * b) < 140;
+      const st = document.body.style;
+      st.setProperty('--srw-field-bg', bg);
+      st.setProperty('--srw-field-fg', fg);
+      st.setProperty('--srw-field-border', border);
+      st.setProperty('--srw-color-scheme', dark ? 'dark' : 'light');
+    } catch (e) { /* the fixed dark colors of the stylesheet stay */ }
+  }
+
+  // Results of something the user asked for (a check, a search at a provider) are kept in the browser, so a reload or reopening a dialog does not make the
+  // same request again (v0.240.12). At most 80 results; the oldest go first. Failing storage (full, blocked) just means nothing is kept.
+  const RESULT_INDEX = 'srw:results';
+  function keepResult(key, value) {
+    try {
+      const ls = window.localStorage;
+      ls.setItem(`srw:result:${key}`, JSON.stringify({ at: Date.now(), value }));
+      const index = (JSON.parse(ls.getItem(RESULT_INDEX) || '[]') || []).filter((k) => k !== key);
+      index.push(key);
+      while (index.length > 80) ls.removeItem(`srw:result:${index.shift()}`);
+      ls.setItem(RESULT_INDEX, JSON.stringify(index));
+    } catch (e) { /* not kept */ }
+  }
+  // {value, at} or null; older than maxAgeMs counts as not kept.
+  function recallResult(key, maxAgeMs = 7 * 86400000) {
+    try {
+      const got = JSON.parse(window.localStorage.getItem(`srw:result:${key}`) || 'null');
+      return got && Date.now() - got.at <= maxAgeMs ? got : null;
+    } catch (e) { return null; }
+  }
+  function forgetResult(key) { try { window.localStorage.removeItem(`srw:result:${key}`); } catch (e) { /* ignore */ } }
+  const keptNote = (at) => el('div', { className: 'srw-hint', textContent: `Kept from ${new Date(at).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })} — press the button again to ask anew.` });
+
+  // What the watchlist is called and drawn as, by Settings > Watchlist source (v0.240.21): only the kind the user chose is offered. The watchlist (tag mode)
+  // is the eye / crossed-out eye of the browser userscript; Stash's own favorites (favorites mode) keep the heart.
+  function watchKind(mode) {
+    return mode === 'tag'
+      ? { add: 'faEye', remove: 'faEyeSlash', addLabel: 'Add to watchlist', removeLabel: 'Remove from watchlist', on: 'on the watchlist', badge: 'faEye' }
+      : { add: 'faHeart', remove: 'faHeartCrack', addLabel: 'Add to favorites', removeLabel: 'Remove from favorites', on: 'favorite', badge: 'faHeart' };
+  }
+
   function buildPageHeader(activeKey) {
+    applyThemeColors();
     const pluginPath = `/plugins/${PLUGIN_ID}`;
     const links = PAGES.map((p) => el('a', {
       className: `nav-item nav-link${p.key === activeKey ? ' active' : ''}`,
@@ -1534,9 +1596,9 @@
   function buildSearchNowButton(r, onDone, statusNodes) {
     const status = el('span', { className: 'srw-key-status' });
     statusNodes.push(status);
-    return el('button', {
-      className: 'srw-btn', textContent: 'Now',
-      title: 'Run the automatic search for this release again right now (all the usual rules: date, performers, quality)',
+    // A bolt (v0.241.4): right now. The words are the tooltip and the aria-label.
+    return iconButton('button', 'faBolt', 'Search now', {
+      title: 'Search now: run the automatic search for this release again right now (all the usual rules: date, performers, quality)',
       onClick: async (e) => {
         const button = e.currentTarget;
         button.disabled = true;
@@ -1724,7 +1786,7 @@
   // downloaded scenes.
   function addOpenSceneLink(li, provider, sceneId) {
     if (!li || li.querySelector('a.srw-open-scene')) return null;
-    const a = el('a', { className: 'srw-btn srw-open-scene', textContent: 'Open scene', target: '_blank', rel: 'noopener noreferrer', hidden: true,
+    const a = iconButton('a', 'faPlay', 'Open scene', { className: 'srw-btn srw-open-scene', target: '_blank', rel: 'noopener noreferrer', hidden: true,
       title: 'Open this scene in Stash (new tab)' });
     a.dataset.provider = provider || 'stashdb';
     a.dataset.scene = sceneId;
@@ -1734,12 +1796,17 @@
 
   // "Play in Stash" (v0.163.0): a link-button to a scene (or a film's group) of the local Stash, opened in a new tab -- the scene page plays it. EVERY row
   // where the user decides about a scene or film by hand gets one (rule of the user, 2026-10-07); `kind` is 'scene' or 'group'.
+  // An icon button since v0.238.1 (like the other action columns); the words stay as tooltip and aria-label. A part number ("Play part 2") is
+  // kept as text next to the icon, since the icon alone cannot tell the parts apart.
   function buildStashLink(kind, id, label) {
-    return el('a', {
-      className: 'srw-btn srw-btn-sm srw-play-link', href: `/${kind === 'group' ? 'groups' : 'scenes'}/${id}`, target: '_blank', rel: 'noopener noreferrer',
-      textContent: label || (kind === 'group' ? 'Open group' : 'Play in Stash'),
+    const words = label || (kind === 'group' ? 'Open group' : 'Play in Stash');
+    const part = /^Play part (\d+)$/.exec(words);
+    const a = iconButton('a', 'faPlay', words, {
+      className: 'srw-btn srw-play-link', href: `/${kind === 'group' ? 'groups' : 'scenes'}/${id}`, target: '_blank', rel: 'noopener noreferrer',
       title: kind === 'group' ? 'Open the movie\'s group in Stash (new tab)' : 'Open the scene in Stash and play it (new tab)',
     });
+    if (part && a.classList.contains('srw-btn-icon')) a.append(document.createTextNode(` ${part[1]}`));
+    return a;
   }
 
   async function resolveSceneLinks(root) {
@@ -1812,6 +1879,7 @@
   // A dialog in Stash's own modal markup (Bootstrap: .modal / .modal-dialog / .modal-content), so a theme restyles it like Stash's own dialogs
   // (v0.238.0). `title` is the heading, `node` the content; Escape, the x and a click beside the dialog close it. Returns {close, body}.
   function openModal(title, node, { onClose = null, size = 'modal-xl', subtitle = null } = {}) {
+    applyThemeColors();
     const backdrop = el('div', { className: 'modal-backdrop fade show srw-modal-backdrop' });
     const closeBtn = el('button', { type: 'button', className: 'close', 'aria-label': 'Close' }, [el('span', { 'aria-hidden': 'true', textContent: '×' })]);
     const body = el('div', { className: 'modal-body srw-modal-body' }, [node]);
@@ -1839,6 +1907,8 @@
     document.addEventListener('keydown', onKey);
     document.body.classList.add('modal-open');
     document.body.append(backdrop, modal);
+    // The dialog's own surface color (the theme's), for things that stick to the top of its scrolling body and need an opaque ground (the player bar).
+    try { modal.style.setProperty('--srw-surface', getComputedStyle(dialog.querySelector('.modal-content')).backgroundColor); } catch (e) { /* the stylesheet's fallback */ }
     return { close, body };
   }
 
@@ -1889,7 +1959,8 @@
 
   function buildLastSearch(r, onGrabbed) {
     const wrap = el('span', { className: 'srw-prowlarr-search' });
-    const toggleBtn = el('button', { className: 'srw-btn', textContent: 'Last', title: 'What the last automatic search asked for, and why nothing was taken' });
+    // The history clock (v0.241.4), the icon of the History page.
+    const toggleBtn = iconButton('button', 'faClockRotateLeft', 'Last search', { title: 'Last search: what the last automatic search asked for, and why nothing was taken' });
     const toggle = panelToggle(toggleBtn, null, 'Last search', sceneSubtitle(r));
     let panel = null;
     toggleBtn.addEventListener('click', async () => {
@@ -1995,10 +2066,9 @@
   // -- Maintenance > Upgrade wanted uses it for an upgrade grab (records upgrade_of) in its own row layout.
   function buildManualSearch(r, sources, backend, onGrabbed, opts = null) {
     const wrap = el('span', { className: 'srw-prowlarr-search' });
-    const toggleBtn = el('button', {
-      className: 'srw-btn',
-      textContent: 'Manual',
-      title: 'Search the indexers yourself with your own query and grab a result',
+    // A pencil with a magnifier (v0.241.3): your own query. The words are the tooltip and the aria-label.
+    const toggleBtn = iconButton('button', ['faPencil', 'faMagnifyingGlass'], 'Manual search', {
+      title: 'Manual search: search the indexers yourself with your own query and grab a result',
     });
     const toggle = panelToggle(toggleBtn, null, 'Manual search', sceneSubtitle(r));
     let panel = null;
@@ -2695,7 +2765,7 @@
     getSettings, runOp, sidecarWsUrl,
     getRoute, onNavigate, initNavigationWatcher,
     el, waitForElement, entityIcon, buildPageHeader,
-    searchStatusLabel, setBusy, openModal, sceneSubtitle, iconButton, busyIcon, ageWords, ageWarning, confirmInline, buildManagedList, buildSearchActions, whenNoOpenPanel, buildManualSearch, getSearchCapabilities,
+    watchKind, keepResult, recallResult, forgetResult, keptNote, searchStatusLabel, setBusy, openModal, sceneSubtitle, iconButton, busyIcon, ageWords, ageWarning, confirmInline, buildManagedList, buildSearchActions, whenNoOpenPanel, buildManualSearch, getSearchCapabilities,
     rememberOpen, icon, mismatchWarning, buildPagedList, buildPager, releaseTitleNode, notify, dismissedNotice, releaseDismissedNotice, dismissRelease, buildWishlistDismiss, buildFilmDismissButtons, notifyHandoff, buildAddOnlyButton,
     sceneUrl, notifyReadd, loadMetadataProviderUrls, loadProviders, resetProviders, providerInfo, providerLabel, providerKeys, providerOn, providersAllOn, providersSelected, isLateAdditionNew, buildLateAdditionBadge,
     buildFilteredPagedList, buildSelect, buildSafetyPanel, ignoreRenamers, pairingOptionsFor, castOptionsFor, buildPairingBadge, localPageFetcher, releaseQueryArgs, filterLocally, isFilterActive,

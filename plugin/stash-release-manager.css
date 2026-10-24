@@ -2245,3 +2245,52 @@ a.srw-btn { text-decoration: none; display: inline-block; text-align: center; }
 .srw-upgrade-selectall { list-style: none; padding: 0.2rem 0.3rem; opacity: 0.85; }
 .srw-upgrade-note:empty { display: none; }
 @media (max-width: 800px) { .srw-upgrade-row { grid-template-columns: auto minmax(0, 1fr); } .srw-upgrade-row .srw-upgrade-actions { grid-column: 1 / -1; justify-content: flex-start; } }
+
+/* Maintenance > Performers without scenes (v0.238.3): a watchlist performer has an accent frame and a heart badge on its card. */
+.srw-perf-card-watched { border-color: var(--srw-accent, #e83e8c); box-shadow: 0 0 0 1px var(--srw-accent, #e83e8c); }
+.srw-perf-watch-badge { color: var(--srw-accent, #e83e8c); display: inline-flex; }
+
+/* An icon with a small second icon in its lower right corner (iconButton with a [main, badge] pair, v0.238.5). */
+.srw-icon-combo { position: relative; display: inline-flex; }
+.srw-icon-combo .srw-icon-badge { position: absolute; right: -0.45em; bottom: -0.3em; width: 0.65em; height: 0.65em; margin: 0; }
+.srw-btn-icon .srw-icon-combo { margin-right: 0.3em; }
+
+/* Theme colors for fields (v0.240.3): applyThemeColors() in core.js measures Stash's own `.form-control` and sets --srw-field-bg / -fg / -border and
+   --srw-color-scheme on <body>; the hard-coded dark values above stay as the fallback when it could not. The modals sit outside #srw-plugin-root, so
+   they are listed too. `color-scheme` makes the browser's own parts (the open list of a select, the video's control bar, scrollbars) follow. */
+#srw-plugin-root, .srw-modal { color-scheme: var(--srw-color-scheme, dark); }
+.srw-cmp-video { color-scheme: var(--srw-color-scheme, dark); }
+#srw-plugin-root select, .srw-modal select, .srw-settings-section select, .srw-filter-preset-select, .srw-filter-preset-name,
+#srw-plugin-root .srw-filter-select, .srw-modal .srw-filter-select,
+#srw-plugin-root input:is([type=text], [type=search], [type=number], [type=password], [type=date], [type=url], [type=email], :not([type])),
+.srw-modal input:is([type=text], [type=search], [type=number], [type=password], [type=date], [type=url], [type=email], :not([type])),
+#srw-plugin-root textarea, .srw-modal textarea {
+  background-color: var(--srw-field-bg, #1e1e1e);
+  color: var(--srw-field-fg, #e0e0e0);
+  border: 1px solid var(--srw-field-border, rgba(128, 128, 128, 0.4));
+  border-radius: 4px;
+  color-scheme: var(--srw-color-scheme, dark);
+}
+.srw-modal select, .srw-modal input:is([type=text], [type=search], [type=number], [type=url], [type=email], :not([type])), .srw-modal textarea { min-height: 30px; padding: 0.15rem 0.5rem; font-size: 1rem; box-sizing: border-box; }
+#srw-plugin-root select option, .srw-modal select option, .srw-settings-section select option, .srw-filter-preset-select option, #srw-plugin-root .srw-filter-select option {
+  background-color: var(--srw-field-bg, #1e1e1e);
+  color: var(--srw-field-fg, #e0e0e0);
+}
+
+/* The player bar of a review / compare view (v0.240.4): it sat on a fixed dark strip (#1a1a1a) and its buttons were the small size, because the
+   modal is outside the Maintenance page's rules. Now its ground is the dialog's own surface color (the theme's) and the buttons are the normal size. */
+.srw-cmp-bar { background: var(--srw-surface, var(--bs-body-bg, #1a1a1a)); }
+.srw-modal .srw-btn-sm { padding: 0.25rem 0.6rem; font-size: 1em; }
+.srw-modal .srw-btn { color: inherit; }
+/* In the review dialog the player bar scrolls away with the content (v0.240.5); on the Compare scenes page it still stays at the top. */
+.srw-modal .srw-cmp-bar { position: static; }
+
+/* The review dialog uses the width of the screen (v0.240.7): wider than Bootstrap's modal-xl, one column grid, and the scene's column in two halves. */
+.srw-modal .modal-dialog.srw-modal-wide { max-width: min(96vw, 1800px); }
+.srw-cmp-grid-one { grid-template-columns: minmax(0, 1fr); }
+.srw-cmp-split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 1rem; border: 0; padding: 0; }
+.srw-cmp-split-left, .srw-cmp-split-right { min-width: 0; }
+@media (max-width: 1100px) { .srw-cmp-split { grid-template-columns: minmax(0, 1fr); } }
+
+/* The result text of a card's button keeps its line even while empty (v0.240.19), so the button does not move up when the text appears. */
+.srw-search-card-actions .srw-key-status { min-height: 1.4em; }
