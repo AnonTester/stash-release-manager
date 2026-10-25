@@ -1172,9 +1172,9 @@
           },
         }));
       } else if (status === 'dismissed') {
-        li.push(el('button', {
+        li.push(window.SRW.iconButton('button', 'faRotateLeft', 'Restore', {
           className: 'srw-btn',
-          textContent: 'Restore',
+          title: 'Restore: back on the list',
           onClick: async () => {
             await window.SRW.runOp('releases_undismiss', {
               provider: r.provider, scene_stashdb_id: r.scene_stashdb_id,

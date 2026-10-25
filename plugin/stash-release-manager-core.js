@@ -11,7 +11,7 @@
   // rule and the bug it caused when this drifted). Change this if you
   // install under a different folder name.
   // Must equal `version:` in stash-release-manager.yml (scripts/test_plugin_version.py checks it).
-  const PLUGIN_VERSION = '0.242.2';
+  const PLUGIN_VERSION = '0.243.18';
   const PLUGIN_ID = 'stash-release-manager';
   const PLUGIN_NAME = 'StashReleaseManager';
 
@@ -845,6 +845,14 @@
       document.body.appendChild(probe);
       const cs = getComputedStyle(probe);
       let bg = cs.backgroundColor; const fg = cs.color; const border = cs.borderTopColor;
+      // Stash's own secondary button (the filter bars' buttons follow it)
+      const sec = document.createElement('button');
+      sec.className = 'btn btn-secondary';
+      sec.style.cssText = 'position:absolute;visibility:hidden;left:-9999px;top:0';
+      document.body.appendChild(sec);
+      const bs = getComputedStyle(sec);
+      const btn = { bg: bs.backgroundColor, fg: bs.color, border: bs.borderTopColor };
+      sec.remove();
       probe.remove();
       const rgb = (c) => (c.match(/[\d.]+/g) || []).map(Number);
       if (!bg || bg === 'transparent' || (rgb(bg).length === 4 && rgb(bg)[3] === 0)) bg = getComputedStyle(document.body).backgroundColor;
@@ -856,7 +864,26 @@
       st.setProperty('--srw-field-fg', fg);
       st.setProperty('--srw-field-border', border);
       st.setProperty('--srw-color-scheme', dark ? 'dark' : 'light');
+      if (btn.bg && btn.fg) { st.setProperty('--srw-btn-bg', btn.bg); st.setProperty('--srw-btn-fg', btn.fg); st.setProperty('--srw-btn-border', btn.border); }
     } catch (e) { /* the fixed dark colors of the stylesheet stay */ }
+  }
+
+  // Copies text to the clipboard (v0.243.7). Stash is usually opened over plain http on the local network, where navigator.clipboard does not exist
+  // (it needs https or localhost): then a hidden text field and the older copy command do it. Resolves to true / false.
+  async function copyText(text) {
+    try {
+      if (window.isSecureContext && navigator.clipboard) { await navigator.clipboard.writeText(text); return true; }
+    } catch (e) { /* fall through to the older way */ }
+    const field = document.createElement('textarea');
+    field.value = text;
+    field.setAttribute('readonly', '');
+    field.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0';
+    document.body.appendChild(field);
+    field.select();
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+    field.remove();
+    return ok;
   }
 
   // Results of something the user asked for (a check, a search at a provider) are kept in the browser, so a reload or reopening a dialog does not make the
@@ -1553,7 +1580,7 @@
         cb.addEventListener('change', () => setIgnoreRenamers(cb.checked));
         parts.push(el('label', { className: 'srw-provider-filter-item', title: 'Only for this browser session' }, [cb, ' I know: continue anyway (this browser session)']));
       }
-      if (!compact) parts.push(el('div', { className: 'srw-toolbar' }, [el('button', { className: 'srw-btn', textContent: 'Check again', onClick: load }), status]));
+      if (!compact) parts.push(el('div', { className: 'srw-toolbar' }, [iconButton('button', 'faClipboardCheck', 'Check again', { className: 'srw-btn', onClick: load }), status]));
       box.replaceChildren(...parts);
     }
     if (!compact) box.appendChild(status);
@@ -1568,8 +1595,6 @@
       if (!caps || caps.error) return;
       // One joined group (v0.214.0): Now | Whisparr | Last | Manual. Dismiss sits outside of it, apart.
       const group = el('span', { className: 'srw-btn-group' });
-      // First segment: a magnifier (not a button) -- says that the four buttons after it are all searches.
-      group.appendChild(el('span', { className: 'srw-btn-group-label', title: 'Search: Now · Whisparr · Last · Manual' }, [icon('faMagnifyingGlass') || document.createTextNode('🔍')]));
       const status = [];
       const sources = caps.manual_sources || [];
       if (sources.length && r.entity_type && r.entity_stashdb_id) group.appendChild(buildSearchNowButton(r, onGrabbed, status));
@@ -1588,7 +1613,7 @@
       if (sources.length) group.appendChild(buildManualSearch(r, sources, caps.backend, onGrabbed));
       // The result texts of the buttons ("nothing found", errors, the spinner) go in a line of their own: in a release row it hangs under the buttons
       // and takes no room, so the buttons stay where they are (v0.238.0); elsewhere it follows them inline.
-      wrap.append(...(group.children.length > 1 ? [group] : []), el('span', { className: 'srw-search-status-line' }, status)); // the magnifier alone is no group
+      wrap.append(...(group.children.length ? [group] : []), el('span', { className: 'srw-search-status-line' }, status));
     });
     return wrap;
   }
@@ -1606,8 +1631,8 @@
   function buildSearchNowButton(r, onDone, statusNodes) {
     const status = el('span', { className: 'srw-key-status' });
     statusNodes.push(status);
-    // A bolt (v0.241.4): right now. The words are the tooltip and the aria-label.
-    return iconButton('button', 'faBolt', 'Search now', {
+    // The magnifier, as on the movie rows (v0.243.4; a bolt before). The words are the tooltip and the aria-label.
+    return iconButton('button', 'faMagnifyingGlass', 'Search now', {
       title: 'Search now: run the automatic search for this release again right now (all the usual rules: date, performers, quality)',
       onClick: async (e) => {
         const button = e.currentTarget;
@@ -1840,7 +1865,7 @@
     const title = kids.filter((c) => c.classList.contains('srw-release-title'));
     // Buttons AND link-buttons ("Open scene", "Open group", "Open file in Stash") are actions; the Scene / Movie pill sits next to the title (v0.128.5).
     const actions = kids.filter((c) => c.tagName === 'BUTTON' || (c.tagName === 'A' && c.classList.contains('srw-btn'))
-      || has(c, 'srw-search-actions', 'srw-inline-confirm'));
+      || has(c, 'srw-search-actions', 'srw-inline-confirm', 'srw-btn-group'));
     // Result / progress texts of the buttons ("searching...", "Still no match ...") get a line of their own under the row's text: in the buttons'
     // column they widened it and shifted the whole table (v0.235.1).
     const statuses = kids.filter((c) => has(c, 'srw-key-status'));
@@ -1970,7 +1995,7 @@
   function buildLastSearch(r, onGrabbed) {
     const wrap = el('span', { className: 'srw-prowlarr-search' });
     // The history clock (v0.241.4), the icon of the History page.
-    const toggleBtn = iconButton('button', 'faClockRotateLeft', 'Last search', { title: 'Last search: what the last automatic search asked for, and why nothing was taken' });
+    const toggleBtn = iconButton('button', ['faRotateLeft', 'faMagnifyingGlass'], 'Last search', { title: 'Last search: what the last automatic search asked for, and why nothing was taken' });
     const toggle = panelToggle(toggleBtn, null, 'Last search', sceneSubtitle(r));
     let panel = null;
     toggleBtn.addEventListener('click', async () => {
@@ -2772,7 +2797,7 @@
   window.SRW = {
     PLUGIN_ID, PLUGIN_NAME,
     getContentScope, resetContentScope, scopeAllows,
-    getSettings, runOp, sidecarWsUrl, stashUrl,
+    getSettings, runOp, sidecarWsUrl, stashUrl, copyText,
     getRoute, onNavigate, initNavigationWatcher,
     el, waitForElement, entityIcon, buildPageHeader,
     watchKind, keepResult, recallResult, forgetResult, keptNote, searchStatusLabel, setBusy, openModal, sceneSubtitle, iconButton, busyIcon, ageWords, ageWarning, confirmInline, buildManagedList, buildSearchActions, whenNoOpenPanel, buildManualSearch, getSearchCapabilities,
