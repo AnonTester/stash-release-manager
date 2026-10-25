@@ -538,6 +538,27 @@ def main():
     elif mode == "compare_remove_id":
         result = _post(sidecar_url, f"/maintenance/compare/pair/{args.get('id')}/remove-id",
                        {"scene_id": args.get("scene_id"), "stash_id": args.get("stash_id")}, timeout=60)
+    elif mode == "organize_shared":
+        result = _get(sidecar_url, f"/maintenance/organize/shared?status={args.get('status') or 'open'}", timeout=60)
+    elif mode == "organize_shared_keep_safe":
+        result = _post(sidecar_url, "/maintenance/organize/shared/keep-safe", {"dry": bool(args.get("dry"))}, timeout=300)
+    elif mode == "organize_shared_scan":
+        result = _post(sidecar_url, "/maintenance/organize/shared/scan", {}, timeout=30)
+    elif mode == "organize_shared_use":
+        result = _post(sidecar_url, f"/maintenance/organize/shared/{args.get('scene_id')}/use", {"candidate_id": args.get("candidate_id")}, timeout=120)
+    elif mode in ("organize_shared_keep", "organize_shared_dismiss"):
+        result = _post(sidecar_url, f"/maintenance/organize/shared/{args.get('scene_id')}/{mode.rsplit('_', 1)[1]}", {}, timeout=30)
+    elif mode == "convert_list":
+        result = _get(sidecar_url, "/maintenance/convert", timeout=30)
+    elif mode == "convert_history":
+        result = _get(sidecar_url, f"/maintenance/convert/history?status={args.get('status') or 'done'}", timeout=30)
+    elif mode == "convert_refresh":
+        result = _post(sidecar_url, "/maintenance/convert/refresh", {}, timeout=300)
+    elif mode in ("convert_queue", "convert_cancel", "convert_dismiss"):
+        body = {"ids": args.get("ids") or []}
+        if mode == "convert_dismiss":
+            body["restore"] = bool(args.get("restore"))
+        result = _post(sidecar_url, "/maintenance/convert/" + mode.split("_", 1)[1], body, timeout=60)
     elif mode == "upgrades_list":
         result = _get(sidecar_url, "/maintenance/upgrades", timeout=30)
     elif mode == "upgrades_refresh":

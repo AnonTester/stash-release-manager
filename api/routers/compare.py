@@ -27,6 +27,13 @@ def counts():
     out = {"pairs_open": len(scene_compare.list_pairs(_db, "pending")),
            "upgrades_open": len(upgrades.list_candidates(_db, ("wanted", "review", "check"))), "review_open": None}
     try:
+        import convert
+        out["convert_open"] = convert.badge(_db)
+        import shared_fingerprint
+        out["shared_open"] = shared_fingerprint.open_count(_db)
+    except Exception:
+        pass
+    try:
         out["review_open"] = _compare().review_open_count()
     except Exception:
         pass  # Stash not reachable: no badge for Review

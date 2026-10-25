@@ -101,6 +101,7 @@ import film_repo
 import scene_compare
 import scene_alias
 from routers.encode_worker import router as encode_worker_router, init_encode_worker_router
+from routers.convert_api import router as convert_router, init_convert_router, resume as convert_resume
 from routers.releases import router as releases_router, init_releases_router, download_progress as compute_download_progress
 from routers.scan import router as scan_router, init_scan_router, set_progress as set_scan_progress
 from routers.settings import (
@@ -692,6 +693,33 @@ def _stashdb_or_none():
     """StashDB's client, or None when no StashDB key is set (v0.243.2): the library tools then work with ThePornDB alone instead of failing on every StashDB call."""
     client = get_stashdb_client()
     return client if (client.session.headers.get("ApiKey") or "").strip() else None
+
+
+def _shared_fingerprint_hint(scene, file, provider_scene_id, found, client):
+    """verification.shared_hook (v0.246.2): a verified download whose file is registered at several provider scenes. If the length does not single the
+    scene out, it goes on the Shared fingerprints list and into History as a hint; the import itself is not stopped. Scenes that only have a SIMILAR picture
+    hash do not count (shared_fingerprint.split_exact)."""
+    import shared_fingerprint
+    local = [(fp["type"], fp["value"]) for fp in file.get("fingerprints") or [] if fp.get("type") in ("oshash", "phash", "md5")]
+    exact, near = shared_fingerprint.split_exact(client, local, found, provider_scene_id)
+    if len(exact) < 2:
+        return
+    try:
+        durations = client.scene_durations([f["id"] for f in exact]) if hasattr(client, "scene_durations") else {}
+    except Exception:
+        durations = {}
+    verdict = shared_fingerprint.judge(file.get("duration"), provider_scene_id, exact, durations,
+                                       kept=shared_fingerprint.is_kept(db, scene["id"], provider_scene_id))
+    if verdict["ok"]:
+        return
+    provider = _organizer().provider_of_endpoint(getattr(client, "url", None)) or "stashdb"
+    shared_fingerprint.upsert(db, scene["id"], scene.get("title"), file["path"], file.get("duration"), provider, provider_scene_id,
+                              verdict["reason"], verdict["how"], shared_fingerprint.enrich(client, exact, durations, near))
+    history.add("warning", "history", "import", f"Fingerprint is not unique: {verdict['how']} -- look at it under Maintenance > Organize library > Shared fingerprints",
+                scene_id=str(scene["id"]), scene_title=scene.get("title"), details={"path": file["path"], "candidates": [f["id"] for f in exact]}, dedupe_minutes=24 * 60)
+
+
+verification.shared_hook = _shared_fingerprint_hint
 
 
 def _extra_stashboxes():
@@ -1591,6 +1619,7 @@ def run_recycle_bin_cleanup():
 
 init_watchlist_router(db, get_stash_client, inactive_job)
 init_encode_worker_router(db)
+init_convert_router(db, get_stash_client, _stash_path_to_local, _recycle_library_file)
 init_releases_router(db, get_whisparr_client, get_stash_client, get_stashdb_client,
                       get_manual_search_sources, get_search_source, settings,
                       get_provider_client=get_provider_client)
@@ -2212,6 +2241,7 @@ async def lifespan(app: FastAPI):
         # One-off description backfill (2026-09-26), background, no-op once done.
         threading.Thread(target=run_details_backfill, daemon=True).start()
         threading.Thread(target=run_tags_backfill, daemon=True).start()
+        threading.Thread(target=convert_resume, daemon=True).start()  # Convert rows that were being checked / swapped when the sidecar stopped
         tasks += [asyncio.create_task(loop()) for loop in (
             _scan_loop, _safety_sweep_loop, _stashdb_favorites_loop, _box_favorites_loop, _whisparr_blocklist_sync_loop, _theporndb_identify_loop,
             _inactive_check_loop, _duplicate_check_loop, _film_search_loop, _film_feed_loop, _import_check_loop, _file_import_loop, _torrent_health_loop,
@@ -2228,6 +2258,7 @@ app.include_router(watchlist_router)
 app.include_router(userscript_router)
 app.include_router(releases_router)
 app.include_router(encode_worker_router)
+app.include_router(convert_router)
 app.include_router(scan_router)
 app.include_router(settings_router)
 app.include_router(stashdb_favorites_router)
