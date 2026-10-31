@@ -6,6 +6,16 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.246.16 (with 0.246.13 - 0.246.15)
+- **Scenes dated today or yesterday are not "Stuck" yet.** Indexers often post a release hours (sometimes a day) after its date, so "nothing found" right after the hand-off is normal. Such a scene stays on the Releases page's wishlist and is searched as usual; the Stuck tab says how many are left out, and "Search all stuck" skips them. From the day after tomorrow it counts as stuck. The rule goes by the scene's date, not by when it reached the wishlist.
+- **"Not this one" blocks only that file.** Rejecting a possible match (Needs review) used to block every other encode of the same release too (720p / 1080p / 2160p / x265); rejecting a 480p copy could leave a scene stuck although better encodes were listed. Now only the rejected file is blocked (Undo removes it as well). Existing entries stay as they are.
+- **Live updates for search results.** A search that changed a scene's result or found a possible match did not reach the open Activity page until you reloaded it. A changed result or candidate is pushed now (an unchanged one is not, so a scan does not reload every page).
+- **Progress for the check of a finished re-encode.** The check (the sidecar reads the encoded file through once; minutes on a NAS) shows "Checking the re-encoded file - 43%, 2 min left, running 5 min" instead of a frozen "100%".
+
+## 0.246.12 (with 0.246.11)
+- **Userscript: feedback pop-up.** A short pop-up in the bottom right corner tells you whether the hand-off to the sidecar worked ("added to the wishlist", "searching now", "already on the wishlist", "Stash already has this scene", "added to / removed from the watchlist") or failed (in red, with the reason, and it stays longer). Update the script in your userscript manager afterwards.
+- **Fix: the number on the Activity tab could be higher than its list.** A "download finished" note of a release that had been sent back to searching was never cleared and counted as a running import until the container restarted. Such notes are now dropped.
+
 ## 0.246.10 (with 0.246.3 - 0.246.9)
 - **Shared fingerprints, refined.** The provider's lookup by picture hash (PHASH) is a **similarity** search with a few bits of tolerance, so it also returns scenes that are other videos with the same frame layout (VR scenes, black intros ...). Only scenes that have an **exactly equal** hash registered (OSHASH, or PHASH at distance 0) now count as owners of a file's fingerprint; the similar-only ones are set aside, listed in a fold-away note per row, and no longer make a file "ambiguous". A real wrong submission at the provider (someone's exact hashes on an unrelated scene) stays listed. A new scan settles the rows that are fine now.
 - **Download verification** leaves a hint in History (and a row on the list) when a verified download's fingerprint is registered at several scenes and the length does not single the scene out; the import is not stopped.
