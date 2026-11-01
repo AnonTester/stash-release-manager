@@ -139,6 +139,7 @@
   // Stash), and a card that does not react looks like a click that did not work. Returns the function that takes the mark off again.
   // The mark belongs to the card's release, not to one DOM node: the grid is redrawn while an answer is pending (another card changed, a quiet re-reading
   // differed) and the new card must carry it again -- buildPill() asks pendingPills.
+  const expandedDays = new Set(); // days opened with "+N more": they stay open when the grid is drawn again
   const pendingPills = new Map(); // 'provider:scene' -> 'Adding…' | 'Dismissing…'
   const pillKey = (r) => `${r.provider}:${r.scene_stashdb_id}`;
   function applyBusyMark(pill, text) {
@@ -2237,27 +2238,32 @@
         // reference across toggles either way, but this reads clearer).
         let expanded = false;
         let expandedPills = [];
+        const setExpanded = (on) => {
+          if (on === expanded) return;
+          if (!on) {
+            expandedPills.forEach((pill) => pill.remove());
+            expandedPills = [];
+            toggleBtn.textContent = `+${hidden.length} more`;
+            expandedDays.delete(dateKey);
+          } else {
+            expandedPills = hidden.map((r) => {
+              const pill = buildPill(r);
+              dayCell.insertBefore(pill, toggleBtn);
+              return pill;
+            });
+            toggleBtn.textContent = 'Show less';
+            expandedDays.add(dateKey);
+            window.SRW.resolveSceneLinks(dayCell); // the pills behind "+N more" are built only now: give their "↗" its link
+          }
+          expanded = on;
+        };
         const toggleBtn = el('button', {
           className: 'srw-cal-more-btn',
           textContent: `+${hidden.length} more`,
-          onClick: () => {
-            if (expanded) {
-              expandedPills.forEach((pill) => pill.remove());
-              expandedPills = [];
-              toggleBtn.textContent = `+${hidden.length} more`;
-            } else {
-              expandedPills = hidden.map((r) => {
-                const pill = buildPill(r);
-                dayCell.insertBefore(pill, toggleBtn);
-                return pill;
-              });
-              toggleBtn.textContent = 'Show less';
-              window.SRW.resolveSceneLinks(dayCell); // the pills behind "+N more" are built only now: give their "↗" its link
-            }
-            expanded = !expanded;
-          },
+          onClick: () => setExpanded(!expanded),
         });
         dayCell.appendChild(toggleBtn);
+        if (expandedDays.has(dateKey)) setExpanded(true); // a day the user opened stays open when the grid is drawn again (Dismiss / Add inside it)
       }
       grid.appendChild(dayCell);
     }
