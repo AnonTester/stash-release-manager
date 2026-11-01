@@ -3205,6 +3205,8 @@
     const { el, confirmInline, notify } = window.SRW;
     const status = el('span', { className: 'srw-key-status' });
     const workerLine = el('p', { className: 'srw-hint' });
+    // What is being converted right now (v0.249.6): a queued file leaves "To convert", so its progress is also told here, on every state of the list.
+    const activeLine = el('div', { className: 'srw-hint', hidden: true });
     const list = el('div');
     const MODE_TEXT = { reencode: ['Re-encode', 'The video is encoded again (old codec); the picture size stays'],
                         remux: ['Repack', 'The video is already H.264 and is copied as it is; only the container (and maybe the sound) changes -- takes seconds, loses nothing'] };
@@ -3227,6 +3229,8 @@
     const sortDir = el('button', { type: 'button', className: 'srw-btn', title: 'Reverse the order', textContent: '↑',
       onClick: () => { reversed = !reversed; sortDir.textContent = reversed ? '↓' : '↑'; view.reset(); } });
     let reversed = false;
+    // After a file is queued the list shows "Queued / running", where the row with its status and remaining time is (it left "To convert").
+    const showActive = () => { stateSelect.value = 'active'; selected.clear(); syncBulkButtons(); if (view) view.reset(); };
     const stateOf = (c) => (c.status === 'failed' ? 'failed' : ACTIVE.includes(c.status) ? 'active' : c.status === 'done' ? 'done' : c.status === 'dismissed' ? 'dismissed' : 'open');
     const pool = () => {
       const st = stateSelect.value;
@@ -3271,7 +3275,7 @@
     const convertBtn = el('button', { type: 'button', className: 'srw-btn srw-btn-primary', textContent: 'Convert', title: 'Queue the selected files; an encode worker converts them one after the other',
       onClick: (e) => confirmInline(e.currentTarget,
         `Convert ${estimate(selectedRows())}? The scene stays, the converted file joins it and the old file goes to the recycle bin. Needs an encode worker.`,
-        () => bulkOp('convert_queue', [...selected], (r) => `${r.queued} file(s) queued`)) });
+        () => bulkOp('convert_queue', [...selected], (r) => { showActive(); return `${r.queued} file(s) queued -- progress under “Queued / running”`; })) });
     const cancelBtn = el('button', { type: 'button', className: 'srw-btn', textContent: 'Cancel', title: 'Take the selected queued / running files out of the queue (a running conversion is stopped)',
       onClick: () => bulkOp('convert_cancel', [...selected], (r) => `${r.cancelled} file(s) taken out of the queue`) });
     const dismissBtn = el('button', { type: 'button', className: 'btn btn-outline-danger srw-btn-fit', textContent: 'Dismiss', title: 'Keep these files as they are; they leave the list',
@@ -3305,6 +3309,22 @@
       const r = await window.SRW.runOp('convert_history', { status: kind });
       if (!r.error) history[kind] = r.rows || [];
     }
+    function renderActiveLine() {
+      const act = rows.filter((c) => ACTIVE.includes(c.status));
+      activeLine.hidden = !act.length;
+      activeLine.innerHTML = '';
+      if (!act.length) return;
+      const running = act.filter((c) => c.status === 'running');
+      const checking = act.filter((c) => c.status === 'verifying' || c.status === 'replacing');
+      const queued = act.filter((c) => c.status === 'queued');
+      const name = (c) => (c.scene_title || c.file_path.split('/').pop());
+      const parts = [
+        ...running.map((c) => `${name(c)}: ${c.percentage || 0} %${c.seconds_left ? `, about ${Math.max(1, Math.round(c.seconds_left / 60))} min left` : ''}`),
+        ...checking.map((c) => `${name(c)}: ${phaseText(c, c.status === 'verifying' ? 'checking the converted file' : 'putting it into the scene')}`),
+      ];
+      activeLine.append(`Converting now (${running.length} running${checking.length ? `, ${checking.length} finishing` : ''}${queued.length ? `, ${queued.length} waiting` : ''}): ${parts.join(' · ') || 'waiting for an encode worker'} `,
+        el('a', { href: '#', textContent: 'show', onClick: (e) => { e.preventDefault(); stateSelect.value = 'active'; selected.clear(); syncBulkButtons(); view.reset(); } }));
+    }
     async function load() {
       const r = await window.SRW.runOp('convert_list');
       if (r.error) { status.textContent = ` error: ${r.error}`; return; }
@@ -3315,6 +3335,7 @@
       workerLine.textContent = (w.online ? `Encode worker online${w.name ? `: ${w.name}` : ''}.` : `No encode worker is asking right now${w.name ? ` (last: ${w.name}, ${w.seconds_ago == null ? '' : `${Math.round(w.seconds_ago / 60)} min ago`})` : ''} -- queued files wait for one.`)
         + (r.media_path_set ? '' : ' The folder of the library on the worker machine is not set yet (Settings > Quality > "Library on the worker"); without it the worker needs --map /media=<folder>.');
       workerLine.className = w.online && r.media_path_set ? 'srw-hint' : 'srw-review-warning';
+      renderActiveLine();
       [...stateSelect.options].forEach((o) => {
         const n = o.value === 'done' ? counts.done : o.value === 'dismissed' ? counts.dismissed : rows.filter((c) => stateOf(c) === o.value).length;
         o.textContent = `${STATES.find((x) => x[0] === o.value)[1]} (${n})`;
@@ -3343,6 +3364,13 @@
       if (!busy && timer) { clearInterval(timer); timer = null; }
     }
 
+    // The step a finished conversion is in on the sidecar: its name, how far (Stash's scan reports a percentage) and how long this step runs.
+    function phaseText(c, fallback) {
+      const p = c.phase;
+      if (!p) return `${fallback}…`;
+      const mins = Math.floor((p.step_seconds || 0) / 60);
+      return `${p.step}${p.percent != null && p.percent < 100 ? ` -- ${p.percent} %` : ''}${mins >= 1 ? `, running ${mins} min` : '…'}`;
+    }
     function buildRow(c) {
       const [modeLabel, modeTitle] = MODE_TEXT[c.mode] || [c.mode, ''];
       const cb = el('input', { type: 'checkbox', title: 'Select' });
@@ -3351,7 +3379,7 @@
       const facts = [`${c.container}/${c.video_codec}/${c.audio_codec || 'no sound'}`, c.width && c.height ? `${c.width}x${c.height}` : null, fmtGb(c.size), fmtMin(c.duration),
         c.bit_rate ? `${(c.bit_rate / 1e6).toFixed(1)} Mbit/s` : null].filter(Boolean);
       const note = {
-        wanted: '', failed: c.error || 'failed', queued: 'waiting for an encode worker', verifying: 'checking the converted file…', replacing: 'putting the converted file into the scene…',
+        wanted: '', failed: c.error || 'failed', queued: 'waiting for an encode worker', verifying: phaseText(c, 'checking the converted file'), replacing: phaseText(c, 'putting the converted file into the scene'),
         running: `${c.worker || 'worker'}: ${c.percentage || 0} %${c.speed_x ? ` (${c.speed_x}x)` : ''}${c.seconds_left ? `, about ${Math.max(1, Math.round(c.seconds_left / 60))} min left` : ''}`,
         done: `converted: ${fmtGb(c.size)} -> ${fmtGb(c.size_after)}; the old file is in the recycle bin`, dismissed: 'dismissed -- the file is kept as it is',
       }[c.status] || c.status;
@@ -3359,7 +3387,7 @@
       if (c.status === 'wanted' || c.status === 'failed') {
         actions.push(el('button', { type: 'button', className: 'srw-btn srw-btn-primary', textContent: 'Convert', title: 'Queue this file for an encode worker',
           onClick: (e) => confirmInline(e.currentTarget, `Convert "${c.scene_title || c.file_path.split('/').pop()}" (${modeLabel.toLowerCase()})? The scene stays and the old file goes to the recycle bin.`,
-            async () => { const r = await window.SRW.runOp('convert_queue', { ids: [c.id] }); if (r.error) { notify('Convert', r.error, 'error'); return; } load(); }) }));
+            async () => { const r = await window.SRW.runOp('convert_queue', { ids: [c.id] }); if (r.error) { notify('Convert', r.error, 'error'); return; } await load(); showActive(); }) }));
         actions.push(el('button', { type: 'button', className: 'btn btn-outline-danger srw-btn-fit srw-btn-dismiss', textContent: 'Dismiss', title: 'Keep the file as it is',
           onClick: async () => { await window.SRW.runOp('convert_dismiss', { ids: [c.id] }); await load();
             window.SRW.dismissedNotice(`Dismissed: ${c.scene_title || 'file'}`, 'The file is kept as it is.', () => window.SRW.runOp('convert_dismiss', { ids: [c.id], restore: true }), () => load()); } }));
@@ -3388,6 +3416,7 @@
           + 'The work is done by an encode worker on another machine (not the NAS). The Stash scene stays: the converted file joins it, and the old file goes to the recycle bin. HEVC and VR files and files that only have AC3 sound are not part of this page.',
       }),
       workerLine,
+      activeLine,
       el('div', { className: 'srw-toolbar' }, [refreshBtn, stateSelect, modeSelect, sortSelect, sortDir, status]),
       bulk,
       list,

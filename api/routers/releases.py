@@ -130,7 +130,7 @@ def query(body: dict):
         vr=body.get("vr"), providers=list(providers) if providers is not None else None,
         date_from=body.get("date_from") or None, date_until=body.get("date_until") or None,
         page=int(body.get("page") or 1), per_page=int(body.get("per_page") if body.get("per_page") is not None else 100),
-        ids_only=bool(body.get("ids_only")),
+        ids_only=bool(body.get("ids_only")), light=bool(body.get("light")),
         entities=[tuple(e) for e in body["entities"]] if body.get("entities") is not None else None,
         late_addition=body.get("late_addition"),
         order=body.get("order") or "day",
@@ -372,6 +372,9 @@ def handoff(provider: str, entity_type: str, entity_stashdb_id: str, scene_stash
         )
     except ValueError as e:
         raise HTTPException(404, str(e))
+    except Exception as e:  # noqa: BLE001 -- v0.249.12: the page showed only "HTTP 500: Internal Server Error"; now it says what failed
+        logger.exception("hand-off failed for %s scene %s", provider, scene_stashdb_id)
+        raise HTTPException(502, f"{type(e).__name__}: {str(e)[:300]}")
     return result
 
 

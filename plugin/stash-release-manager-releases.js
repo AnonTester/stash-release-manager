@@ -98,11 +98,72 @@
   // A live change (every search run of the sidecar touches rows) rebuilds the list -- which used to close a search panel the user had open
   // ("Search…" / "Last search") together with its results, in the middle of reading them: a view with an open panel is reloaded only once
   // the panel is closed (core.js whenNoOpenPanel).
-  function reloadLiveSections() {
+  function reloadSectionViews() {
     liveSectionViews.forEach((view) => {
       if (view.node.isConnected) window.SRW.whenNoOpenPanel(view.node, () => view.reload());
       else liveSectionViews.delete(view);
     });
+  }
+
+  // The Calendar keeps what it shows (v0.249.8): a card action changes the card in place, a live change re-reads only the month's rows (at most every
+  // 8 seconds, and the grid is only redrawn when they differ) -- the whole page is no longer rebuilt, which with many cards took seconds.
+  let calendarCtl = null; // the Calendar drawn right now: { listWrap, patch(release, change), softRefresh(), goMonth(date) }
+  const monthCache = new Map(); // 'YYYY-MM' -> { rows, sig }: a month seen before is shown at once and re-read quietly
+  const calendarLive = () => Boolean(calendarCtl && viewMode === 'calendar' && calendarCtl.listWrap.isConnected);
+
+  // Sections: with the Calendar on screen one reload serves a burst of changes (every card action and every search run pushes one) instead of four
+  // queries per push -- they piled up behind each other and made the next click slower.
+  // Every call through Stash costs about 2 seconds (it starts the plugin script for each one) and they run one after the other, so reloading the four
+  // sections after every click made the NEXT click wait behind them: the reload starts only when the clicking pauses (6 s), at the latest after 40 s.
+  let sectionsTimer = null;
+  let sectionsFirstAsk = 0;
+  function reloadLiveSections() {
+    if (!calendarLive()) { reloadSectionViews(); return; }
+    const now = Date.now();
+    if (!sectionsFirstAsk) sectionsFirstAsk = now;
+    clearTimeout(sectionsTimer);
+    sectionsTimer = setTimeout(() => { sectionsTimer = null; sectionsFirstAsk = 0; reloadSectionViews(); }, Math.max(0, Math.min(6000, sectionsFirstAsk + 40000 - now)));
+    calendarCtl.softRefresh();
+  }
+
+  // A card was changed (change = { remove: true } or { status }) or something changed behind it (change = null): the Calendar updates in place;
+  // without a drawn Calendar the whole view is rendered as before.
+  async function calendarChanged(container, release, change, readNow = false) {
+    if (!calendarLive()) { await renderCalendarView(container); return; }
+    if (change) calendarCtl.patch(release, change);
+    reloadLiveSections(); // the sections and the quiet re-reading follow shortly, once for a series of clicks
+    if (readNow) calendarCtl.refreshNow(); // an Undo: the card must be back at once, not after the pause
+  }
+
+  // A card that was clicked shows it at once ("Adding…" / "Dismissing…", dimmed, no second click): the answer takes seconds (every call goes through
+  // Stash), and a card that does not react looks like a click that did not work. Returns the function that takes the mark off again.
+  // The mark belongs to the card's release, not to one DOM node: the grid is redrawn while an answer is pending (another card changed, a quiet re-reading
+  // differed) and the new card must carry it again -- buildPill() asks pendingPills.
+  const pendingPills = new Map(); // 'provider:scene' -> 'Adding…' | 'Dismissing…'
+  const pillKey = (r) => `${r.provider}:${r.scene_stashdb_id}`;
+  function applyBusyMark(pill, text) {
+    if (!pill || pill.querySelector('.srw-cal-pill-busy-tag')) return;
+    pill.classList.add('srw-cal-pill-busy');
+    pill.appendChild(window.SRW.el('span', { className: 'srw-cal-pill-busy-tag', textContent: text }));
+  }
+  function markPillBusy(pill, text, release) {
+    if (!release) return () => {};
+    const key = pillKey(release);
+    pendingPills.set(key, text);
+    applyBusyMark(pill, text);
+    return () => {
+      pendingPills.delete(key);
+      document.querySelectorAll(`[data-scene-id="${CSS.escape(String(release.scene_stashdb_id))}"]`).forEach((p) => {
+        p.classList.remove('srw-cal-pill-busy');
+        p.querySelector('.srw-cal-pill-busy-tag')?.remove();
+      });
+    };
+  }
+
+  function calendarGo(container, month) {
+    if (calendarLive()) return calendarCtl.goMonth(month);
+    calendarMonth = month;
+    return renderCalendarView(container);
   }
 
   // The page is built behind a "Loading…" (only the header shows) and revealed in one go (v0.175.0): it used to appear piece by piece, first as
@@ -120,6 +181,7 @@
     const { el } = window.SRW;
     if (scanPollTimer) { clearInterval(scanPollTimer); scanPollTimer = null; }
     if (wishlistLiveDetach) { wishlistLiveDetach(); wishlistLiveDetach = null; }
+    calendarCtl = null; monthCache.clear();
     container.innerHTML = '';
     // Entries per page of the lists (Settings > Releases page) -- the movie lists use the same number as the scene list.
     try {
@@ -1662,11 +1724,11 @@
       return;
     }
     const fresh = monthResult.rows.filter((r) => r.status === 'new');
-    const all = groupByScene(monthResult.rows);
+    let all = groupByScene(monthResult.rows);
     // Declared here (not down near where it's first used below) so
     // rebuildGrid() -- which runs immediately once, before that later
     // code -- can already safely reference it via closure.
-    const idToRelease = new Map(fresh.map((r) => [r.scene_stashdb_id, r]));
+    let idToRelease = new Map(fresh.map((r) => [r.scene_stashdb_id, r]));
 
     // Resolve every distinct entity's image once, in parallel, up front
     // for the *unfiltered* set -- so toggling the filter bar afterwards
@@ -1703,7 +1765,7 @@
     // to their "Add to Wishlist" default (2026-09-13).
     let whisparrStatusCache = null;
     const bulkSlot = el('div');
-    function rebuildGrid() {
+    function rebuildBulk() {
       const filtered = filterCalendarReleases(all);
       // Bulk dismiss scoped to the displayed month only -- that's all
       // the user can actually see and check before confirming.
@@ -1714,6 +1776,10 @@
         || !window.SRW.providersAllOn(calendarProviderFilter));
       bulkSlot.innerHTML = '';
       bulkSlot.appendChild(buildBulkDismissSlot(bulkTargets, filterActive, container));
+    }
+    function rebuildGrid() {
+      const filtered = filterCalendarReleases(all);
+      rebuildBulk();
       const byDay = {};
       filtered.forEach((r) => {
         const day = r.scene_date || r.scene_created.slice(0, 10);
@@ -1747,33 +1813,145 @@
     listWrap.appendChild(gridWrap);
     rebuildGrid();
 
-    // Fire-and-forget, mirrors the List view's annotateWhisparrStatus()
-    // -- 'new'-status only, sent/imported pills already reflect their
-    // outcome via status color and don't need this. Scoped to pills
-    // actually rendered in the DOM right now, not all of `fresh`
-    // (2026-09-13, caught live: `fresh` is every 'new' release
-    // site-wide, up to 1000 -- releases here can span years of
-    // backfilled StashDB history, see this function's own "anchoring
-    // on today" comment above, and even one month can hold 200+, most
-    // of them hidden behind "+N more" per day -- see
-    // MAX_VISIBLE_PILLS_PER_DAY. Querying the DOM's own data-scene-id
-    // attributes (set by buildPill()) rather than re-deriving "visible"
-    // from date math automatically matches whatever's actually on
-    // screen, including the per-day cap, without duplicating that
-    // logic here.
-    const visibleIds = Array.from(gridWrap.querySelectorAll('[data-scene-id]'))
-      .map((elm) => elm.dataset.sceneId);
-    const scenes = visibleIds
-      .map((id) => idToRelease.get(id))
-      .filter((r) => r && r.provider === 'stashdb')
-      .map((r) => ({ scene_stashdb_id: r.scene_stashdb_id, is_vr: !!r.is_vr }));
-    if (scenes.length) {
-      window.SRW.runOp('releases_library_status', { scenes }).then((status) => {
-        if (status.error) return;
-        whisparrStatusCache = status;
-        applyCalendarWhisparrStatus(gridWrap, status, idToRelease, container);
-      }).catch(() => {});
+    // The library check for the cards on screen (see the long note below); runs again whenever another month or changed rows are drawn.
+    function annotateWhisparr() {
+      // Fire-and-forget, mirrors the List view's annotateWhisparrStatus()
+      // -- 'new'-status only, sent/imported pills already reflect their
+      // outcome via status color and don't need this. Scoped to pills
+      // actually rendered in the DOM right now, not all of `fresh`
+      // (2026-09-13, caught live: `fresh` is every 'new' release
+      // site-wide, up to 1000 -- releases here can span years of
+      // backfilled StashDB history, see this function's own "anchoring
+      // on today" comment above, and even one month can hold 200+, most
+      // of them hidden behind "+N more" per day -- see
+      // MAX_VISIBLE_PILLS_PER_DAY. Querying the DOM's own data-scene-id
+      // attributes (set by buildPill()) rather than re-deriving "visible"
+      // from date math automatically matches whatever's actually on
+      // screen, including the per-day cap, without duplicating that
+      // logic here.
+      const visibleIds = Array.from(gridWrap.querySelectorAll('[data-scene-id]'))
+        .map((elm) => elm.dataset.sceneId);
+      const scenes = visibleIds
+        .map((id) => idToRelease.get(id))
+        .filter((r) => r && r.provider === 'stashdb')
+        .map((r) => ({ scene_stashdb_id: r.scene_stashdb_id, is_vr: !!r.is_vr }));
+      if (scenes.length) {
+        window.SRW.runOp('releases_library_status', { scenes }).then((status) => {
+          if (status.error) return;
+          whisparrStatusCache = status;
+          applyCalendarWhisparrStatus(gridWrap, status, idToRelease, container);
+        }).catch(() => {});
+      }
     }
+    annotateWhisparr();
+
+    // ---- the Calendar keeps its data (v0.249.8) ----
+    const pad2 = (n) => String(n).padStart(2, '0');
+    const monthKeyOf = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}`;
+    // light = only the fields that decide how a card looks (a few hundred KB instead of several MB for a busy month); an older sidecar ignores it and
+    // answers with the full rows, which gives the same signature.
+    const fetchMonthRows = async (month, light = false) => {
+      const ms = `${monthKeyOf(month)}-01`;
+      const res = await window.SRW.runOp('releases_query', {
+        statuses: ['new', 'sent_to_whisparr', 'imported', 'import_failed'],
+        date_from: ms, date_until: `${ms.slice(0, 8)}${pad2(new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate())}`, per_page: 0, light,
+      });
+      return res.error ? null : res.rows;
+    };
+    const remember = (month, rows, sig) => {
+      monthCache.set(monthKeyOf(month), { rows, sig });
+      while (monthCache.size > 12) monthCache.delete(monthCache.keys().next().value);
+    };
+    // What decides how a card looks; two readings with the same signature are drawn the same, so nothing is redrawn.
+    const sigOf = (rows) => rows.map((r) => [r.provider, r.scene_stashdb_id, r.entity_type, r.entity_stashdb_id, r.status, r.last_search_result || '',
+      r.download_job_id || '', r.is_vr ? 1 : 0, r.import_error_code || '', r.scene_date || ''].join('|')).join('\n');
+    let rawRows = monthResult.rows;
+    let shownSig = sigOf(rawRows);
+    remember(calendarMonth, rawRows, shownSig);
+    const index = () => new Map(all.filter((r) => r.status === 'new').map((r) => [r.scene_stashdb_id, r]));
+    const sameRelease = (x, r) => x.provider === r.provider && x.scene_stashdb_id === r.scene_stashdb_id;
+    async function drawRows(rows) {
+      const ents = new Map();
+      groupByScene(rows).forEach((r) => ents.set(`${r.provider}:${r.entity_type}:${r.entity_stashdb_id}`, r));
+      await Promise.all(Array.from(ents.values()).map((r) => resolveEntityImage(r.entity_type, r.entity_stashdb_id, r.provider)));
+      rememberEntityImages();
+      rawRows = rows;
+      all = groupByScene(rows);
+      idToRelease = new Map(rows.filter((r) => r.status === 'new').map((r) => [r.scene_stashdb_id, r]));
+      whisparrStatusCache = null;
+      rebuildGrid();
+      annotateWhisparr();
+    }
+    let refreshTimer = null;
+    let refreshing = false;
+    let firstAsk = 0;
+    calendarCtl = {
+      listWrap,
+      // A card was dismissed / handed off: the card changes in place (the server answer is read right after and corrects it if it differs).
+      patch(release, change) {
+        all = change.remove ? all.filter((x) => !sameRelease(x, release)) : all.map((x) => (sameRelease(x, release) ? { ...x, status: change.status } : x));
+        rawRows = change.remove ? rawRows.filter((x) => !sameRelease(x, release)) : rawRows.map((x) => (sameRelease(x, release) ? { ...x, status: change.status } : x));
+        idToRelease = index();
+        shownSig = sigOf(rawRows); // the next reading of the server is compared with this: equal -> no second redraw
+        remember(calendarMonth, rawRows, shownSig); // the kept copy of this month follows too, or a later visit would show the card again
+        // Only the card changes (a day with a "+N more" list needs the next card to move up: that day is redrawn with the grid).
+        const pill = gridWrap.querySelector(`[data-scene-id="${CSS.escape(String(release.scene_stashdb_id))}"]`);
+        const cell = pill && pill.closest('.srw-cal-day');
+        if (pill && cell && !cell.querySelector('.srw-cal-more-btn')) {
+          if (change.remove) pill.remove();
+          else {
+            pill.className = pill.className.replace(/srw-cal-pill-new\b/, `srw-cal-pill-${change.status}`);
+            const add = pill.querySelector('.srw-cal-pill-whisparr');
+            if (add) add.remove();
+          }
+          rebuildBulk();
+        } else rebuildGrid();
+      },
+      // Re-reads the month's rows only; the grid is redrawn only when they differ from what is shown (and not while a question is open on a card).
+      softRefresh() { // asked for often (every action, every live change): ONE reading when the clicking pauses (6 s; at the latest after 40 s), never two at once
+        const now = Date.now();
+        if (!firstAsk) firstAsk = now;
+        clearTimeout(refreshTimer);
+        refreshTimer = setTimeout(async () => {
+          refreshTimer = null;
+          if (refreshing) { this.softRefresh(); return; }
+          firstAsk = 0;
+          refreshing = true;
+          try { await this.refreshNow(); } finally { refreshing = false; }
+        }, Math.max(0, Math.min(6000, firstAsk + 40000 - now)));
+      },
+      async refreshNow() {
+        const month = calendarMonth;
+        const light = await fetchMonthRows(month, true);
+        if (!light || month !== calendarMonth || !listWrap.isConnected) return;
+        const sig = sigOf(light);
+        if (sig === shownSig) return; // nothing changed: nothing is drawn, nothing more is asked
+        if (gridWrap.querySelector('.srw-inline-confirm')) return;
+        const rows = light.some((r) => 'details' in r) ? light : await fetchMonthRows(month); // the full rows only now that something differs
+        if (!rows || month !== calendarMonth || !listWrap.isConnected) return;
+        shownSig = sigOf(rows);
+        remember(month, rows, shownSig);
+        await drawRows(rows);
+      },
+      async goMonth(month) {
+        calendarMonth = month;
+        const cached = monthCache.get(monthKeyOf(month));
+        if (cached) {
+          shownSig = cached.sig;
+          await drawRows(cached.rows);
+          this.refreshNow(); // the kept month is shown at once; what the server says now follows right behind it (no waiting for a pause)
+          return;
+        }
+        gridWrap.innerHTML = '';
+        gridWrap.appendChild(el('p', { className: 'srw-hint', textContent: 'Loading…' }));
+        const rows = await fetchMonthRows(month);
+        if (month !== calendarMonth) return;
+        if (!rows) { await renderCalendarView(container); return; }
+        shownSig = sigOf(rows);
+        remember(month, rows, shownSig);
+        await drawRows(rows);
+      },
+    };
   }
 
   function applyCalendarWhisparrStatus(gridWrap, status, idToRelease, container) {
@@ -1803,7 +1981,7 @@
                   entity_stashdb_id: r.entity_stashdb_id, scene_stashdb_id: r.scene_stashdb_id,
                 });
                 if (result.error) { window.SRW.notify('Fix wrong download', `Fix failed: ${result.error}`, 'error'); return; }
-                await renderCalendarView(container);
+                await calendarChanged(container, r, null);
               },
               { danger: true },
             );
@@ -1827,25 +2005,16 @@
     const header = el('div', { className: 'srw-cal-header' }, [
       el('button', {
         className: 'srw-btn srw-btn-sm', textContent: '‹ Prev',
-        onClick: async () => {
-          calendarMonth = new Date(year, monthIndex - 1, 1);
-          await renderCalendarView(container);
-        },
+        onClick: async () => { await calendarGo(container, new Date(year, monthIndex - 1, 1)); },
       }),
       el('span', { className: 'srw-cal-title', textContent: monthName }),
       el('button', {
         className: 'srw-btn srw-btn-sm', textContent: 'Next ›',
-        onClick: async () => {
-          calendarMonth = new Date(year, monthIndex + 1, 1);
-          await renderCalendarView(container);
-        },
+        onClick: async () => { await calendarGo(container, new Date(year, monthIndex + 1, 1)); },
       }),
       el('button', {
         className: 'srw-btn srw-btn-sm', textContent: 'Today',
-        onClick: async () => {
-          calendarMonth = null;
-          await renderCalendarView(container);
-        },
+        onClick: async () => { const now = new Date(); await calendarGo(container, new Date(now.getFullYear(), now.getMonth(), 1)); },
       }),
     ]);
 
@@ -1945,14 +2114,17 @@
           className: 'srw-cal-pill-whisparr',
           title: 'Add to Wishlist',
           onClick: async (e) => {
+            const pillEl = e.currentTarget.closest('.srw-cal-pill');
             const doHandoff = async () => {
+              const unmark = markPillBusy(pillEl, 'Adding…', r);
               const result = await window.SRW.runOp('releases_handoff', {
                 provider: r.provider, entity_type: r.entity_type,
                 entity_stashdb_id: r.entity_stashdb_id, scene_stashdb_id: r.scene_stashdb_id,
               });
-              if (result.error) { window.SRW.notify(`Adding failed: ${r.title || ''}`, result.error, 'error'); return; }
+              if (result.error) { unmark(); window.SRW.notify(`Adding failed: ${r.title || ''}`, result.error, 'error'); return; }
               window.SRW.notifyHandoff(r.title, result);
-              await renderCalendarView(container);
+              await calendarChanged(container, r, { status: 'sent_to_whisparr' });
+              unmark();
             };
             // "Search now" fires immediately, no confirm() -- see
             // entity-panel.js's confirmHandoff() note (2026-09-19).
@@ -1981,10 +2153,13 @@
           className: 'srw-cal-pill-dismiss',
           title: 'Dismiss',
           textContent: '×',
-          onClick: async () => {
+          onClick: async (e) => {
+            const unmark = markPillBusy(e.currentTarget.closest('.srw-cal-pill'), 'Dismissing…', r);
             const res = await window.SRW.dismissRelease(r);
-            window.SRW.releaseDismissedNotice(r, res, () => renderCalendarView(container));
-            await renderCalendarView(container);
+            // A failed dismiss says so (releaseDismissedNotice) and the card STAYS: it used to disappear anyway and come back at the next reading.
+            const ok = window.SRW.releaseDismissedNotice(r, res, () => calendarChanged(container, r, null, true));
+            if (ok) await calendarChanged(container, r, { remove: true });
+            unmark();
           },
         });
         // A bottom action row, not inline with the title/studio text
@@ -2029,8 +2204,8 @@
                 const result = await window.SRW.runOp('muted_studios_mute', { provider: r.provider, scene_id: r.scene_stashdb_id });
                 if (result.error) { window.SRW.notify('Hide studio', result.error, 'error'); return; }
                 window.SRW.dismissedNotice('Studio hidden', `“${result.name || r.studio_name}” hidden (${result.hidden} release(s)).`,
-                  () => window.SRW.runOp('muted_studios_unmute', { studio_id: result.studio_id }), () => renderCalendarView(container));
-                await renderCalendarView(container);
+                  () => window.SRW.runOp('muted_studios_unmute', { studio_id: result.studio_id }), () => calendarChanged(container, r, null));
+                await calendarChanged(container, r, null);
               });
           });
         }
@@ -2040,6 +2215,7 @@
           className: `srw-cal-pill srw-cal-pill-${r.status}${stuckClass}${providerClass}`,
         }, [sceneLink, actions]);
         pill.dataset.sceneId = r.scene_stashdb_id;
+        if (pendingPills.has(pillKey(r))) applyBusyMark(pill, pendingPills.get(pillKey(r))); // redrawn while its answer is still on the way
         return pill;
       };
 

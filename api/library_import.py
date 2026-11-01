@@ -376,7 +376,11 @@ class Importer(Organizer):
         multi = [s for s in candidates if len(s["files"]) != 1]
         known = {self.stash.stashdb_endpoint, self.stash.theporndb_endpoint, *[e["endpoint"] for e in self.extra_providers]}
         with_id = [s for s in scenes if any(x["endpoint"] in known for x in s["stash_ids"])]
-        movie_scenes = [s for s in scenes if s not in with_id and len(s.get("groups") or []) == 1]
+        # A scene in exactly one group is a film's scene. Without a provider id it is always planned as a film; WITH an id only when its file already
+        # lies in a film folder (v0.249.5: a scene of "Occupy My Ass" in movies/Anal/ that was marked Organized in Stash was moved to scenes/<Studio>/
+        # because its StashDB id made it a "ready" scene) -- an id does not take a film's scene out of the film folders.
+        movie_scenes = [s for s in scenes if len(s.get("groups") or []) == 1
+                        and (s not in with_id or self._in_movie_roots(s["files"][0]["path"]))]
         without_id = [s for s in scenes if s not in with_id and s not in movie_scenes]
         verified = self._verify([(s, s["files"][0]) for s in with_id])
         found = self._identify(without_id) if identify else {}

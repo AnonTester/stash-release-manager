@@ -120,5 +120,14 @@ check("already where it belongs: nothing to do", "note" in hook(inplace, "on") a
 imp.queue_guard = lambda force=False: {"error": "Stash's job queue is busy"}
 r = hook(movie, "on")
 check("Stash busy (Generate task ...): not moved, History says so", "error" in r and not APPLIED and any("busy" in str(n).lower() for n in NOTES))
+SDB = [{"endpoint": "https://stashdb.org/graphql", "stash_id": "abc"}]
+# (the Organized hook analyses the one scene wherever it lies: _analyse_scenes, not a source folder)
+analyse1 = lambda sc: {i["scene_id"]: i for i in imp._analyse_scenes("/data/Scenes", [sc], identify=False)["items"]}  # noqa: E731
+items = analyse1(scene(7, "/data/movies/Anal/Film (2010)/x.mp4", [grp("Film", "2010-01-01", [])], organized=True, stash_ids=SDB))
+check("v0.249.5: a film scene WITH a StashDB id that lies in the film folders stays a movie (not moved to scenes/)",
+      items["7"]["kind"] == "movie" and items["7"]["new_path"].startswith("/data/Movies/Film (2010)/"))
+items = analyse1(scene(8, "/data/Scenes/a/x.mp4", [grp("Film", "2010-01-01", [])], organized=True, stash_ids=SDB))
+check("a scene with an id and a group OUTSIDE the film folders is planned as before (not a movie)", items["8"]["kind"] != "movie")
+
 print("\nALL OK" if not FAILS else f"\n{len(FAILS)} FAILED: {FAILS}")
 sys.exit(1 if FAILS else 0)

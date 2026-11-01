@@ -2363,3 +2363,11 @@ a.srw-btn { text-decoration: none; display: inline-block; text-align: center; }
   gap: 0.2rem;
   overflow-wrap: anywhere;
 }
+
+/* A Calendar card that was clicked (Add to Wishlist / Dismiss) until the answer is there (v0.249.11). */
+.srw-cal-pill-busy { position: relative; opacity: 0.6; pointer-events: none; }
+.srw-cal-pill-busy-tag {
+  position: absolute; right: 0.3rem; bottom: 0.2rem; padding: 0 0.4rem; border-radius: 3px; font-size: 0.8em; font-weight: 600;
+  background: rgba(0, 0, 0, 0.55); color: #fff; animation: srw-cal-busy-pulse 1s ease-in-out infinite;
+}
+@keyframes srw-cal-busy-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }

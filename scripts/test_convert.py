@@ -41,7 +41,7 @@ class Stash:
                 self.next_scene += 1
                 self.scenes[str(self.next_scene)] = [{"id": f"nf{self.next_scene}", "path": p, "format": "mp4", "video_codec": "h264"}]
         return "job"
-    def wait_for_job(self, j): pass
+    def wait_for_job(self, j, on_progress=None): pass
     def find_scene_by_path(self, p):
         for i, fs in self.scenes.items():
             if any(x["path"] == p for x in fs): return {"id": i}
