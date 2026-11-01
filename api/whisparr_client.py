@@ -22,6 +22,7 @@ to defensively pin it back to monitored:false, moviesMonitored:false,
 rather than trusting Whisparr's default. safety_sweep() is the
 periodic backstop for anything that slips through regardless.
 """
+import threading
 import time
 
 import requests
@@ -36,6 +37,9 @@ import requests
 _entity_cache = {}
 _entity_cache_time = {}
 _ENTITY_CACHE_TTL_SECONDS = 600
+_entity_locks = {}  # one fetch of a list at a time (v0.249.12): several hand-offs at once each fetched the whole list in parallel
+_entity_locks_guard = threading.Lock()
+_ENTITY_LIST_TIMEOUT = 150  # the studio list alone takes ~14 s on this Whisparr, several times that when it is busy
 
 
 class WhisparrLookupEmpty(RuntimeError):
@@ -586,14 +590,27 @@ class WhisparrClient:
         A cache miss still does the full fetch -- this doesn't remove
         the underlying slowness, just how often it's paid."""
         cache_key = (self.base, resource)
-        cached = _entity_cache.get(cache_key)
-        age = time.monotonic() - _entity_cache_time.get(cache_key, 0)
-        if cached is None or foreign_id not in cached or age > _ENTITY_CACHE_TTL_SECONDS:
-            resp = self.session.get(f"{self.base}/{resource}", timeout=self.timeout)
-            resp.raise_for_status()
-            cached = {item["foreignId"]: item for item in resp.json() if item.get("foreignId")}
-            _entity_cache[cache_key] = cached
-            _entity_cache_time[cache_key] = time.monotonic()
+
+        def usable():
+            cached = _entity_cache.get(cache_key)
+            age = time.monotonic() - _entity_cache_time.get(cache_key, 0)
+            return cached if cached is not None and foreign_id in cached and age <= _ENTITY_CACHE_TTL_SECONDS else None
+
+        cached = usable()
+        if cached is None:
+            # v0.249.12: only ONE thread fetches the list; the others wait and then find the entry in what it fetched. Adding several releases in a row
+            # (Calendar) started a fetch per click at the same moment: Whisparr answered each of them slowly, they ran into the 30 s timeout, and the
+            # hand-off failed with HTTP 500 although the release was on the wishlist already.
+            with _entity_locks_guard:
+                lock = _entity_locks.setdefault(cache_key, threading.Lock())
+            with lock:
+                cached = usable()
+                if cached is None:
+                    resp = self.session.get(f"{self.base}/{resource}", timeout=max(self.timeout, _ENTITY_LIST_TIMEOUT))
+                    resp.raise_for_status()
+                    cached = {item["foreignId"]: item for item in resp.json() if item.get("foreignId")}
+                    _entity_cache[cache_key] = cached
+                    _entity_cache_time[cache_key] = time.monotonic()
         return cached.get(foreign_id)
 
     def safety_sweep(self):

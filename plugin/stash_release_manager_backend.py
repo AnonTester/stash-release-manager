@@ -283,7 +283,7 @@ def main():
         # Server-side filtered/paged listing (2026-09-26), see
         # routers/releases.py's query().
         keys = ("statuses", "q", "search_description", "search_tags", "entity_type", "vr", "providers",
-                "date_from", "date_until", "page", "per_page", "ids_only", "entities", "late_addition", "order", "upgrades")
+                "date_from", "date_until", "page", "per_page", "ids_only", "light", "entities", "late_addition", "order", "upgrades")
         result = _post(sidecar_url, "/releases/query", {k: args[k] for k in keys if k in args}, timeout=60)
     elif mode == "releases_bulk_status":
         # Calendar/List "Dismiss N shown" + its Undo, see
@@ -687,6 +687,12 @@ def main():
         result = _post(sidecar_url, "/maintenance/compare/unidentified/check", {"scene_ids": args.get("scene_ids") or []}, timeout=300)
     elif mode == "compare_unidentified_apply":
         result = _post(sidecar_url, "/maintenance/compare/unidentified/apply", {"scene_ids": args.get("scene_ids") or []}, timeout=300)
+    elif mode == "compare_unorganized":
+        result = _get(sidecar_url, "/maintenance/compare/unorganized" + ("?refresh=true" if args.get("refresh") else ""), timeout=120)
+    elif mode == "compare_unorganized_preview":
+        result = _post(sidecar_url, "/maintenance/compare/unorganized/preview", {"scene_ids": args.get("scene_ids") or []}, timeout=120)
+    elif mode == "compare_unorganized_set":
+        result = _post(sidecar_url, "/maintenance/compare/unorganized/organize", {"scene_ids": args.get("scene_ids") or []}, timeout=300)
     elif mode == "setup_status":
         result = _get(sidecar_url, "/setup/status", timeout=15)
     elif mode == "sidecar_health":

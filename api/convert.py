@@ -84,10 +84,39 @@ def refresh(db, stash_client):
     return {"remux": counts.get("remux", 0), "reencode": counts.get("reencode", 0), "wanted": sum(counts.values()), "added": added, "removed": removed}
 
 
+# The step a finished conversion is in on the sidecar (v0.249.7): {row id: {"step", "since" (epoch), "percent" (0-100 or None), "step_since"}}. Memory only: it
+# only tells the page what is going on; the state itself is the row's status.
+_phase = {}
+
+
+def set_phase(row_id, step, percent=None):
+    old = _phase.get(row_id)
+    now = time.time()
+    _phase[row_id] = {"step": step, "percent": percent, "since": old["since"] if old else now,
+                      "step_since": old["step_since"] if old and old["step"] == step else now}
+
+
+def clear_phase(row_id):
+    _phase.pop(row_id, None)
+
+
+def _wait_scan(stash_client, job_id, row_id, step):
+    """Waits for a Stash job and tells the page how far it is (Stash reports progress 0..1)."""
+    set_phase(row_id, step)
+    stash_client.wait_for_job(job_id, on_progress=lambda job: set_phase(row_id, step, round(float(job["progress"]) * 100) if job.get("progress") is not None else None))
+    set_phase(row_id, step, 100)
+
+
 def rows(db):
     """Every row the page shows (everything but done and dismissed; those come with `include`)."""
     with db.connect() as conn:
-        return [dict(r) for r in conn.execute("SELECT * FROM convert_candidate WHERE status IN ('wanted', 'queued', 'running', 'verifying', 'replacing', 'failed') ORDER BY id")]
+        out = [dict(r) for r in conn.execute("SELECT * FROM convert_candidate WHERE status IN ('wanted', 'queued', 'running', 'verifying', 'replacing', 'failed') ORDER BY id")]
+    for r in out:
+        if r["status"] in ("verifying", "replacing") and r["id"] in _phase:
+            p = dict(_phase[r["id"]])
+            p["step_seconds"] = int(time.time() - p["step_since"])  # told as a duration, so a clock that differs between NAS and browser does not matter
+            r["phase"] = p
+    return out
 
 
 def history_rows(db, status):
@@ -173,6 +202,7 @@ class Retry(Exception):
 
 
 def _fail(db, row_id, error):
+    clear_phase(row_id)
     with db.connect() as conn:
         conn.execute("UPDATE convert_candidate SET status = 'failed', error = ?, finished_at = datetime('now'), worker = NULL WHERE id = ?", (error[:500], row_id))
 
@@ -187,6 +217,7 @@ def finish(db, stash_client, to_local, recycle, row, probe=transcode.probe):
     row_id = row["id"]
     try:
         if not row.get("new_path"):  # new_path is set once the swap itself happened; a resumed run goes straight on
+            set_phase(row_id, "checking the converted file")
             dst_local = to_local(_written_path(row["file_path"]))
             if not os.path.exists(dst_local):
                 return _fail(db, row_id, f"the converted file is missing: {dst_local}")
@@ -229,7 +260,8 @@ def replace(db, stash_client, to_local, recycle, row):
             if written not in [f["path"] for f in files]:
                 if not os.path.exists(to_local(written)):
                     raise RuntimeError("the converted file is missing")
-                stash_client.wait_for_job(stash_client.scan_paths([folder]))
+                _wait_scan(stash_client, stash_client.scan_paths([folder]), row_id, "Stash scans the converted file")
+                set_phase(row_id, "joining the converted file to the scene")
                 found = stash_client.find_scene_by_path(written)
                 if found is None:
                     raise Retry("Stash has not picked up the converted file yet")
@@ -240,12 +272,14 @@ def replace(db, stash_client, to_local, recycle, row):
             if new_file is None:
                 raise Retry("the converted file is not part of the scene after the merge")
             stash_client.set_primary_file(scene_id, new_file["id"])
+            set_phase(row_id, "moving the old file to the recycle bin")
             if os.path.exists(to_local(old)):
                 recycle(to_local(old))
             _set(db, row_id, new_path=final)  # from here on only the tail is left
         if same_name and os.path.exists(to_local(written)):  # x.srm-convert.mp4 moves onto the freed x.mp4; Stash sees the move by the fingerprint
             os.rename(to_local(written), to_local(old))
-            stash_client.wait_for_job(stash_client.scan_paths([folder]))
+            _wait_scan(stash_client, stash_client.scan_paths([folder]), row_id, "Stash scans the renamed file")
+        set_phase(row_id, "cleaning up in Stash")
         with db.connect() as conn:
             conn.execute("DELETE FROM vr_file_check WHERE file_path = ?", (old,))
         try:
@@ -257,6 +291,7 @@ def replace(db, stash_client, to_local, recycle, row):
         except Exception:  # noqa: BLE001
             logger.exception("convert: Generate for scene %s could not be started", scene_id)
         size_after = os.path.getsize(to_local(final)) if os.path.exists(to_local(final)) else None
+        clear_phase(row_id)
         _set(db, row_id, status="done", new_path=final, size_after=size_after, error=None, worker=None, finished_at=time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()))
         history.add("info", "history", "convert",
                     f"Converted to H.264 + AAC ({row['mode']}): {os.path.basename(old)} -> {os.path.basename(final)} "

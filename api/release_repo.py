@@ -280,7 +280,7 @@ _DAY_EXPR = "COALESCE(release.scene_date, substr(release.scene_created, 1, 10))"
 
 
 def query_releases(db, statuses=("new",), q="", search_description=False, entity_type=None, vr=None,
-                   providers=None, date_from=None, date_until=None, page=1, per_page=100, ids_only=False,
+                   providers=None, date_from=None, date_until=None, page=1, per_page=100, ids_only=False, light=False,
                    entities=None, late_addition=None, order="day", search_tags=False, upgrades=None):
     """Server-side filtered + paged release listing (2026-09-26, List view
     paging -- replaces loading up to list_view_limit rows and filtering
@@ -378,7 +378,13 @@ def query_releases(db, statuses=("new",), q="", search_description=False, entity
                 ORDER BY release.scene_created DESC""",
             page_params + params,
         ).fetchall()
+    if light:  # v0.249.8: only what decides how a Calendar card looks -- the page compares this with what it shows before it asks for the full rows
+        return {"total": total, "rows": [{k: r[k] for k in LIGHT_KEYS if k in r.keys()} for r in rows]}
     return {"total": total, "rows": [_listed(r) for r in rows]}
+
+
+LIGHT_KEYS = ("provider", "scene_stashdb_id", "entity_type", "entity_stashdb_id", "status", "last_search_result", "download_job_id", "is_vr",
+              "import_error_code", "scene_date")
 
 
 def get_release(db, provider, scene_stashdb_id, entity_type, entity_stashdb_id):
@@ -1127,6 +1133,10 @@ def set_tags_for_scene(db, provider, scene_id, tags, studio_id=None, image_url=N
     with db.connect() as conn:
         conn.execute("UPDATE release SET tags = ? WHERE provider = ? AND scene_stashdb_id = ?",
                      (tags_text(tags) or "", provider, scene_id))
+        # v0.249.15: the "Virtual Reality" tag is often added at the provider AFTER the scan found the scene; the tags are read again later (this
+        # function) but the VR flag stayed 0, so the VR / Non-VR filters and the VR quality rules treated a VR scene as flat (295 scenes by then).
+        if "|Virtual Reality|" in (tags_text(tags) or ""):
+            conn.execute("UPDATE release SET is_vr = 1 WHERE provider = ? AND scene_stashdb_id = ? AND is_vr = 0", (provider, scene_id))
         if studio_id:
             conn.execute("UPDATE release SET studio_id = ? WHERE provider = ? AND scene_stashdb_id = ? AND studio_id IS NULL",
                          (studio_id, provider, scene_id))

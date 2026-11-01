@@ -137,7 +137,7 @@ mutation($input: StashBoxBatchTagInput!) {
 """
 
 FIND_JOB_QUERY = """
-query($id: ID!) { findJob(input: {id: $id}) { id status error } }
+query($id: ID!) { findJob(input: {id: $id}) { id status error progress } }
 """
 
 # Backs file_importer.py's scoped rescan of the exact path it just
@@ -579,7 +579,7 @@ class StashClient:
                 return False
             time.sleep(poll_interval)
 
-    def wait_for_job(self, job_id, poll_interval=2, timeout=600):
+    def wait_for_job(self, job_id, poll_interval=2, timeout=600, on_progress=None):
         """Polls Stash's job queue until the given job id finishes.
         Confirmed live 2026-09-11: a completed job can disappear from
         findJob (returns null) shortly after finishing, not just flip to
@@ -592,6 +592,11 @@ class StashClient:
                 return
             if job["status"] == "FAILED":
                 raise RuntimeError(job.get("error") or f"job {job_id} failed")
+            if on_progress is not None:  # (v0.249.7) e.g. Maintenance > Convert shows how far Stash's scan is
+                try:
+                    on_progress(job)
+                except Exception:  # noqa: BLE001 -- a display callback never stops the wait
+                    pass
             time.sleep(poll_interval)
         raise TimeoutError(f"job {job_id} did not finish within {timeout}s")
 

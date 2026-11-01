@@ -902,6 +902,8 @@ class Database:
         # v0.241.6: the list of Maintenance > Unidentified scenes (scenes without a provider id) is kept until a change or a reload makes it new.
         conn.execute("CREATE TABLE IF NOT EXISTS unidentified_scene (scene_id TEXT PRIMARY KEY, payload TEXT NOT NULL)")
         conn.execute("CREATE TABLE IF NOT EXISTS maintenance_state (key TEXT PRIMARY KEY, value TEXT)")
+        # v0.249.15: scenes whose tags got the "Virtual Reality" tag after they were found carry the flag now (see release_repo.set_tags_for_scene)
+        conn.execute("UPDATE release SET is_vr = 1 WHERE is_vr = 0 AND tags LIKE '%|Virtual Reality|%'")
 
     def _migrate_duration_check(self, conn):
         """v0.209.0: the "Duration mismatch" check (duration_check.py). One row per local scene: the primary file's length against the

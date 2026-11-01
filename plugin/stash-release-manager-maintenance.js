@@ -39,6 +39,7 @@
     { key: 'vr-check', group: 'check', icon: 'faVrCardboard', label: 'VR: 2D / mono files', build: (c) => c.appendChild(flatten(buildVrCheckSection())) },
     { key: 'unknown-quality', group: 'check', icon: 'faQuestion', label: 'Unknown quality', build: (c) => { c.appendChild(window.SRW.el('p', { className: 'srw-hint', textContent: unknownQualityReason })); c.appendChild(buildUnknownQualitySection()); } },
     { key: 'review', group: 'resolve', icon: 'faFingerprint', label: 'Review: Identify Scene', build: (c) => buildReviewArea(c) },
+    { key: 'untitled', group: 'resolve', icon: 'faTags', label: 'Untitled & unorganized', build: (c) => c.appendChild(buildUntitledArea()) },
     { key: 'compare', group: 'resolve', icon: 'faCodeCompare', label: 'Compare scenes', build: (c) => { c.appendChild(buildSenseNotice()); c.appendChild(flatten(buildCompareSection('compare'))); } },
     { key: 'import', group: 'files', icon: 'faFileImport', label: 'Import folder', build: (c) => { c.appendChild(window.SRW.buildSafetyPanel({ compact: true })); c.appendChild(buildImportSection()); } },
     { key: 'organize', group: 'files', icon: 'faFolderTree', label: 'Organize library', build: (c) => { c.appendChild(window.SRW.buildSafetyPanel({ compact: true })); c.appendChild(buildOrganizeSection()); } },
@@ -184,7 +185,7 @@
     async function refreshSlowBadges() {
       try {
         const slow = (await window.SRW.runOp('maintenance_counts_slow')) || {};
-        ['performers', 'unidentified', 'movies'].forEach((k) => { if (slow[k] != null) side.setBadge(k, slow[k]); });
+        ['performers', 'unidentified', 'movies', 'untitled'].forEach((k) => { if (slow[k] != null) side.setBadge(k, slow[k]); });
       } catch (e) { /* no badge */ }
     }
     // Review (and others) tell the page when they changed what is open: the numbers behind the links follow at once.
@@ -2195,8 +2196,9 @@
   // Unidentified scenes (v0.170.0): scenes without any provider id outside the film folders. "Check fingerprints" is a DRY RUN (StashDB, exact
   // fingerprints, 40 scenes per request, nothing is written); only the clear matches can then be assigned. Everything else goes to Review >
   // Identify Scene, which has the name search, ThePornDB, playing and the other tools.
-  function buildUnidentifiedArea() {
+  function buildUnidentifiedArea(opts = {}) {
     const { el, confirmInline, notify } = window.SRW;
+    const untitledOnly = Boolean(opts.untitledOnly); // v0.248.0: the tab of Untitled & unorganized shows only scenes without a title (Stash lists them as "Scene <id>")
     let items = [];
     let inReview = 0;
     const results = {}; // scene id -> check result
@@ -2213,7 +2215,7 @@
     };
     const STATE_LABEL = { unique: 'clear match', ambiguous: 'several matches', held: 'already in your library', shared: 'two files, one match', none: 'no match' };
     const view = window.SRW.buildFilteredPagedList({
-      filters: ['search'], perPage: 50, emptyText: 'No unidentified scenes.',
+      filters: ['search'], perPage: 50, emptyText: untitledOnly ? 'No untitled scenes without a provider id.' : 'No unidentified scenes.',
       fetchPage: window.SRW.localPageFetcher(
         () => items.filter(passesResult),
         { text: (x) => `${x.file} ${x.folder} ${x.title}` }),
@@ -2273,9 +2275,10 @@
       const checked = items.filter((i) => results[i.id]).length;
       const unique = count('unique');
       const when = items.map((i) => (results[i.id] || {}).checked_at).filter(Boolean).sort();
-      summary.textContent = `${items.length} scene(s) without a provider id`
+      summary.textContent = `${items.length} ${untitledOnly ? 'untitled ' : ''}scene(s) without a provider id`
         + (inReview ? ` (${inReview} more are already in Review: Identify Scene)` : '')
         + (checked ? ` — checked ${checked} (last ${when[when.length - 1]} UTC, oldest ${when[0].slice(0, 10)}): ${unique} clear, ${count('ambiguous')} several matches, ${count('held')} already in your library, ${count('shared')} two files / one match, ${count('none')} no match` : '');
+      window.dispatchEvent(new Event('srw:counts-changed'));
       assignBtn.hidden = !unique;
       assignBtn.textContent = `Assign the ${unique} clear match(es)`;
     }
@@ -2286,7 +2289,7 @@
       forceFresh = false;
       const r = await window.SRW.runOp('compare_unidentified', { refresh: fresh });
       if (r.error) { status.textContent = ` error: ${r.error}`; return false; }
-      items = r.scenes || [];
+      items = (r.scenes || []).filter((x) => !untitledOnly || !x.title);
       inReview = r.in_review || 0;
       Object.keys(results).forEach((k) => delete results[k]);
       Object.assign(results, r.checks || {}); // the stored results of the last checks (they survive a reload)
@@ -2345,7 +2348,7 @@
       });
     });
     const pane = el('div', {}, [
-      el('p', { className: 'srw-hint', textContent: 'Files in your scene folders that Stash has no StashDB / ThePornDB id for (the film folders and the import folder are left out). '
+      el('p', { className: 'srw-hint', textContent: (untitledOnly ? 'Scenes without a title (Stash lists them as “Scene <number>”) and without a provider id. ' : '') + 'Files in your scene folders that Stash has no StashDB / ThePornDB id for (the film folders and the import folder are left out). '
         + '“Check fingerprints” asks StashDB (and ThePornDB, for what StashDB does not know) which scene each file is, by exact fingerprint, and changes nothing (the results are kept, also after a reload; files already checked are skipped); only a file that matches exactly ONE scene, which no other file of yours has, can be assigned. '
         + 'Several matches, none or doubtful cases go to Review: Identify Scene (name search, ThePornDB, playing).' }),
       el('div', { className: 'srw-toolbar' }, [window.SRW.iconButton('button', 'faRotate', 'Reload', { title: 'Reload: read the list from Stash again (it is kept until then; scenes you identify or send to Review leave it at once)', onClick: () => { forceFresh = true; loader(true); } }), checkBtn, recheckBtn, assignBtn, bulkReview,
@@ -2354,6 +2357,175 @@
       view.node,
     ]);
     loader();
+    return pane;
+  }
+
+  // Untitled & unorganized (v0.248.0): tab 1 = scenes Stash lists as "Scene <number>" (no title) that still have no provider id -> identify by
+  // fingerprint (the tools of Unidentified scenes); tab 2 = scenes that HAVE a StashDB / ThePornDB id but are not marked Organized.
+  function buildUntitledArea() {
+    const { el } = window.SRW;
+    const countText = el('span', { className: 'srw-hint' });
+    const unorganized = buildUnorganizedPane(countText);
+    const panes = [
+      { key: 'untitled', label: 'Untitled scenes', pane: buildUnidentifiedArea({ untitledOnly: true }) },
+      { key: 'unorganized', label: () => `With a provider id, not organized ${countText.textContent}`.trim(), watch: countText, pane: unorganized, onShow: () => unorganized.srwLoad() },
+    ];
+    return el('div', { className: 'srw-settings-section' }, [
+      el('h3', { textContent: 'Untitled & unorganized scenes' }),
+      window.SRW.buildPaneTabs(panes, 'srw:untitled-tab'),
+      ...panes.map((x) => x.pane),
+    ]);
+  }
+
+  function buildUnorganizedPane(countEl) {
+    const { el } = window.SRW;
+    let items = [];
+    let loaded = false;
+    // Several scenes at once, as on the other pages: a checkbox per row, "select this page", "select all N matching", a bulk bar. The Organized flag may
+    // move the file (the hook), so every marking shows the planned renames / moves first.
+    const selected = new Set();
+    let pageIds = [];
+    const status = el('span', { className: 'srw-key-status' });
+    // The normal filter bar (search incl. description and tags, date range, providers); "matching" is exactly what these filters leave.
+    const fields = {
+      text: (x) => `${x.title} ${x.file} ${x.folder} ${x.studio}`, date: (x) => x.date, description: (x) => x.details, tags: (x) => (x.tags || []).join(' '),
+      // a scene with ids of two providers passes when either of them is ticked
+      provider: (x) => (x.providers.find((p) => window.SRW.providerOn(view.state.providers, p.key)) || x.providers[0] || {}).key,
+    };
+    const matching = () => window.SRW.filterLocally(items, view.state, fields);
+    const selectedItems = () => items.filter((x) => selected.has(x.id));
+    const changed = () => { updateCount(); syncSelection(); window.dispatchEvent(new Event('srw:counts-changed')); };
+    const drop = (ids) => { const set = new Set(ids); items = items.filter((x) => !set.has(x.id)); ids.forEach((id) => selected.delete(id)); view.reload(); changed(); };
+    const view = window.SRW.buildFilteredPagedList({
+      filters: ['search', 'description', 'dates', 'providers'], perPage: 50, emptyText: 'Every scene with a provider id is organized.',
+      fetchPage: async (f, page, perPage) => {
+        const all = matching();
+        const slice = all.slice((page - 1) * perPage, page * perPage);
+        pageIds = slice.map((x) => x.id);
+        syncSelection();
+        return { total: all.length, items: slice };
+      },
+      renderItems: (page) => el('ul', { className: 'srw-release-list' }, page.map((x) => {
+        const rowStatus = el('span', { className: 'srw-key-status' });
+        const pick = el('input', { type: 'checkbox', title: 'Select this scene', checked: selected.has(x.id) });
+        pick.addEventListener('change', () => { if (pick.checked) selected.add(x.id); else selected.delete(x.id); syncSelection(); });
+        return window.SRW.arrangeReleaseRow(el('li', { className: 'srw-release-item' }, [
+          el('span', { className: 'srw-release-title' }, [pick, ` ${x.title || x.file}`]),
+          el('span', { className: 'srw-release-date', textContent: [x.studio, x.date, x.minutes ? `${x.minutes} min` : null, x.height ? `${x.height}p` : null, x.mb ? `${x.mb} MB` : null].filter(Boolean).join(' · ') }),
+          el('div', { className: 'srw-hint', textContent: x.folder }),
+          el('div', {}, x.providers.map((p) => el('span', {}, [el('a', { href: window.SRW.sceneUrl(p.key, p.id), target: '_blank', rel: 'noopener noreferrer', textContent: `${p.name} ↗` }), ' ']))),
+          window.SRW.buildStashLink('scene', x.id, 'Play in Stash'),
+          el('button', { className: 'srw-btn srw-btn-sm srw-btn-primary', textContent: 'Mark organized…',
+            title: 'Shows first what happens to the file (rename / move); nothing changes until you confirm there',
+            onClick: (e) => preview([x], e.currentTarget, rowStatus) }),
+          rowStatus,
+        ]), {});
+      })),
+    });
+    // What the Organized hook would do with one file (organized_plan): Now / After, or why nothing moves.
+    function planLines(res) {
+      if (res.new) {
+        const out = [el('div', { textContent: `Now:  ${res.old}` }), el('br'), el('div', { textContent: `After: ${res.new}` })];
+        if (res.hook !== 'on') out.push(el('div', { textContent: `The Organized hook is “${res.hook}”: the file is NOT moved now.` }));
+        if (res.blocked) out.push(el('div', { textContent: `Held back: ${res.blocked}` }));
+        return out;
+      }
+      return [el('div', { textContent: `${res.old} — stays where it is: ${res.note || 'nothing to do'}` })];
+    }
+    // The preview of one scene (under its row) or of several (the box under the toolbar), then ONE confirmation. `anchor` = the button to hide while
+    // the box is open (single scene); rowStatus = where an error is told.
+    async function preview(list, anchor, rowStatus) {
+      const say = (t) => { (rowStatus || status).textContent = t; };
+      if (list.length > 200) { say(` ${list.length} selected -- 200 or fewer at a time (each one may be moved by the Organized hook)`); return; }
+      const plans = {};
+      for (let i = 0; i < list.length; i += 50) {
+        say(` checking ${Math.min(i + 50, list.length)} / ${list.length}…`);
+        Object.assign(plans, (await window.SRW.runOp('compare_unorganized_preview', { scene_ids: list.slice(i, i + 50).map((x) => x.id) })).results || {});
+      }
+      say('');
+      const gone = list.filter((x) => plans[x.id] && plans[x.id].already_organized).map((x) => x.id);
+      if (gone.length) drop(gone);
+      const left = list.filter((x) => !gone.includes(x.id));
+      if (!left.length) { say(` ${gone.length} ${gone.length === 1 ? 'was' : 'were'} organized already and left the list`); return; }
+      const errors = left.filter((x) => plans[x.id] && plans[x.id].error);
+      if (list.length === 1 && errors.length) { say(` error: ${plans[left[0].id].error}`); return; }
+      const hook = (Object.values(plans).find((p) => p && p.hook) || {}).hook || 'off';
+      const moves = left.filter((x) => plans[x.id] && plans[x.id].new);
+      const box = list.length === 1
+        ? el('div', { className: 'srw-review-candidate srw-plan-box srw-hint', style: 'flex-direction: column; align-items: flex-start; white-space: pre-wrap;' })
+        : bulkBox;
+      const close = () => { if (list.length === 1) { box.remove(); anchor.hidden = false; } else bulkBox.innerHTML = ''; };
+      const confirmBtn = el('button', { className: 'srw-btn srw-btn-sm srw-btn-primary', textContent: list.length === 1 ? (moves.length ? 'Mark organized and move' : 'Mark organized') : `Mark ${left.length} organized` });
+      confirmBtn.addEventListener('click', async () => {
+        confirmBtn.disabled = true;
+        const done = []; let failed = 0;
+        for (let i = 0; i < left.length; i += 20) {
+          say(` ${Math.min(i + 20, left.length)} / ${left.length}…`);
+          const res = (await window.SRW.runOp('compare_unorganized_set', { scene_ids: left.slice(i, i + 20).map((x) => x.id) })).results || {};
+          Object.entries(res).forEach(([sid, one]) => { if (one.ok) done.push(sid); else { failed += 1; if (list.length === 1) say(` error: ${one.error}`); } });
+        }
+        close();
+        drop(done);
+        if (list.length > 1) status.textContent = ` ${done.length} marked${failed ? `, ${failed} failed (see History)` : ''}`;
+        else if (!failed) say('');
+      });
+      const buttons = el('div', {}, [confirmBtn, el('button', { className: 'srw-btn srw-btn-sm', textContent: 'Cancel', onClick: close })]);
+      if (list.length === 1) {
+        box.append(...planLines(plans[left[0].id]), buttons);
+        const row = anchor.closest('li');
+        if (!row) { say(' error: could not place the preview'); return; }
+        row.appendChild(box);
+        anchor.hidden = true; // only once the preview is in place
+        return;
+      }
+      bulkBox.innerHTML = '';
+      const body = el('div', { className: 'srw-preview-scroll', style: 'max-height: 320px; overflow: auto;' }, left.map((x) => {
+        const p = plans[x.id] || {};
+        return el('div', {}, p.new ? [el('div', { textContent: `Now:  ${p.old}` }), el('div', { textContent: `After: ${p.new}` }), p.blocked ? el('div', { textContent: `Held back: ${p.blocked}` }) : null, el('br')]
+          : [el('div', { textContent: `${p.old || x.file} — stays: ${p.note || p.error || 'nothing to do'}` })]);
+      }));
+      bulkBox.append(el('div', { textContent: `${moves.length} file(s) would be renamed / moved, ${left.length - moves.length} stay${hook !== 'on' ? ` (the Organized hook is “${hook}”: nothing is moved now)` : ''}${gone.length ? `; ${gone.length} were organized already and left the list` : ''}:` }), body, buttons);
+    }
+    const bulkBox = el('div', { className: 'srw-hint' });
+    // ---- the bulk bar (as on Performers without scenes / Upgrade wanted) ----
+    const selCount = el('span', { className: 'srw-bulk-count' });
+    const bulk = el('div', { className: 'srw-bulk-bar', hidden: true });
+    const pageBox = el('input', { type: 'checkbox', title: 'Select / unselect everything on this page' });
+    pageBox.addEventListener('change', () => { pageIds.forEach((id) => (pageBox.checked ? selected.add(id) : selected.delete(id))); syncSelection(); view.reload(); });
+    const allLink = el('a', { href: '#', className: 'srw-bulk-all', onClick: (e) => { e.preventDefault(); matching().forEach((x) => selected.add(x.id)); syncSelection(); view.reload(); } });
+    const markBtn = el('button', { type: 'button', className: 'srw-btn srw-btn-primary', textContent: 'Mark selected organized…',
+      title: 'Shows first what happens to the files (rename / move), at most 200 at a time',
+      onClick: () => preview(selectedItems(), null, null) });
+    const clearBtn = el('button', { type: 'button', className: 'srw-btn', textContent: 'Clear selection', onClick: () => { selected.clear(); syncSelection(); view.reload(); } });
+    bulk.append(el('span', { className: 'srw-bulk-head' }, [selCount, allLink]), el('span', { className: 'srw-bulk-actions' }, [markBtn, clearBtn]));
+    function syncSelection() {
+      [...selected].forEach((id) => { if (!items.some((x) => x.id === id)) selected.delete(id); });
+      const m = matching();
+      selCount.textContent = `${selected.size} selected`;
+      allLink.textContent = selected.size < m.length ? `Select all ${m.length} matching` : '';
+      bulk.hidden = selected.size === 0;
+      pageBox.checked = pageIds.length > 0 && pageIds.every((id) => selected.has(id));
+    }
+    function updateCount() { countEl.textContent = loaded ? `(${items.length})` : ''; }
+    // Kept by the sidecar: opening the tab reads the list at once, "Reload" asks Stash again.
+    async function load(fresh = false) {
+      status.textContent = ' loading…';
+      const r = await window.SRW.runOp('compare_unorganized', { refresh: fresh });
+      if (r.error) { status.textContent = ` error: ${r.error}`; return; }
+      items = r.scenes || [];
+      loaded = true;
+      status.textContent = r.listed_at ? ` listed ${new Date(`${r.listed_at.replace(' ', 'T')}Z`).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}` : '';
+      view.reset(); updateCount();
+    }
+    const pane = el('div', {}, [
+      el('p', { className: 'srw-hint', textContent: 'Scenes that have a StashDB / ThePornDB (or other stash-box) id but are not marked Organized. “Mark organized…” sets the flag; with the Organized hook switched on (Settings) Stash then moves / renames the file, exactly as for a click in Stash -- the preview before shows how.' }),
+      el('div', { className: 'srw-toolbar' }, [window.SRW.iconButton('button', 'faRotate', 'Reload', { title: 'Reload: ask Stash again (the list is kept until then)', onClick: () => load(true) }),
+        el('label', {}, [pageBox, ' select this page']), status]),
+      bulk,
+      bulkBox,
+      view.node,
+    ]);
+    pane.srwLoad = () => { if (!loaded) load(); };
     return pane;
   }
 
@@ -3033,6 +3205,8 @@
     const { el, confirmInline, notify } = window.SRW;
     const status = el('span', { className: 'srw-key-status' });
     const workerLine = el('p', { className: 'srw-hint' });
+    // What is being converted right now (v0.249.6): a queued file leaves "To convert", so its progress is also told here, on every state of the list.
+    const activeLine = el('div', { className: 'srw-hint', hidden: true });
     const list = el('div');
     const MODE_TEXT = { reencode: ['Re-encode', 'The video is encoded again (old codec); the picture size stays'],
                         remux: ['Repack', 'The video is already H.264 and is copied as it is; only the container (and maybe the sound) changes -- takes seconds, loses nothing'] };
@@ -3055,6 +3229,8 @@
     const sortDir = el('button', { type: 'button', className: 'srw-btn', title: 'Reverse the order', textContent: '↑',
       onClick: () => { reversed = !reversed; sortDir.textContent = reversed ? '↓' : '↑'; view.reset(); } });
     let reversed = false;
+    // After a file is queued the list shows "Queued / running", where the row with its status and remaining time is (it left "To convert").
+    const showActive = () => { stateSelect.value = 'active'; selected.clear(); syncBulkButtons(); if (view) view.reset(); };
     const stateOf = (c) => (c.status === 'failed' ? 'failed' : ACTIVE.includes(c.status) ? 'active' : c.status === 'done' ? 'done' : c.status === 'dismissed' ? 'dismissed' : 'open');
     const pool = () => {
       const st = stateSelect.value;
@@ -3099,7 +3275,7 @@
     const convertBtn = el('button', { type: 'button', className: 'srw-btn srw-btn-primary', textContent: 'Convert', title: 'Queue the selected files; an encode worker converts them one after the other',
       onClick: (e) => confirmInline(e.currentTarget,
         `Convert ${estimate(selectedRows())}? The scene stays, the converted file joins it and the old file goes to the recycle bin. Needs an encode worker.`,
-        () => bulkOp('convert_queue', [...selected], (r) => `${r.queued} file(s) queued`)) });
+        () => bulkOp('convert_queue', [...selected], (r) => { showActive(); return `${r.queued} file(s) queued -- progress under “Queued / running”`; })) });
     const cancelBtn = el('button', { type: 'button', className: 'srw-btn', textContent: 'Cancel', title: 'Take the selected queued / running files out of the queue (a running conversion is stopped)',
       onClick: () => bulkOp('convert_cancel', [...selected], (r) => `${r.cancelled} file(s) taken out of the queue`) });
     const dismissBtn = el('button', { type: 'button', className: 'btn btn-outline-danger srw-btn-fit', textContent: 'Dismiss', title: 'Keep these files as they are; they leave the list',
@@ -3133,6 +3309,22 @@
       const r = await window.SRW.runOp('convert_history', { status: kind });
       if (!r.error) history[kind] = r.rows || [];
     }
+    function renderActiveLine() {
+      const act = rows.filter((c) => ACTIVE.includes(c.status));
+      activeLine.hidden = !act.length;
+      activeLine.innerHTML = '';
+      if (!act.length) return;
+      const running = act.filter((c) => c.status === 'running');
+      const checking = act.filter((c) => c.status === 'verifying' || c.status === 'replacing');
+      const queued = act.filter((c) => c.status === 'queued');
+      const name = (c) => (c.scene_title || c.file_path.split('/').pop());
+      const parts = [
+        ...running.map((c) => `${name(c)}: ${c.percentage || 0} %${c.seconds_left ? `, about ${Math.max(1, Math.round(c.seconds_left / 60))} min left` : ''}`),
+        ...checking.map((c) => `${name(c)}: ${phaseText(c, c.status === 'verifying' ? 'checking the converted file' : 'putting it into the scene')}`),
+      ];
+      activeLine.append(`Converting now (${running.length} running${checking.length ? `, ${checking.length} finishing` : ''}${queued.length ? `, ${queued.length} waiting` : ''}): ${parts.join(' · ') || 'waiting for an encode worker'} `,
+        el('a', { href: '#', textContent: 'show', onClick: (e) => { e.preventDefault(); stateSelect.value = 'active'; selected.clear(); syncBulkButtons(); view.reset(); } }));
+    }
     async function load() {
       const r = await window.SRW.runOp('convert_list');
       if (r.error) { status.textContent = ` error: ${r.error}`; return; }
@@ -3143,6 +3335,7 @@
       workerLine.textContent = (w.online ? `Encode worker online${w.name ? `: ${w.name}` : ''}.` : `No encode worker is asking right now${w.name ? ` (last: ${w.name}, ${w.seconds_ago == null ? '' : `${Math.round(w.seconds_ago / 60)} min ago`})` : ''} -- queued files wait for one.`)
         + (r.media_path_set ? '' : ' The folder of the library on the worker machine is not set yet (Settings > Quality > "Library on the worker"); without it the worker needs --map /media=<folder>.');
       workerLine.className = w.online && r.media_path_set ? 'srw-hint' : 'srw-review-warning';
+      renderActiveLine();
       [...stateSelect.options].forEach((o) => {
         const n = o.value === 'done' ? counts.done : o.value === 'dismissed' ? counts.dismissed : rows.filter((c) => stateOf(c) === o.value).length;
         o.textContent = `${STATES.find((x) => x[0] === o.value)[1]} (${n})`;
@@ -3171,6 +3364,13 @@
       if (!busy && timer) { clearInterval(timer); timer = null; }
     }
 
+    // The step a finished conversion is in on the sidecar: its name, how far (Stash's scan reports a percentage) and how long this step runs.
+    function phaseText(c, fallback) {
+      const p = c.phase;
+      if (!p) return `${fallback}…`;
+      const mins = Math.floor((p.step_seconds || 0) / 60);
+      return `${p.step}${p.percent != null && p.percent < 100 ? ` -- ${p.percent} %` : ''}${mins >= 1 ? `, running ${mins} min` : '…'}`;
+    }
     function buildRow(c) {
       const [modeLabel, modeTitle] = MODE_TEXT[c.mode] || [c.mode, ''];
       const cb = el('input', { type: 'checkbox', title: 'Select' });
@@ -3179,7 +3379,7 @@
       const facts = [`${c.container}/${c.video_codec}/${c.audio_codec || 'no sound'}`, c.width && c.height ? `${c.width}x${c.height}` : null, fmtGb(c.size), fmtMin(c.duration),
         c.bit_rate ? `${(c.bit_rate / 1e6).toFixed(1)} Mbit/s` : null].filter(Boolean);
       const note = {
-        wanted: '', failed: c.error || 'failed', queued: 'waiting for an encode worker', verifying: 'checking the converted file…', replacing: 'putting the converted file into the scene…',
+        wanted: '', failed: c.error || 'failed', queued: 'waiting for an encode worker', verifying: phaseText(c, 'checking the converted file'), replacing: phaseText(c, 'putting the converted file into the scene'),
         running: `${c.worker || 'worker'}: ${c.percentage || 0} %${c.speed_x ? ` (${c.speed_x}x)` : ''}${c.seconds_left ? `, about ${Math.max(1, Math.round(c.seconds_left / 60))} min left` : ''}`,
         done: `converted: ${fmtGb(c.size)} -> ${fmtGb(c.size_after)}; the old file is in the recycle bin`, dismissed: 'dismissed -- the file is kept as it is',
       }[c.status] || c.status;
@@ -3187,7 +3387,7 @@
       if (c.status === 'wanted' || c.status === 'failed') {
         actions.push(el('button', { type: 'button', className: 'srw-btn srw-btn-primary', textContent: 'Convert', title: 'Queue this file for an encode worker',
           onClick: (e) => confirmInline(e.currentTarget, `Convert "${c.scene_title || c.file_path.split('/').pop()}" (${modeLabel.toLowerCase()})? The scene stays and the old file goes to the recycle bin.`,
-            async () => { const r = await window.SRW.runOp('convert_queue', { ids: [c.id] }); if (r.error) { notify('Convert', r.error, 'error'); return; } load(); }) }));
+            async () => { const r = await window.SRW.runOp('convert_queue', { ids: [c.id] }); if (r.error) { notify('Convert', r.error, 'error'); return; } await load(); showActive(); }) }));
         actions.push(el('button', { type: 'button', className: 'btn btn-outline-danger srw-btn-fit srw-btn-dismiss', textContent: 'Dismiss', title: 'Keep the file as it is',
           onClick: async () => { await window.SRW.runOp('convert_dismiss', { ids: [c.id] }); await load();
             window.SRW.dismissedNotice(`Dismissed: ${c.scene_title || 'file'}`, 'The file is kept as it is.', () => window.SRW.runOp('convert_dismiss', { ids: [c.id], restore: true }), () => load()); } }));
@@ -3216,6 +3416,7 @@
           + 'The work is done by an encode worker on another machine (not the NAS). The Stash scene stays: the converted file joins it, and the old file goes to the recycle bin. HEVC and VR files and files that only have AC3 sound are not part of this page.',
       }),
       workerLine,
+      activeLine,
       el('div', { className: 'srw-toolbar' }, [refreshBtn, stateSelect, modeSelect, sortSelect, sortDir, status]),
       bulk,
       list,

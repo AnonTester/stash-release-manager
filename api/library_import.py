@@ -376,7 +376,11 @@ class Importer(Organizer):
         multi = [s for s in candidates if len(s["files"]) != 1]
         known = {self.stash.stashdb_endpoint, self.stash.theporndb_endpoint, *[e["endpoint"] for e in self.extra_providers]}
         with_id = [s for s in scenes if any(x["endpoint"] in known for x in s["stash_ids"])]
-        movie_scenes = [s for s in scenes if s not in with_id and len(s.get("groups") or []) == 1]
+        # A scene in exactly one group is a film's scene. Without a provider id it is always planned as a film; WITH an id only when its file already
+        # lies in a film folder (v0.249.5: a scene of "Occupy My Ass" in movies/Anal/ that was marked Organized in Stash was moved to scenes/<Studio>/
+        # because its StashDB id made it a "ready" scene) -- an id does not take a film's scene out of the film folders.
+        movie_scenes = [s for s in scenes if len(s.get("groups") or []) == 1
+                        and (s not in with_id or self._in_movie_roots(s["files"][0]["path"]))]
         without_id = [s for s in scenes if s not in with_id and s not in movie_scenes]
         verified = self._verify([(s, s["files"][0]) for s in with_id])
         found = self._identify(without_id) if identify else {}
@@ -880,10 +884,11 @@ class Importer(Organizer):
         'preview' the planned move is only written to History, with 'on' it is done. Handled: a movie scene (one group, Organized counts as
         the confirmation) anywhere in the library, and a source-folder scene that is 'ready' (provider id + matching fingerprints). Everything
         else is left alone and History says why. The scene is re-read here (the event is never trusted) and must still be Organized."""
-        if mode not in ("preview", "on"):
+        if mode not in ("preview", "on", "dry"):
             return {"skipped": "off"}
         scene = self._scene_by_id(scene_id)
-        if scene is None or not scene.get("organized"):
+        # mode "dry" (v0.249.0): the same decision for a scene that is NOT marked yet -- nothing is written, nothing moved (organized_plan)
+        if scene is None or (mode != "dry" and not scene.get("organized")):
             return {"skipped": "not organized"}
         title = scene.get("title") or f"scene {scene_id}"
         if len(scene["files"]) != 1:
@@ -907,6 +912,9 @@ class Importer(Organizer):
             return self._hook_note(scene, f"was not moved: {item['how'] or item['kind']}", mode)
         if not item["new_path"] or item["new_path"] == path:
             return self._hook_note(scene, "is already where it belongs", mode)
+        if mode == "dry":
+            conflict = self.renamer_guard(False)
+            return {"preview": item, "blocked": conflict["error"] if conflict else None}
         if mode == "preview":
             history.add("info", "history", "import", f"Organized preview (nothing moved): {path[len(self._root()):]} -> {item['new_path'][len(self._root()):]}",
                         scene_title=title, details={"stash_scene": scene_id, "old": path, "new": item["new_path"], "kind": item["kind"]})
@@ -923,7 +931,35 @@ class Importer(Organizer):
             return busy
         return self._apply_items(f"Organized ({root})", [item])
 
+    def organized_plan(self, scene_id):
+        """What marking this scene Organized would do (v0.249.0), for the preview of "Mark organized": {"old", "new", "note", "blocked", "hook"}.
+        `old` / `new` are paths relative to the library; `new` is None when nothing would move (then `note` says why). Writes nothing."""
+        hook = (self.setting("organized_hook") or "off").strip()
+        scene = self._scene_by_id(scene_id)
+        if scene is None:
+            return {"error": "scene not found in Stash"}
+        old = scene["files"][0]["path"] if scene["files"] else ""
+        rel = lambda p: p[len(self._root()):].lstrip("/") if p.startswith(self._root() + "/") else p  # noqa: E731
+        out = {"old": rel(old), "new": None, "note": None, "blocked": None, "hook": hook}
+        if scene.get("organized"):  # marked meanwhile (in Stash itself): the list is out of date, the caller drops the row
+            out["already_organized"] = True
+            out["note"] = "already marked Organized"
+            return out
+        res = self.organized_scene(scene_id, "dry")
+        item = res.get("preview")
+        if item and item.get("new_path") and item["new_path"] != old:
+            out["new"] = rel(item["new_path"])
+            out["blocked"] = res.get("blocked")
+        else:
+            out["note"] = res.get("note") or res.get("error") or res.get("blocked") or "already where it belongs"
+        if hook == "off":
+            out["note"] = (out["note"] + " -- " if out["note"] else "") + "the Organized hook is off: marking only sets the flag, nothing is moved"
+            out["new"] = None if not out["new"] else out["new"]
+        return out
+
     def _hook_note(self, scene, text, mode):
+        if mode == "dry":  # a preview writes nothing, not even History
+            return {"note": text}
         history.add("info", "history", "import", f"Marked Organized, {text}", scene_title=scene.get("title") or f"scene {scene['id']}",
                     details={"stash_scene": scene["id"], "mode": mode})
         return {"note": text}
