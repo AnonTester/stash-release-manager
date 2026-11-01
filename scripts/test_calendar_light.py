@@ -27,5 +27,16 @@ check("the light row has only the keys that decide the look", set(light[0]) <= s
 sig = lambda rows: [[r.get(k) or "" for k in release_repo.LIGHT_KEYS] for r in rows]  # noqa: E731
 check("the same values as the full row", sig(light) == sig(full))
 check("the light answer is much smaller", len(str(light)) * 3 < len(str(full)))
+# v0.249.15: a VR tag that arrives later sets the VR flag
+release_repo.set_tags_for_scene(db, "stashdb", "s1", [{"name": "Anal"}, {"name": "Virtual Reality"}])
+check("a later 'Virtual Reality' tag sets is_vr", release_repo.query_releases(db, **args)["rows"][0]["is_vr"] == 1)
+with db.connect() as conn:
+    conn.execute("UPDATE release SET is_vr = 0")
+release_repo.set_tags_for_scene(db, "stashdb", "s1", [{"name": "Anal"}])
+check("other tags leave the flag alone", release_repo.query_releases(db, **args)["rows"][0]["is_vr"] == 0)
+with db.connect() as conn:
+    conn.execute("UPDATE release SET tags = '|Anal|Virtual Reality|', is_vr = 0")
+db = Database(os.path.join(os.environ["DATA_DIR"], "t.sqlite3"))  # opening the database runs the migrations
+check("the start-up migration fixes rows that already carry the tag", release_repo.query_releases(db, **args)["rows"][0]["is_vr"] == 1)
 print("ALL OK" if not FAILS else f"{len(FAILS)} FAILED")
 sys.exit(1 if FAILS else 0)

@@ -6,6 +6,9 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.249.15
+- **Fix: VR scenes shown under "Non-VR".** A scene's VR flag is set from the provider's "Virtual Reality" tag when the scan finds it, but editors often add that tag hours later. The tags were read again later, the flag was not, so the VR / Non-VR filters and the VR quality rules treated such a scene as flat. The flag now follows a later tag, and the database sets it once at start-up for the scenes that already carry the tag.
+
 ## 0.249.14 (with 0.249.5 - 0.249.13)
 - **Fix: a film's scene with a provider id is no longer moved out of the film folders.** A scene in exactly one group whose file already lies in a film folder stayed a "normal" scene when it carried a StashDB / ThePornDB id, so marking it Organized moved the file to `scenes/<Studio>/...`. It now stays a film scene (planned with the movie templates), id or not.
 - **Maintenance > Convert shows what happens.** After a click on Convert the row moves to *Queued / running*, where it shows the status with percent and minutes left; a line above the list tells what is converting right now. The finishing phase names its step ("checking the converted file", "Stash scans the converted file - 40 %", "joining ... to the scene", "moving the old file to the recycle bin") with the running time.

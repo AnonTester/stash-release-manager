@@ -1133,6 +1133,10 @@ def set_tags_for_scene(db, provider, scene_id, tags, studio_id=None, image_url=N
     with db.connect() as conn:
         conn.execute("UPDATE release SET tags = ? WHERE provider = ? AND scene_stashdb_id = ?",
                      (tags_text(tags) or "", provider, scene_id))
+        # v0.249.15: the "Virtual Reality" tag is often added at the provider AFTER the scan found the scene; the tags are read again later (this
+        # function) but the VR flag stayed 0, so the VR / Non-VR filters and the VR quality rules treated a VR scene as flat (295 scenes by then).
+        if "|Virtual Reality|" in (tags_text(tags) or ""):
+            conn.execute("UPDATE release SET is_vr = 1 WHERE provider = ? AND scene_stashdb_id = ? AND is_vr = 0", (provider, scene_id))
         if studio_id:
             conn.execute("UPDATE release SET studio_id = ? WHERE provider = ? AND scene_stashdb_id = ? AND studio_id IS NULL",
                          (studio_id, provider, scene_id))
