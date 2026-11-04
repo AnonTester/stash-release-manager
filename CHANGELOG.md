@@ -6,6 +6,11 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.250.2 (with 0.250.0 - 0.250.1)
+- **Lists keep their state; no page reloads after a Dismiss.** The Studio / Performer page's *New releases* and *Missing from Catalog*, the Releases page's sections (*On Wishlist*, *Imported*, *Dismissed*, *Added late*), Activity and the Movies lists keep what they showed: a page already read appears at once and is re-read quietly behind it; a Dismiss takes the row out of the shown list without any request, and the counts follow. Activity no longer rebuilds itself when the sidecar announces the change you just made (filters, page numbers and open panels stay). A clicked row shows "Dismissing..." / "Adding..." until the answer is in.
+- **"Dismiss N on this page" and "Dismiss all N matching"** on every list that has a pager, a filter bar and a Dismiss per row: the Studio / Performer page (New releases, Missing from Catalog), On Wishlist, Added late, Activity (Stuck, Source file missing), the new movies, and the Maintenance findings lists (Fingerprint check, VR check, Duration mismatch, Compare groups). "All matching" only while a filter narrows the list; both ask first; one Undo puts everything back to its own status.
+- **Fix: the Activity page could fail to draw** while a scene dated today or yesterday was on the wishlist (a missing `await`).
+
 ## 0.249.16
 - **Calendar: a day opened with "+N more" stays open** after a Dismiss or Add to Wishlist inside it (the day is redrawn so the next card moves up; opened days are remembered now).
 

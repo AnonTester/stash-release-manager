@@ -1121,6 +1121,80 @@ def dismiss_finding(finding_id: int):
     return {"dismissed": True, "previous": finding.get("status")}
 
 
+# ---- bulk "Dismiss" for the findings lists (v0.250.1): the same pair "Dismiss N on this page" / "Dismiss all N matching" as on the release lists; each
+# answer carries the previous state of what it changed, so ONE Undo (the bulk-restore of the same list) puts it back. ----
+BULK_FINDINGS_MAX = 2000
+
+
+@router.post("/library-check/findings/bulk-dismiss")
+def bulk_dismiss_findings(body: dict):
+    previous = []
+    for fid in [int(x) for x in (body.get("ids") or [])][:BULK_FINDINGS_MAX]:
+        finding = library_check_repo.get_finding(_db, fid)
+        if finding and finding.get("status") == "pending":  # Dismiss is only offered from 'pending'
+            library_check_repo.set_finding_status(_db, fid, "dismissed")
+            previous.append({"id": fid, "status": "pending"})
+    return {"ok": True, "changed": len(previous), "previous": previous}
+
+
+@router.post("/library-check/findings/bulk-restore")
+def bulk_restore_findings(body: dict):
+    ids = [int(r["id"]) for r in (body.get("rows") or [])][:BULK_FINDINGS_MAX]
+    restored = 0
+    with _db.connect() as conn:
+        for fid in ids:
+            restored += conn.execute("UPDATE library_check_finding SET status = 'pending', resolved_at = NULL WHERE id = ? AND status = 'dismissed'", (fid,)).rowcount
+    return {"ok": True, "restored": restored}
+
+
+@router.post("/vr-check/findings/bulk-dismiss")
+def bulk_dismiss_vr_findings(body: dict):
+    previous = []
+    for fid in [int(x) for x in (body.get("ids") or [])][:BULK_FINDINGS_MAX]:
+        finding = vr_check.get_finding(_db, fid)
+        if finding and finding.get("finding_status") not in ("dismissed", None, ""):
+            previous.append({"id": fid, "status": finding["finding_status"]})
+            vr_check.set_finding_status(_db, fid, "dismissed")
+    return {"ok": True, "changed": len(previous), "previous": previous}
+
+
+@router.post("/vr-check/findings/bulk-restore")
+def bulk_restore_vr_findings(body: dict):
+    restored = 0
+    for r in (body.get("rows") or [])[:BULK_FINDINGS_MAX]:
+        finding = vr_check.get_finding(_db, int(r["id"]))
+        if finding and finding.get("finding_status") == "dismissed" and r.get("status") not in ("dismissed", "none", "", None):
+            vr_check.set_finding_status(_db, int(r["id"]), r["status"])
+            restored += 1
+    return {"ok": True, "restored": restored}
+
+
+@router.post("/duration-check/bulk-ignore")
+def bulk_ignore_duration(body: dict):
+    """Dismiss ("ignore") many scenes of the duration check at once; restore=true takes them back (status 'checked' again)."""
+    restore = bool(body.get("restore"))
+    changed = []
+    for sid in [str(x) for x in (body.get("scene_ids") or [])][:BULK_FINDINGS_MAX]:
+        row = duration_check.get_row(_db, sid)
+        if row and (row.get("status") == "ignored") == restore:
+            duration_check.set_status(_db, sid, "checked" if restore else "ignored")
+            changed.append({"scene_id": sid})
+    return {"ok": True, "changed": len(changed), "previous": changed}
+
+
+@router.post("/movies/compare-groups/bulk-ignore")
+def bulk_ignore_compare_groups(body: dict):
+    """"Not this" for many suggested pairs at once (undo=true takes them back)."""
+    undo = bool(body.get("undo"))
+    pairs = [(p.get("folder_key"), p.get("group_id")) for p in (body.get("pairs") or [])][:BULK_FINDINGS_MAX]
+    done = []
+    for key, gid in pairs:
+        if key and gid:
+            group_compare.set_ignored(_db, key, gid, not undo)
+            done.append({"folder_key": key, "group_id": gid})
+    return {"ok": True, "changed": len(done), "previous": done}
+
+
 @router.post("/library-check/findings/{finding_id}/restore")
 def restore_finding(finding_id: int, body: RestoreBody):
     """Undo of "Dismiss" on a Library-check finding: back to 'pending' (the only status Dismiss is offered from)."""

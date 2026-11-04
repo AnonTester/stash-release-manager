@@ -290,6 +290,10 @@ def main():
         # routers/releases.py's bulk_status().
         result = _post(sidecar_url, "/releases/bulk-status",
                        {"action": args.get("action"), "scenes": args.get("scenes") or []})
+    elif mode == "releases_bulk_dismiss":
+        # "Dismiss N on this page" / "Dismiss all N matching" on the Studio/Performer page, the wishlist and Activity (v0.250.0); answer carries
+        # `previous` for one Undo through releases_restore.
+        result = _post(sidecar_url, "/releases/bulk-dismiss", {"scenes": args.get("scenes") or []}, timeout=120)
     elif mode == "releases_library_status":
         # One batched Stash query for the whole list, plus one or two
         # small, fixed-size Whisparr quality-profile lookups (not a
@@ -722,6 +726,18 @@ def main():
     elif mode == "maintenance_check_confirm":
         result = _post(sidecar_url, f"/maintenance/library-check/findings/{args.get('finding_id')}/confirm",
                        {"submit": bool(args.get("submit"))}, timeout=180)
+    elif mode == "check_bulk_dismiss":  # "Dismiss N on this page" / "all N matching" of the findings lists (v0.250.1)
+        result = _post(sidecar_url, "/maintenance/library-check/findings/bulk-dismiss", {"ids": args.get("ids") or []}, timeout=120)
+    elif mode == "check_bulk_restore":
+        result = _post(sidecar_url, "/maintenance/library-check/findings/bulk-restore", {"rows": args.get("rows") or []}, timeout=120)
+    elif mode == "vr_check_bulk_dismiss":
+        result = _post(sidecar_url, "/maintenance/vr-check/findings/bulk-dismiss", {"ids": args.get("ids") or []}, timeout=120)
+    elif mode == "vr_check_bulk_restore":
+        result = _post(sidecar_url, "/maintenance/vr-check/findings/bulk-restore", {"rows": args.get("rows") or []}, timeout=120)
+    elif mode == "duration_check_bulk_ignore":
+        result = _post(sidecar_url, "/maintenance/duration-check/bulk-ignore", {"scene_ids": args.get("scene_ids") or [], "restore": bool(args.get("restore"))}, timeout=120)
+    elif mode == "movies_compare_groups_bulk_ignore":
+        result = _post(sidecar_url, "/maintenance/movies/compare-groups/bulk-ignore", {"pairs": args.get("pairs") or [], "undo": bool(args.get("undo"))}, timeout=120)
     elif mode == "maintenance_check_dismiss":
         result = _post(sidecar_url, f"/maintenance/library-check/findings/{args.get('finding_id')}/dismiss", {}, timeout=15)
     elif mode == "file_import_run":

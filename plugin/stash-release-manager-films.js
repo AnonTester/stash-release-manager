@@ -74,6 +74,14 @@
       suggestBar.hidden = n === 0 && !status.textContent;
     }
 
+    // A movie's status changed here (a Dismiss): the list in the browser follows WITHOUT asking the sidecar again (v0.250.0); only an Undo reads it.
+    function patchFilm(list, to) {
+      list.forEach((f) => { f.status = to; });
+      counts.textContent = COUNTED.map((k) => countOf(k)).join('/');
+      Object.values(views).forEach((v) => v.reload());
+      syncSuggestions();
+      if (!calPane.hidden) renderCalendar();
+    }
     async function load() {
       const res = await window.SRW.runOp('films_list', { per_page: 0, order: 'title' });
       if (res.error) { status.textContent = ` error: ${res.error}`; return; }
@@ -131,9 +139,10 @@
         if (to === 'dismissed') {
           window.SRW.dismissedNotice(`Dismissed: ${f.title}`, '',
             () => window.SRW.runOp('films_set_status', { id: f.id, status: res.previous }), () => load());
-        } else if (label) {
-          notify('Movie', label, 'success');
+          patchFilm([f], 'dismissed');
+          return;
         }
+        if (label) notify('Movie', label, 'success');
         await load();
       };
       if (f.status === 'suggested') {
@@ -369,6 +378,8 @@
     // One list tab: the scene page's filter bar above a paged list of the movies in that state.
     const makeList = (key, withPresets) => {
       const S = newFilterState(null);
+      let shown = [];
+      let bulkRef = null;
       const view = window.SRW.buildFilteredPagedList({
         filters: [], perPage: window.SRW.listViewPageSize || 100,
         emptyText: key === 'suggested' ? 'No new movies to decide on. New movies of your watched studios arrive here.'
@@ -378,12 +389,33 @@
           () => films.filter((f) => viewKey(f) === key && passesFilter(f, S)).sort((a, b) => (key === 'suggested' ? classRank(a) - classRank(b) : 0)
             || (a.title || '').localeCompare(b.title || '')),
           {}),
-        renderItems: (items) => el('ul', { className: 'srw-release-list' }, items.map(buildRow)),
+        renderItems: (items) => { shown = items; const ul = el('ul', { className: 'srw-release-list' }, items.map(buildRow)); if (bulkRef) bulkRef.update(); return ul; },
       });
       const barSlot = el('div');
       const buildBar = () => barSlot.replaceChildren(window.SRW_Releases.buildFilterBar(S, () => view.reload(),
         { noun: 'movie', noPresets: !withPresets, noImported: true, typeTitle: BAR_TYPE_TITLE, providerKeys: ['theporndb'] }));
-      return { view, buildBar, node: el('div', {}, [barSlot, view.node]) };
+      // "Dismiss N on this page" / "Dismiss all N matching" for the new movies (v0.250.0, as on the scene lists); one Undo puts them back to "new".
+      let bulk = null;
+      if (key === 'suggested') {
+        const matching = () => films.filter((f) => viewKey(f) === key && passesFilter(f, S));
+        bulk = window.SRW.buildBulkDismissBar({
+          getPage: () => shown, getTotal: () => matching().length, filterActive: () => filterIsActive(S), loadAll: async () => matching(),
+          keyOf: (f) => String(f.id), pick: (f) => ({ id: f.id }), noun: 'movies',
+          dismissChunk: async (chunk) => {
+            const ids = chunk.map((x) => x.id);
+            const res = await window.SRW.runOp('films_bulk_status', { ids, status: 'dismissed' });
+            return res.error ? res : { previous: ids.map((id) => ({ id })) };
+          },
+          undo: (rows) => window.SRW.runOp('films_bulk_status', { ids: rows.map((r) => r.id), status: 'suggested' }),
+          onDone: async (items, all) => {
+            if (all && !items.length) { await load(); return; } // an Undo reads the list
+            const gone = new Set(items.map((x) => x.id));
+            patchFilm(films.filter((f) => gone.has(f.id)), 'dismissed');
+          },
+        });
+      }
+      bulkRef = bulk;
+      return { view, buildBar, node: el('div', {}, [barSlot, ...(bulk ? [bulk.node] : []), view.node]), bulk };
     };
     const barBuilders = []; // built once the saved presets are loaded (the preset dropdown reads them when it is built)
     TABS.forEach(([key]) => {
@@ -543,6 +575,8 @@
       if (res.error) { notify('Movie', res.error, 'error'); return; }
       if (to === 'dismissed') {
         window.SRW.dismissedNotice(`Dismissed: ${f.title}`, '', () => window.SRW.runOp('films_set_status', { id: f.id, status: res.previous }), () => load());
+        patchFilm([f], 'dismissed'); // the card leaves at once, no request
+        return;
       }
       await load();
     }

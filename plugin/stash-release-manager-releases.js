@@ -100,7 +100,7 @@
   // the panel is closed (core.js whenNoOpenPanel).
   function reloadSectionViews() {
     liveSectionViews.forEach((view) => {
-      if (view.node.isConnected) window.SRW.whenNoOpenPanel(view.node, () => view.reload());
+      if (view.node.isConnected) window.SRW.whenNoOpenPanel(view.node, () => (view.refresh ? view.refresh() : view.reload()));
       else liveSectionViews.delete(view);
     });
   }
@@ -118,12 +118,25 @@
   let sectionsTimer = null;
   let sectionsFirstAsk = 0;
   function reloadLiveSections() {
-    if (!calendarLive()) { reloadSectionViews(); return; }
     const now = Date.now();
     if (!sectionsFirstAsk) sectionsFirstAsk = now;
     clearTimeout(sectionsTimer);
     sectionsTimer = setTimeout(() => { sectionsTimer = null; sectionsFirstAsk = 0; reloadSectionViews(); }, Math.max(0, Math.min(6000, sectionsFirstAsk + 40000 - now)));
-    calendarCtl.softRefresh();
+    if (calendarLive()) calendarCtl.softRefresh();
+  }
+  const sectionsChanged = reloadLiveSections;
+
+  // A row of a status section (On Wishlist / Added late) was dismissed: it leaves the shown page at once (no request), its Calendar card too; the other
+  // sections (Dismissed, the counts) are read again quietly when the clicking pauses. An Undo redraws as before.
+  function sectionRowChanged(container, status, release, change) {
+    const view = statusSectionViews[status];
+    if (view && release && change && change.remove) {
+      view.patchItems((rows) => rows.filter((x) => !(x.provider === release.provider && x.scene_stashdb_id === release.scene_stashdb_id)));
+      if (status !== 'late' && calendarLive()) calendarCtl.patch(release, { remove: true });
+      sectionsChanged();
+      return null;
+    }
+    return renderCurrentView(container);
   }
 
   // A card was changed (change = { remove: true } or { status }) or something changed behind it (change = null): the Calendar updates in place;
@@ -1159,7 +1172,30 @@
     // 'late' = back-catalogue additions (status 'backlog' + late_addition,
     // 2026-09-26) -- otherwise only visible on each entity's page.
     const isLate = status === 'late';
-    const view = window.SRW.buildFilteredPagedList({
+    // "Dismiss N on this page" / "Dismiss all N matching" for the wishlist and the late additions (v0.250.0); a wishlist scene that is downloading is not offered.
+    const dismissible = (r) => (status === 'sent_to_whisparr' ? !r.download_job_id : isLate);
+    let shownRows = [];
+    let shownFiltered = false;
+    let shownTotal = 0;
+    let view = null;
+    const bar = (status === 'sent_to_whisparr' || isLate) ? window.SRW.buildBulkDismissBar({
+      getPage: () => shownRows.filter(dismissible), getTotal: () => shownTotal, filterActive: () => shownFiltered,
+      loadAll: async () => {
+        const all = await window.SRW.runOp('releases_query', {
+          ...window.SRW.releaseQueryArgs(view.state), statuses: [isLate ? 'backlog' : status], order, per_page: 0, ...(isLate ? { late_addition: true } : {}),
+        });
+        return all.error ? all : groupByScene(all.rows).filter(dismissible);
+      },
+      onDone: async (scenes, all) => {
+        if (all) { await view.reload(); reloadLiveSections(); return; }
+        const gone = new Set(scenes.map((x) => `${x.provider}\u0000${x.scene_stashdb_id}`));
+        view.patchItems((rows) => rows.filter((x) => !gone.has(`${x.provider}\u0000${x.scene_stashdb_id}`)));
+        sectionsChanged();
+      },
+      noun: 'scenes',
+    }) : null;
+    view = window.SRW.buildFilteredPagedList({
+      keep: true, // pages already read show at once and are checked quietly; a Dismiss takes the row out without a request
       filters: ['search', 'description', 'type', 'vr', 'dates', 'providers', ...(status === 'sent_to_whisparr' ? ['upgrades'] : [])],
       perPage: 50,
       showFilterBarFrom: 10,
@@ -1175,11 +1211,16 @@
         if (sortKey) items = items.sort((a, b) => String(b[sortKey] || '').localeCompare(String(a[sortKey] || '')));
         return { total: response.total, items };
       },
-      renderItems: (items) => renderStatusItems(items, status, container),
-      onTotal: (total, active) => { summary.textContent = `${label} — ${total}${active ? ' (filtered)' : ''}`; },
+      renderItems: (items) => { shownRows = items; const list = renderStatusItems(items, status, container); if (bar) bar.update(); return list; },
+      onTotal: (total, active) => {
+        shownTotal = total; shownFiltered = active;
+        summary.textContent = `${label} — ${total}${active ? ' (filtered)' : ''}`;
+        if (bar && !total) { shownRows = []; bar.update(); }
+      },
     });
     statusSectionViews[status] = view;
-    if (status === 'sent_to_whisparr' || status === 'imported') liveSectionViews.add(view);
+    liveSectionViews.add(view); // all four are read again quietly after a change (dismissed / late show new numbers)
+    if (bar) group.appendChild(bar.node);
     group.appendChild(view.node);
     await view.reset();
     return group;
@@ -1228,10 +1269,13 @@
         }));
         li.push(el('button', {
           className: 'srw-btn', textContent: 'Dismiss',
-          onClick: async () => {
+          onClick: async (e) => {
+            const unmark = window.SRW.markRowBusy(e.currentTarget, 'Dismissing…');
             const res = await window.SRW.dismissRelease(r);
-            window.SRW.releaseDismissedNotice(r, res, () => statusSectionViews.late.reload());
-            await statusSectionViews.late.reload();
+            unmark();
+            // a failed dismiss keeps the row; a good one takes it out of the shown page without a request
+            const ok = window.SRW.releaseDismissedNotice(r, res, () => sectionRowChanged(container, 'late', r, null));
+            if (ok) sectionRowChanged(container, 'late', r, { remove: true });
           },
         }));
       } else if (status === 'dismissed') {
@@ -1277,7 +1321,7 @@
         // buildSearchActions(): Whisparr fallback only with Whisparr
         // configured, own-query search over Prowlarr/direct indexers.
         li.push(window.SRW.buildSearchActions(r, () => renderCurrentView(container)));
-        if (!r.download_job_id) li.push(window.SRW.buildWishlistDismiss(r, () => renderCurrentView(container)));
+        if (!r.download_job_id) li.push(window.SRW.buildWishlistDismiss(r, (release, change) => sectionRowChanged(container, 'sent_to_whisparr', release, change)));
         // Live download progress (2026-09-20, "Activity display"
         // request) -- only meaningful once something's actually been
         // grabbed (`download_job_id` set); a release still searching

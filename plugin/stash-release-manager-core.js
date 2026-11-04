@@ -11,7 +11,7 @@
   // rule and the bug it caused when this drifted). Change this if you
   // install under a different folder name.
   // Must equal `version:` in stash-release-manager.yml (scripts/test_plugin_version.py checks it).
-  const PLUGIN_VERSION = '0.249.16';
+  const PLUGIN_VERSION = '0.250.2';
   const PLUGIN_ID = 'stash-release-manager';
   const PLUGIN_NAME = 'StashReleaseManager';
 
@@ -1314,11 +1314,16 @@
       className: 'btn btn-outline-danger srw-btn-fit srw-btn-dismiss', textContent: 'Dismiss',
       title: 'Not wanted after all: off the wishlist, no more searching (with Undo)',
       onClick: async (e) => {
-        e.currentTarget.disabled = true;
+        const btn = e.currentTarget;
+        btn.disabled = true;
+        const unmark = markRowBusy(btn, 'Dismissing…');
         const res = await dismissRelease(release);
-        if (res && res.error) { notify('Dismiss', `Dismiss failed: ${res.error}`, 'error'); e.currentTarget.disabled = false; return; }
-        releaseDismissedNotice(release, res, () => { if (onChanged) onChanged(); });
-        if (onChanged) await onChanged();
+        unmark();
+        if (res && res.error) { notify('Dismiss', `Dismiss failed: ${res.error}`, 'error'); btn.disabled = false; return; }
+        // onChanged(release, { remove: true }) after the dismiss, onChanged(release, null) after its Undo: a list that keeps its rows takes the row out /
+        // puts it back itself; one that ignores the arguments redraws as before.
+        releaseDismissedNotice(release, res, () => { if (onChanged) onChanged(release, null); });
+        if (onChanged) await onChanged(release, { remove: true });
       },
     });
   }
@@ -2551,10 +2556,96 @@
     return buildPager({ page, totalPages, total, perPage, onPage });
   }
 
+  // A list row whose action is on its way (every call goes through Stash and takes seconds): dimmed with a pulsing "Dismissing…" / "Adding…" mark and no
+  // second click, until the answer is in. `from` = the clicked button or any element of the row. Returns the function that takes the mark off.
+  function markRowBusy(from, text) {
+    const li = from && from.closest ? from.closest('li') : null;
+    if (!li) return () => {};
+    li.classList.add('srw-row-busy');
+    const tag = el('span', { className: 'srw-row-busy-tag', textContent: text });
+    li.appendChild(tag);
+    return () => { li.classList.remove('srw-row-busy'); tag.remove(); };
+  }
+
+  // "Dismiss N on this page" and "Dismiss all N matching" for a list of releases (v0.250.0; the Releases page has had both for its New list since 2026-09-24,
+  // this is the same pair for every other list that has a pager, a filter bar and a Dismiss per row).
+  //   getPage()    -> [{provider, scene_stashdb_id}] shown on the page now        loadAll() -> the same for EVERY match (called after the confirmation)
+  //   getTotal()   -> number of matches                                          filterActive() -> a filter narrows the list
+  //   onDone(scenes, all) -> the caller changes its list (`all` = the whole match was dismissed, so the list is read again)
+  // "Dismiss all" is only offered while a filter narrows the list (an unfiltered "all" is one misclick from clearing everything); "on this page" always,
+  // both ask first. ONE Undo puts every row back to the status it had (the sidecar answers with the old rows). Returns { node, update() }: call update()
+  // whenever the list was drawn.
+  // Other kinds of rows (the movies list) bring their own `keyOf` / `pick` / `dismissChunk(items) -> {previous} | {error}` / `undo(rows)`.
+  function buildBulkDismissBar({
+    getPage, getTotal, loadAll, filterActive, onDone, noun = 'releases',
+    keyOf = (r) => `${r.provider}\u0000${r.scene_stashdb_id}`,
+    pick = (r) => ({ provider: r.provider, scene_stashdb_id: r.scene_stashdb_id }),
+    dismissChunk = (chunk) => runOp('releases_bulk_dismiss', { scenes: chunk }),
+    undo = (rows) => runOp('releases_restore', { rows }),
+  }) {
+    const node = el('div', { className: 'srw-bulk-dismiss' });
+    let last = null; // { rows, count } -- the Undo
+    const unique = (list) => {
+      const seen = new Set();
+      return list.filter((r) => { const k = keyOf(r); if (seen.has(k)) return false; seen.add(k); return true; });
+    };
+    const bare = (list) => unique(list).map(pick);
+    async function dismiss(scenes, all) {
+      const rows = [];
+      for (let i = 0; i < scenes.length; i += 300) {
+        const res = await dismissChunk(scenes.slice(i, i + 300));
+        if (res.error) { notify('Bulk dismiss', `Bulk dismiss failed: ${res.error}`, 'error'); break; }
+        rows.push(...(res.previous || []));
+      }
+      if (rows.length) last = { rows, count: new Set(rows.map(keyOf)).size };
+      await onDone(scenes, all);
+      update();
+    }
+    function update() {
+      node.innerHTML = '';
+      if (last) {
+        node.appendChild(el('span', { className: 'srw-bulk-dismiss-note' }, [
+          el('span', { textContent: `Dismissed ${last.count}.` }),
+          el('button', { className: 'srw-btn srw-btn-sm', textContent: 'Undo', onClick: async (e) => {
+            const btn = e.currentTarget; btn.disabled = true;
+            const res = await undo(last.rows);
+            if (res.error) { notify('Undo', `Undo failed: ${res.error}`, 'error'); btn.disabled = false; return; }
+            last = null;
+            await onDone([], true);
+            update();
+          } }),
+          el('button', { className: 'srw-btn srw-btn-sm', textContent: '×', title: 'Hide', onClick: () => { last = null; update(); } }),
+        ]));
+      }
+      const page = bare(getPage());
+      const total = getTotal();
+      if (page.length) {
+        const btn = el('button', { className: 'srw-btn srw-btn-sm srw-btn-danger', textContent: `Dismiss ${page.length} on this page` });
+        btn.addEventListener('click', () => confirmInline(btn, `Dismiss the ${page.length} ${noun} on this page?`, () => dismiss(page, false), { danger: true }));
+        node.appendChild(btn);
+      }
+      if (total > page.length && filterActive()) { // (total first: at construction nothing is loaded and the caller's list may not exist yet)
+        const btn = el('button', { className: 'srw-btn srw-btn-sm srw-btn-danger', textContent: `Dismiss all ${total} matching` });
+        btn.addEventListener('click', () => confirmInline(btn, `Dismiss all ${total} ${noun} matching the current filter?`, async () => {
+          const all = await loadAll();
+          if (!Array.isArray(all)) { notify('Bulk dismiss', `Bulk dismiss failed: ${(all && all.error) || 'could not load the matching releases'}`, 'error'); return; }
+          await dismiss(bare(all), true);
+        }, { danger: true }));
+        node.appendChild(btn);
+      }
+    }
+    update();
+    return { node, update };
+  }
+
   function buildFilteredPagedList({
     filters = [], fetchPage, renderItems, perPage = 40,
     emptyText = 'Nothing here.', filteredEmptyText = 'Nothing matches the current filter.',
     onTotal = null, showFilterBarFrom = 0, pairingOptions = [], castOptions = [], barTarget = null,
+    // keep: true (v0.250.0, for lists the SERVER pages -- every fetch goes through Stash, ~2 s): a page already read is shown AT ONCE when it is asked
+    // for again (back to a page, a filter seen before) and re-read quietly behind it (drawn again only when it differs); patchItems() changes the
+    // page that is shown without any request. itemSig(item) = what decides how a row looks.
+    keep = false, itemSig = null,
   }) {
     const state = defaultFilterState();
     state.pairingOptions = pairingOptions;
@@ -2565,24 +2656,21 @@
     let page = 1;
     let seq = 0;
     let barShown = false;
+    const kept = new Map(); // 'filters|page' -> { result, sig }
+    const sigOf = (result) => `${result.total}|${(result.items || []).map(itemSig || ((it) => `${it.provider || ''}:${it.scene_stashdb_id || it.id || ''}:${it.status || ''}:${it.last_search_result || ''}:${it.download_job_id || ''}`)).join(',')}`;
+    const keyFor = (targetPage) => `${JSON.stringify({ ...state, pairingOptions: 0, castOptions: 0 })}|${targetPage}|${perPage}`;
+    let shownSig = null;
+    let shownKey = null;
 
-    async function load(targetPage = page) {
-      const mySeq = ++seq;
-      let result;
-      try {
-        result = await fetchPage(state, targetPage, perPage);
-      } catch (e) {
-        result = { error: e.message };
-      }
-      if (mySeq !== seq) return; // a newer filter change/page switch is on its way
+    function draw(result, targetPage) {
       listArea.innerHTML = '';
       if (!result || result.error) {
         listArea.appendChild(el('p', { textContent: `Error: ${(result && result.error) || 'unknown'}` }));
-        return;
+        return false;
       }
       const active = isFilterActive(state);
       const totalPages = Math.max(1, Math.ceil(result.total / perPage));
-      if (targetPage > totalPages && result.total > 0) { load(totalPages); return; }
+      if (targetPage > totalPages && result.total > 0) { load(totalPages, true); return false; }
       page = targetPage;
       // The filter bar only appears once the list is big enough to need
       // it (or a filter is already active) -- a 3-entry list doesn't get
@@ -2594,18 +2682,81 @@
       if (onTotal) onTotal(result.total, active);
       if (!result.items.length) {
         listArea.appendChild(el('p', { className: 'srw-hint', textContent: active ? filteredEmptyText : emptyText }));
-        return;
+        return true;
       }
       if (totalPages > 1) listArea.appendChild(buildPagerControls(page, totalPages, result.total, load, perPage));
       listArea.appendChild(renderItems(result.items));
       if (totalPages > 1) listArea.appendChild(buildPagerControls(page, totalPages, result.total, load, perPage));
+      return true;
+    }
+
+    async function fetchFresh(targetPage) {
+      try { return await fetchPage(state, targetPage, perPage); } catch (e) { return { error: e.message }; }
+    }
+
+    // `fresh`: ask the server whatever is kept (reload() after a change); otherwise a kept page is shown first and checked behind it.
+    async function load(targetPage = page, fresh = false) {
+      const mySeq = ++seq;
+      const key = keepOn() ? keyFor(targetPage) : null;
+      const hit = key && !fresh ? kept.get(key) : null;
+      if (hit) {
+        draw(hit.result, targetPage); shownSig = hit.sig; shownKey = key;
+        revalidate(targetPage, key, mySeq);
+        return;
+      }
+      const result = await fetchFresh(targetPage);
+      if (mySeq !== seq) return; // a newer filter change/page switch is on its way
+      const ok = draw(result, targetPage);
+      if (ok && key && !result.error) { const sig = sigOf(result); kept.set(key, { result, sig }); shownSig = sig; shownKey = key; }
+    }
+    const keepOn = () => keep;
+
+    // The quiet check behind a kept page.
+    let checking = false;
+    async function revalidate(targetPage, key, mySeq) {
+      if (checking) return;
+      checking = true;
+      try {
+        const result = await fetchFresh(targetPage);
+        if (result.error || mySeq !== seq || shownKey !== key) return;
+        const sig = sigOf(result);
+        kept.set(key, { result, sig });
+        if (sig !== shownSig && !node.querySelector('.srw-inline-confirm')) { draw(result, targetPage); shownSig = sig; }
+      } finally { checking = false; }
+    }
+
+    // A change made on this page (a row dismissed ...): the shown page is changed WITHOUT a request; the other kept pages are dropped (their borders moved),
+    // and one quiet check follows when the clicking pauses.
+    let softTimer = null;
+    function patchItems(change) {
+      const key = keyFor(page);
+      const hit = kept.get(key);
+      if (!hit) return false;
+      const before = hit.result.items.length;
+      const items = change(hit.result.items);
+      const result = { ...hit.result, items, total: Math.max(0, hit.result.total - (before - items.length)) };
+      kept.clear();
+      const sig = sigOf(result);
+      kept.set(key, { result, sig });
+      shownSig = sig; shownKey = key;
+      draw(result, page);
+      softReload();
+      return true;
+    }
+    function softReload(delay = 6000) {
+      clearTimeout(softTimer);
+      softTimer = setTimeout(() => { softTimer = null; if (node.isConnected) revalidate(page, keyFor(page), seq); }, delay);
     }
 
     return {
       node,
       state,
-      reload: () => load(page),
+      reload: () => load(page, true),
       reset: () => load(1),
+      patchItems,
+      softReload,
+      // Read the shown page again: quietly (drawn only when it differs) for a list that keeps its pages, as reload() for the others.
+      refresh: () => (keep ? revalidate(page, keyFor(page), seq) : load(page, true)),
       // Jump helper: narrow the list to one entry by its text (e.g. a
       // scene title) -- rows on other pages aren't in the DOM any more.
       setSearch(text) {
@@ -2814,7 +2965,7 @@
     watchKind, keepResult, recallResult, forgetResult, keptNote, searchStatusLabel, setBusy, openModal, sceneSubtitle, iconButton, busyIcon, ageWords, ageWarning, confirmInline, buildManagedList, buildSearchActions, whenNoOpenPanel, buildManualSearch, getSearchCapabilities,
     rememberOpen, icon, mismatchWarning, buildPagedList, buildPager, releaseTitleNode, notify, dismissedNotice, releaseDismissedNotice, dismissRelease, buildWishlistDismiss, buildFilmDismissButtons, notifyHandoff, buildAddOnlyButton,
     sceneUrl, notifyReadd, loadMetadataProviderUrls, loadProviders, resetProviders, providerInfo, providerLabel, providerKeys, providerOn, providersAllOn, providersSelected, isLateAdditionNew, buildLateAdditionBadge,
-    buildFilteredPagedList, buildSelect, buildSafetyPanel, ignoreRenamers, pairingOptionsFor, castOptionsFor, buildPairingBadge, localPageFetcher, releaseQueryArgs, filterLocally, isFilterActive,
+    buildFilteredPagedList, markRowBusy, buildBulkDismissBar, buildSelect, buildSafetyPanel, ignoreRenamers, pairingOptionsFor, castOptionsFor, buildPairingBadge, localPageFetcher, releaseQueryArgs, filterLocally, isFilterActive,
     describeProgress, applyProgress, attachLive, buildLiveHint,
     buildEntityIcons, buildLocalEntityLink, buildReleaseThumb, buildStudioContext, fillCast, groupByScene,
     SENT_STATUS_LABEL, SENT_STATUS_LABEL_LONG,
