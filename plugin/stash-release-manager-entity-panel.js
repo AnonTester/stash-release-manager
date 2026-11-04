@@ -108,6 +108,7 @@
         const gone = new Set(scenes.map((x) => `${x.provider}\u0000${x.scene_stashdb_id}`));
         view.patchItems((rows) => rows.filter((x) => !gone.has(`${x.provider}\u0000${x.scene_stashdb_id}`)));
       },
+      redraw: () => view.redraw(),
     });
     view = window.SRW.buildFilteredPagedList({
       filters: ['search', 'description', 'vr', 'dates', 'providers'],
@@ -129,7 +130,7 @@
             return view.patchItems((rows) => rows.filter((x) => !(x.provider === release.provider && x.scene_stashdb_id === release.scene_stashdb_id)));
           }
           return view.reload();
-        });
+        }, undefined, (r) => bar.checkbox(r));
         bar.update();
         return list;
       },
@@ -160,8 +161,8 @@
   // this needs (provider, entity_type, entity_stashdb_id, scene_stashdb_id)
   // already lives on the release row itself, so neither function needs
   // entityType/ids passed in separately any more.
-  function buildReleaseList(releases, onDone, countHint) {
-    const list = buildReleaseListItems(releases, onDone);
+  function buildReleaseList(releases, onDone, countHint, selectBox) {
+    const list = buildReleaseListItems(releases, onDone, undefined, selectBox);
     // Fire-and-forget: patches an "In Library"/Whisparr-quality badge
     // into each row once the check comes back, rather than delaying
     // the whole list on it -- best-effort, see annotateLibraryStatus().
@@ -175,12 +176,13 @@
   // year/quarter group) and still only make ONE batched
   // releases_library_status call across the whole thing afterward,
   // rather than one per group.
-  function buildReleaseListItems(releases, onDone, showSearchStatus) {
+  function buildReleaseListItems(releases, onDone, showSearchStatus, selectBox) {
     const { el } = window.SRW;
     const list = el('ul', { className: 'srw-release-list' });
     releases.forEach((r) => {
       const isTpdb = r.provider !== 'stashdb'; // any provider but StashDB: handled by this sidecar without Whisparr
       const items = [
+        selectBox ? selectBox(r) : null, // the tick box of the bulk Dismiss bar (first column)
         buildReleaseThumb(r),
         el('a', {
           className: 'srw-release-title', href: sceneUrl(r.provider, r.scene_stashdb_id),
@@ -384,8 +386,8 @@
 
   // One plain list for a page of "Missing from Catalog" releases (already sorted newest first by the caller; the old
   // Year > Quarter folding was dropped in v0.101.3 now that the list pages), each row decorated with its library/search status.
-  function buildFlatReleaseList(releases, onDone, statusById) {
-    const ul = buildReleaseListItems(releases, onDone, true);
+  function buildFlatReleaseList(releases, onDone, statusById, selectBox) {
+    const ul = buildReleaseListItems(releases, onDone, true, selectBox);
     releases.forEach((r) => {
       const li = ul.querySelector(`li[data-scene-id="${CSS.escape(r.scene_stashdb_id)}"]`);
       if (li) decorateReleaseRow(li, statusById[r.scene_stashdb_id], r, onDone);
@@ -1152,6 +1154,7 @@
           removeRows(scenes);
         },
         noun: 'scenes',
+        redraw: () => view.reload(), // local data: no request
       });
       resultsArea.appendChild(backlogBar.node);
       // Filter + paging (2026-09-26) over the already-loaded rows; each
@@ -1171,6 +1174,7 @@
             items, (release, change) => (release && change && change.remove
               ? removeRows([release]) // a Dismiss: the row leaves at once
               : refreshBacklogResults(resultsArea, provider, entityType, stashId, entityName)), statusById,
+            (r) => (dismissible(r) ? backlogBar.checkbox(r) : null),
           );
           backlogBar.update();
           return ul;

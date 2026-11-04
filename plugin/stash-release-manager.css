@@ -2378,3 +2378,15 @@ a.srw-btn { text-decoration: none; display: inline-block; text-align: center; }
   position: absolute; right: 0.6rem; top: 50%; transform: translateY(-50%); padding: 0.1rem 0.5rem; border-radius: 3px; font-weight: 600;
   background: rgba(0, 0, 0, 0.6); color: #fff; animation: srw-cal-busy-pulse 1s ease-in-out infinite;
 }
+
+/* A tick box in front of a list row and the selection part of the bulk Dismiss bar (v0.250.4). */
+.srw-row-select { flex: 0 0 auto; width: 1.15rem; height: 1.15rem; margin: 0 0.6rem 0 0; cursor: pointer; accent-color: var(--primary, #137cbd); align-self: center; }
+/* The grid of a release row is thumbnail | text | buttons: a tick box in front needs its own column or everything moves one column to the right. */
+.srw-release-row.srw-has-select { grid-template-columns: auto auto minmax(0, 1fr) auto; }
+.srw-release-row.srw-has-select.srw-release-row-nothumb { grid-template-columns: auto minmax(0, 1fr) auto; }
+.srw-release-row.srw-has-select > .srw-review-candidate, .srw-release-row.srw-has-select > .srw-manual-search-panel, .srw-release-row.srw-has-select > .srw-rr-slot { grid-column: 1 / -1; }
+@media (max-width: 700px) {
+  .srw-release-row.srw-has-select { grid-template-columns: auto auto minmax(0, 1fr); }
+  .srw-release-row.srw-has-select.srw-release-row-nothumb { grid-template-columns: auto minmax(0, 1fr); }
+}
+.srw-bulk-page-select { display: inline-flex; align-items: center; gap: 0.3rem; margin: 0; }

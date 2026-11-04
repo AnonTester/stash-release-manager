@@ -1193,6 +1193,7 @@
         sectionsChanged();
       },
       noun: 'scenes',
+      redraw: () => view.redraw(),
     }) : null;
     view = window.SRW.buildFilteredPagedList({
       keep: true, // pages already read show at once and are checked quietly; a Dismiss takes the row out without a request
@@ -1211,7 +1212,7 @@
         if (sortKey) items = items.sort((a, b) => String(b[sortKey] || '').localeCompare(String(a[sortKey] || '')));
         return { total: response.total, items };
       },
-      renderItems: (items) => { shownRows = items; const list = renderStatusItems(items, status, container); if (bar) bar.update(); return list; },
+      renderItems: (items) => { shownRows = items; const list = renderStatusItems(items, status, container, bar ? (r) => (dismissible(r) ? bar.checkbox(r) : null) : null); if (bar) bar.update(); return list; },
       onTotal: (total, active) => {
         shownTotal = total; shownFiltered = active;
         summary.textContent = `${label} — ${total}${active ? ' (filtered)' : ''}`;
@@ -1226,7 +1227,7 @@
     return group;
   }
 
-  function renderStatusItems(items, status, container) {
+  function renderStatusItems(items, status, container, selectBox) {
     const { el } = window.SRW;
     const ul = el('ul', { className: 'srw-release-list' });
     // scene_stashdb_id -> {fill, text} -- only ever populated in the
@@ -1235,6 +1236,7 @@
     items.forEach((r) => {
       const when = status === 'imported' ? r.imported_at : r.handoff_at;
       const li = [
+        selectBox ? selectBox(r) : null, // the tick box of the bulk Dismiss bar
         buildReleaseThumb(r),
         buildEntityIcons(r.entity_types),
         buildLocalEntityLink(r),

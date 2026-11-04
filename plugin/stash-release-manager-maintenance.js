@@ -520,12 +520,13 @@
 
   // "Dismiss N on this page" / "Dismiss all N matching" for a findings list whose rows are all in the browser (v0.250.1): the matching ones are what the
   // list's own search leaves (the same filter function as the list); `onRemoved(items)` takes them out of the list's data; an Undo calls `reread()`.
-  function localBulkBar({ getRows, getView, fields, shown, keyOf, pick, dismissChunk, undo, onRemoved, reread, noun = 'findings' }) {
+  function localBulkBar({ getRows, getView, fields, shown, keyOf, pick, dismissChunk, undo, onRemoved, reread, noun = 'findings', selection = null, selectUi = true }) {
     const matching = () => { const v = getView(); return v ? window.SRW.filterLocally(getRows(), v.state, fields) : []; };
     return window.SRW.buildBulkDismissBar({
       getPage: shown, getTotal: () => matching().length,
       filterActive: () => { const v = getView(); return Boolean(v && (v.state.search || '').trim()); },
-      loadAll: async () => matching(), keyOf, pick, dismissChunk, undo, noun,
+      loadAll: async () => matching(), keyOf, pick, dismissChunk, undo, noun, selection, selectUi,
+      redraw: () => { const v = getView(); if (v) v.reload(); }, // the lists are in the browser: no request
       onDone: async (items, all) => {
         if (all && !items.length) { await reread(); return; } // an Undo: read the list again
         onRemoved(items);
@@ -541,6 +542,7 @@
     selectMore.hidden = true;
     let pageFindings = [];
     let matchingFindings = [];
+    let bulkBarRef = null;
     const syncSelectAll = () => {
       selectAll.checked = pageFindings.length > 0 && pageFindings.every((f) => selectedIds.has(f.id));
       const rest = matchingFindings.filter((f) => !selectedIds.has(f.id)).length;
@@ -554,6 +556,7 @@
       applyBtn.textContent = `Apply selected (${selectedIds.size})`;
       applyBtn.disabled = selectedIds.size === 0;
       syncSelectAll();
+      if (bulkBarRef) bulkBarRef.update(); // "Dismiss n selected" reads the same ticks
     };
 
     // Paged + searchable since 2026-09-26; the selection (selectedIds) lives across pages.
@@ -619,6 +622,12 @@
       loadAll: async () => matchingFindings, keyOf: (f) => String(f.id), pick: (f) => ({ id: f.id }), noun: 'findings',
       dismissChunk: (chunk) => window.SRW.runOp('check_bulk_dismiss', { ids: chunk.map((x) => x.id) }),
       undo: (rows) => window.SRW.runOp('check_bulk_restore', { rows }),
+      // the same ticks as "Apply selected": tick rows, then Apply or Dismiss them
+      selection: {
+        has: (k) => selectedIds.has(Number(k)), add: (k, item) => selectedIds.add(item.id), delete: (k) => selectedIds.delete(Number(k)), clear: () => selectedIds.clear(),
+        items: () => mismatches.filter((f) => selectedIds.has(f.id)).map((f) => ({ id: f.id })), get size() { return selectedIds.size; },
+      },
+      selectUi: false, redraw: () => view.reload(),
       onDone: async (items, all) => {
         if (all && !items.length) { await renderFindings(resultsWrap); return; } // an Undo: read again
         const gone = new Set(items.map((x) => x.id));
@@ -629,6 +638,7 @@
         bulkBar.update();
       },
     });
+    bulkBarRef = bulkBar;
 
     selectAll.addEventListener('change', () => {
       pageFindings.forEach((f) => { if (selectAll.checked) selectedIds.add(f.id); else selectedIds.delete(f.id); });
@@ -768,6 +778,7 @@
       }) : null;
       const pathLines = (f.file_paths || []).map((p) => el('div', { className: 'srw-maintenance-file-path', textContent: p }));
       return el('li', { className: 'srw-release-item' }, [
+        bulkBar.checkbox(f),
         el('div', {}, [
           f.kind === 'ambiguous'
             ? el('span', {}, [`[${f.kind}] ${f.scene_title} -- ${f.reason ? `${f.reason}. ` : ''}candidates: `,
@@ -1064,6 +1075,7 @@
         title: 'Open the scene in Stash (new tab)',
       }, [el('img', { className: 'srw-vr-thumb', src: `/scene/${f.scene_id}/screenshot`, loading: 'lazy', alt: '' })]);
       return el('li', { className: 'srw-release-item' }, [
+        !isDismissed && vrBulk ? vrBulk.checkbox(f) : null, // the tick box of the bulk Dismiss bar
         el('span', { className: `srw-vr-verdict srw-vr-verdict-${f.verdict}`, textContent: verdict }),
         thumb,
         el('div', { className: 'srw-row-info' }, [
@@ -1137,6 +1149,7 @@
       filterActive: () => Boolean(view && (view.state.search || '').trim()),
       loadAll: async () => window.SRW.filterLocally(findings, view.state, durationFields).filter(open),
       keyOf: (x) => String(x.scene_id), pick: (x) => ({ scene_id: x.scene_id }), noun: 'scenes',
+      redraw: () => view.reload(), // local data: no request
       dismissChunk: (chunk) => window.SRW.runOp('duration_check_bulk_ignore', { scene_ids: chunk.map((x) => x.scene_id) }),
       undo: (rows) => window.SRW.runOp('duration_check_bulk_ignore', { scene_ids: rows.map((x) => x.scene_id), restore: true }),
       onDone: async (items, all) => {
@@ -1191,6 +1204,7 @@
           ignoreBtn,
         ].filter(Boolean);
         return el('li', { className: 'srw-release-item' }, [
+          open(x) ? bulkBar.checkbox(x) : null, // the tick box of the bulk Dismiss bar
           el('span', { className: `srw-upgrade-reason srw-upgrade-reason-${shorter ? 'dur_short' : 'dur_long'}`, textContent: shorter ? 'file shorter' : 'file longer',
             title: shorter ? 'The file is shorter than the provider\'s length: a sample or a cut / broken download' : 'The file is longer than the provider\'s length' }),
           el('a', { className: 'srw-vr-thumb-link', href: sceneHref, target: '_blank', rel: 'noopener noreferrer' },
@@ -2868,6 +2882,7 @@
       const candSlot = el('div');
       const doneSlot = el('span');
       const li = el('li', { className: 'srw-release-item' }, [
+        pairsBar.checkbox(p), // the tick box of the bulk Dismiss bar
         el('span', { className: 'srw-release-title', textContent: p.title }),
         el('span', { className: 'srw-release-date', textContent: `${p.year || 'no year'} · ${p.videos.length} video(s) · ${p.minutes} min` }),
         el('div', { className: 'srw-review-box' }, [

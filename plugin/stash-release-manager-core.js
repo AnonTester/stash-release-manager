@@ -11,7 +11,7 @@
   // rule and the bug it caused when this drifted). Change this if you
   // install under a different folder name.
   // Must equal `version:` in stash-release-manager.yml (scripts/test_plugin_version.py checks it).
-  const PLUGIN_VERSION = '0.250.3';
+  const PLUGIN_VERSION = '0.250.5';
   const PLUGIN_ID = 'stash-release-manager';
   const PLUGIN_NAME = 'StashReleaseManager';
 
@@ -1871,6 +1871,7 @@
   function arrangeReleaseRow(li, r) {
     const has = (c, ...names) => names.some((n) => c.classList.contains(n));
     const kids = [...li.children];
+    const selects = kids.filter((c) => c.classList.contains('srw-row-select'));
     const thumb = kids.filter((c) => has(c, 'srw-release-thumb-link', 'srw-release-thumb'));
     const entity = kids.filter((c) => has(c, 'srw-entity-icon-group', 'srw-local-entity-link', 'srw-local-entity-name-plain', 'srw-release-studio-context', 'srw-release-cast'));
     const title = kids.filter((c) => c.classList.contains('srw-release-title'));
@@ -1882,7 +1883,7 @@
     const statuses = kids.filter((c) => has(c, 'srw-key-status'));
     const pills = kids.filter((c) => c.classList.contains('srw-film-class'));
     const wide = kids.filter((c) => has(c, 'srw-review-candidate'));
-    const used = new Set([...thumb, ...entity, ...title, ...pills, ...actions, ...statuses, ...wide]);
+    const used = new Set([...selects, ...thumb, ...entity, ...title, ...pills, ...actions, ...statuses, ...wide]);
     const meta = kids.filter((c) => !used.has(c));
     // The release date comes first in the third line; a date span that just repeats it is dropped.
     const sceneDate = (r && (r.scene_date || (r.scene_created || '').slice(0, 10))) || '';
@@ -1896,6 +1897,8 @@
     li.replaceChildren();
     li.classList.add('srw-release-row');
     if (!thumb.length) li.classList.add('srw-release-row-nothumb');
+    if (selects.length) li.classList.add('srw-has-select'); // one more (first) grid column for the tick box of the bulk Dismiss bar
+    selects.forEach((c) => li.appendChild(c));
     thumb.forEach((c) => li.appendChild(c));
     li.appendChild(el('div', { className: 'srw-rr-info' }, [
       el('div', { className: 'srw-rr-entity' }, entity),
@@ -2582,9 +2585,18 @@
     pick = (r) => ({ provider: r.provider, scene_stashdb_id: r.scene_stashdb_id }),
     dismissChunk = (chunk) => runOp('releases_bulk_dismiss', { scenes: chunk }),
     undo = (rows) => runOp('releases_restore', { rows }),
+    // A tick box in front of every row (v0.250.4): filter, tick what you want (or "select this page" / "Select all N matching") and take single rows OUT
+    // again; "Dismiss n selected" then takes exactly those. `redraw()` draws the list again (a list in the browser: no request) so the boxes show the
+    // selection; `selection` = another store of the selected keys (the Fingerprint check's own selection), default: one kept here.
+    redraw = () => {}, selection = null, selectUi = true,
   }) {
     const node = el('div', { className: 'srw-bulk-dismiss' });
     let last = null; // { rows, count } -- the Undo
+    const chosen = new Map(); // key -> bare item
+    const sel = selection || {
+      has: (k) => chosen.has(k), add: (k, item) => chosen.set(k, item), delete: (k) => chosen.delete(k), clear: () => chosen.clear(),
+      items: () => [...chosen.values()], get size() { return chosen.size; },
+    };
     const unique = (list) => {
       const seen = new Set();
       return list.filter((r) => { const k = keyOf(r); if (seen.has(k)) return false; seen.add(k); return true; });
@@ -2598,8 +2610,17 @@
         rows.push(...(res.previous || []));
       }
       if (rows.length) last = { rows, count: new Set(rows.map(keyOf)).size };
+      scenes.forEach((x) => sel.delete(keyOf(x))); // what was dismissed is no longer selected
       await onDone(scenes, all);
       update();
+    }
+    // The tick box of one row; the caller puts it first in the row.
+    function checkbox(item) {
+      const key = keyOf(item);
+      const cb = el('input', { type: 'checkbox', className: 'srw-row-select', title: 'Select this row for the buttons above the list' });
+      cb.checked = sel.has(key);
+      cb.addEventListener('change', () => { if (cb.checked) sel.add(key, pick(item)); else sel.delete(key); update(); });
+      return cb;
     }
     function update() {
       node.innerHTML = '';
@@ -2619,6 +2640,30 @@
       }
       const page = bare(getPage());
       const total = getTotal();
+      if (selectUi && page.length) {
+        const all = page.every((x) => sel.has(keyOf(x)));
+        const box = el('input', { type: 'checkbox', checked: all, title: 'Select / unselect every row on this page' });
+        box.addEventListener('change', () => { page.forEach((x) => (box.checked ? sel.add(keyOf(x), x) : sel.delete(keyOf(x)))); redraw(); update(); });
+        node.appendChild(el('label', { className: 'srw-bulk-page-select' }, [box, ' select this page']));
+      }
+      const n = sel.size;
+      if (n > 0) {
+        node.appendChild(el('span', { className: 'srw-bulk-count', textContent: `${n} selected` }));
+        if (selectUi && total > n) {
+          node.appendChild(el('a', { href: '#', className: 'srw-bulk-all', textContent: `Select all ${total} matching`, onClick: async (e) => {
+            e.preventDefault();
+            const all = await loadAll();
+            if (!Array.isArray(all)) { notify('Select', `Could not load the matching rows: ${(all && all.error) || 'unknown'}`, 'error'); return; }
+            bare(all).forEach((x) => sel.add(keyOf(x), x));
+            redraw(); update();
+          } }));
+        }
+        const btn = el('button', { className: 'srw-btn srw-btn-sm srw-btn-danger', textContent: `Dismiss ${n} selected` });
+        btn.addEventListener('click', () => confirmInline(btn, `Dismiss the ${n} selected ${noun}?`, () => dismiss(sel.items().map(pick), false), { danger: true }));
+        node.appendChild(btn);
+        node.appendChild(el('button', { className: 'srw-btn srw-btn-sm', textContent: 'Clear selection', onClick: () => { sel.clear(); redraw(); update(); } }));
+        return;
+      }
       if (page.length) {
         const btn = el('button', { className: 'srw-btn srw-btn-sm srw-btn-danger', textContent: `Dismiss ${page.length} on this page` });
         btn.addEventListener('click', () => confirmInline(btn, `Dismiss the ${page.length} ${noun} on this page?`, () => dismiss(page, false), { danger: true }));
@@ -2635,7 +2680,7 @@
       }
     }
     update();
-    return { node, update };
+    return { node, update, checkbox };
   }
 
   function buildFilteredPagedList({
@@ -2757,6 +2802,8 @@
       softReload,
       // Read the shown page again: quietly (drawn only when it differs) for a list that keeps its pages, as reload() for the others.
       refresh: () => (keep ? revalidate(page, keyFor(page), seq) : load(page, true)),
+      // Draw the shown page again WITHOUT asking the server (the rows read a selection that changed): a kept page from the kept copy, other lists as reload().
+      redraw: () => { const hit = keep ? kept.get(keyFor(page)) : null; if (hit) draw(hit.result, page); else load(page, true); },
       // Jump helper: narrow the list to one entry by its text (e.g. a
       // scene title) -- rows on other pages aren't in the DOM any more.
       setSearch(text) {

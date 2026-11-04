@@ -112,7 +112,7 @@
     }
 
     // ---------- one film row ----------
-    function buildRow(f) {
+    function buildRow(f, selectBox = null) {
       const [clsLabel, clsTitle] = CLASS_LABEL[f.match_class] || [null, null];
       const meta = [f.year, f.studio_name, f.duration_min ? `${Math.round(f.duration_min)} min` : null,
         (f.performers || []).length ? `${f.performers.length} performers` : null].filter(Boolean).join(' — ');
@@ -300,6 +300,7 @@
         act.push(window.SRW.iconButton('button', 'faRotateLeft', 'Restore', { className: 'srw-btn', title: 'Restore: back on the wishlist', onClick: () => setStatus('wanted', `"${f.title}" is back on the wishlist.`) }));
       }
       li = el('li', { className: f.tpdb_id ? 'srw-release-item srw-release-item-theporndb srw-film-row' : 'srw-release-item srw-film-row' }, [
+        selectBox, // the tick box of the bulk Dismiss bar (new movies)
         f.image_url ? mkLink(f.tpdb_url, el('img', { className: 'srw-film-thumb', src: f.image_url, loading: 'lazy', alt: '' }), 'Open this movie on ThePornDB (new tab)')
           : el('span', { className: 'srw-film-thumb srw-film-thumb-empty', textContent: '🎬' }),
         el('div', { className: 'srw-row-info' }, [
@@ -389,7 +390,7 @@
           () => films.filter((f) => viewKey(f) === key && passesFilter(f, S)).sort((a, b) => (key === 'suggested' ? classRank(a) - classRank(b) : 0)
             || (a.title || '').localeCompare(b.title || '')),
           {}),
-        renderItems: (items) => { shown = items; const ul = el('ul', { className: 'srw-release-list' }, items.map(buildRow)); if (bulkRef) bulkRef.update(); return ul; },
+        renderItems: (items) => { shown = items; const ul = el('ul', { className: 'srw-release-list' }, items.map((f) => buildRow(f, bulkRef ? bulkRef.checkbox(f) : null))); if (bulkRef) bulkRef.update(); return ul; },
       });
       const barSlot = el('div');
       const buildBar = () => barSlot.replaceChildren(window.SRW_Releases.buildFilterBar(S, () => view.reload(),
@@ -412,6 +413,7 @@
             const gone = new Set(items.map((x) => x.id));
             patchFilm(films.filter((f) => gone.has(f.id)), 'dismissed');
           },
+          redraw: () => view.reload(), // local data: no request
         });
       }
       bulkRef = bulk;

@@ -410,6 +410,7 @@
     function renderRow(r) {
       if (r._filmLi) return r._filmLi; // a movie
       const li = [
+        dismissible(r) && showSearchActions ? bar.checkbox(r) : null, // the tick box of the bulk Dismiss bar
         showThumb ? buildReleaseThumb(r) : null,
         buildEntityIcons(r.entity_types),
         buildLocalEntityLink(r),
@@ -682,6 +683,7 @@
         removeRows(scenes);
       },
       noun: 'scenes',
+      redraw: () => view.reload(), // the list is in the browser: no request
     });
     const hasDismiss = Boolean(showSearchActions);
     // Filter bar + paging (2026-09-26, user principle), same component as
