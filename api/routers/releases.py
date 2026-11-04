@@ -909,8 +909,12 @@ def bulk_status(body: BulkStatusRequest):
 BULK_DISMISS_MAX = 600  # scenes per call; the page sends bigger sets in several calls
 
 
+class BulkScenesRequest(BaseModel):
+    scenes: list[BulkScene]  # no `action`: this endpoint only dismisses (the page sends just the scenes)
+
+
 @router.post("/bulk-dismiss")
-def bulk_dismiss(body: BulkStatusRequest):
+def bulk_dismiss(body: BulkScenesRequest):
     """Dismiss many scenes at once, whatever open status they have (v0.250.0: "Dismiss N on this page" / "Dismiss all N matching" on the lists of the
     Studio/Performer page, the wishlist and Activity). Unlike bulk_status() (only 'new' -> 'dismissed') this also takes scenes that are on the wishlist or
     failed; the answer carries `previous` -- the rows as they were -- so ONE Undo (POST /releases/restore) puts every row back to its own status.

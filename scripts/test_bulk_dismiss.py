@@ -25,7 +25,7 @@ def add(i, status):  # noqa: E302
                                                "created": "2026-10-01T00:00:00Z"}, "stashdb", "studio", "st", status=status)
 for i, st in ((1, "new"), (2, "sent_to_whisparr"), (3, "import_failed"), (4, "dismissed")):
     add(i, st)
-req = rr.BulkStatusRequest(action="dismiss", scenes=[rr.BulkScene(provider="stashdb", scene_stashdb_id=f"s{i}") for i in (1, 2, 3, 4, 9)])
+req = rr.BulkScenesRequest(scenes=[rr.BulkScene(provider="stashdb", scene_stashdb_id=f"s{i}") for i in (1, 2, 3, 4, 9)])
 out = rr.bulk_dismiss(req)
 check("three open scenes were dismissed (an already dismissed and an unknown one are skipped)", out["changed"] == 3)
 status = lambda i: release_repo.snapshot_scene_rows(db, "stashdb", f"s{i}")  # noqa: E731 -- rows that are NOT dismissed
@@ -33,5 +33,8 @@ check("nothing open is left of them", all(not status(i) for i in (1, 2, 3)))
 check("the answer carries the rows as they were", sorted(r["status"] for r in out["previous"]) == ["import_failed", "new", "sent_to_whisparr"])
 rr.restore_dismissed(rr.RestoreRowsRequest(rows=[rr.RestoreRow(**{k: r[k] for k in ("provider", "scene_stashdb_id", "entity_type", "entity_stashdb_id", "status")}) for r in out["previous"]]))
 check("one Undo puts every row back to its OWN status", sorted(r["status"] for i in (1, 2, 3) for r in status(i)) == ["import_failed", "new", "sent_to_whisparr"])
+# the body exactly as the page sends it (no "action"): FastAPI validates it with this model -- a model that asked for more answered HTTP 422
+body = rr.BulkScenesRequest.model_validate({"scenes": [{"provider": "stashdb", "scene_stashdb_id": "s1"}]})
+check("the request body of the page is accepted (no 'action' field)", len(body.scenes) == 1)
 print("ALL OK" if not FAILS else f"{len(FAILS)} FAILED")
 sys.exit(1 if FAILS else 0)
