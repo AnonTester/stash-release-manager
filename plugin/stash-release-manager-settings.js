@@ -355,6 +355,7 @@
       type: 'number', min: '0', step: '0.1', value: settings.stashdb_query_delay || '0.3',
     });
     section.appendChild(el('label', {}, ['Query delay (seconds between requests): ', delayInput]));
+    section.appendChild(el('br'));
     section.appendChild(el('button', {
       className: 'srw-btn', textContent: 'Save',
       onClick: async () => {
@@ -904,7 +905,7 @@
     }
     overview = buildConnectionsOverview(settings, effective, goTo);
     panes.overview.appendChild(overview.node);
-    const root = el('div', {}, [tabRow, panes.overview, panes.stashboxes, panes.clients, panes.search]);
+    const root = el('div', { className: 'srw-form-grid' }, [tabRow, panes.overview, panes.stashboxes, panes.clients, panes.search]);
     return root;
   }
 
@@ -1411,15 +1412,25 @@
     const topSlot = el('div');
     const listSection = el('div');
     section.append(adderSlot, topSlot, listSection);
+    // The torrent options only make sense with a torrent client, the SABnzbd history lookup only with a SABnzbd one (v0.253.2).
+    const torrentsBlock = el('div');
+    const sabBlock = el('div');
+    topSlot.append(torrentsBlock, sabBlock);
+    let clientsNow = [];
+    const applyVisibility = () => {
+      torrentsBlock.hidden = !clientsNow.some((c) => c.type === 'qbittorrent');
+      sabBlock.hidden = !clientsNow.some((c) => c.type === 'sabnzbd');
+    };
     const renderAdder = () => adderSlot.replaceChildren(collapsedAdder('Add a download client…', () => buildClientForm(null)));
-    async function refresh() { await refreshList(); renderAdder(); }
+    async function refresh() { await refreshList(); renderAdder(); applyVisibility(); }
 
     listSection.appendChild(el('p', { className: 'srw-subsection-heading', textContent: 'Your download clients' }));
     const { refresh: refreshList } = buildManagedList(listSection, {
       emptyMessage: 'No download clients configured yet.',
       fetchItems: async () => {
         const result = await window.SRW.runOp('download_clients_list');
-        return Array.isArray(result) ? result : [];
+        clientsNow = Array.isArray(result) ? result : [];
+        return clientsNow;
       },
       buildEntry: (client) => buildClientRow(client),
     });
@@ -1663,10 +1674,10 @@
       const r = await window.SRW.runOp('settings_set', { key: 'remove_completed_downloads', value: removeBox.checked ? 'true' : 'false' });
       removeStatus.textContent = r && r.error ? ` error: ${r.error}` : ' saved';
     });
-    topSlot.appendChild(el('p', { className: 'srw-subsection-heading', textContent: 'Torrents: after seeding' }));
-    topSlot.appendChild(el('label', {}, [removeBox, ' Remove a finished torrent (with its files) from the client once its seeding goal is reached']));
-    topSlot.appendChild(removeStatus);
-    topSlot.appendChild(el('p', { className: 'srw-hint', textContent: 'Off by default, like the *arr applications. Only torrents this program grabbed and imported are touched, and only when qBittorrent itself reports the seed ratio / seed time limit as reached (torrent paused or stopped). The library keeps its own copy (hard link or copy).' }));
+    torrentsBlock.appendChild(el('p', { className: 'srw-subsection-heading', textContent: 'Torrents: after seeding' }));
+    torrentsBlock.appendChild(el('label', {}, [removeBox, ' Remove a finished torrent (with its files) from the client once its seeding goal is reached']));
+    torrentsBlock.appendChild(removeStatus);
+    torrentsBlock.appendChild(el('p', { className: 'srw-hint', textContent: 'Off by default, like the *arr applications. Only torrents this program grabbed and imported are touched, and only when qBittorrent itself reports the seed ratio / seed time limit as reached (torrent paused or stopped). The library keeps its own copy (hard link or copy).' }));
 
     // SABnzbd history lookup -- finds where a completed job actually
     // landed on disk (its "storage" path), for tracking down a
@@ -1675,11 +1686,11 @@
     // (against whichever usenet client the backend resolves, see
     // main.py's get_sabnzbd_client()) since it's still generically
     // useful.
-    topSlot.appendChild(el('p', { className: 'srw-subsection-heading', textContent: 'SABnzbd history lookup' }));
+    sabBlock.appendChild(el('p', { className: 'srw-subsection-heading', textContent: 'SABnzbd history lookup' }));
     const searchInput = el('input', { type: 'text', placeholder: 'Job name (optional, filters server-side)' });
     const resultsWrap = el('div');
-    topSlot.appendChild(el('label', {}, ['Search: ', searchInput]));
-    topSlot.appendChild(el('button', {
+    sabBlock.appendChild(el('label', {}, ['Search: ', searchInput]));
+    sabBlock.appendChild(el('button', {
       className: 'srw-btn srw-btn-primary', textContent: 'Look up',
       onClick: async (e) => {
         e.target.disabled = true;
@@ -1711,7 +1722,8 @@
         }
       },
     }));
-    topSlot.appendChild(resultsWrap);
+    sabBlock.appendChild(resultsWrap);
+    applyVisibility();
 
     return section;
   }
@@ -4390,7 +4402,7 @@
     ];
 
     const nav = el('div', { className: 'srw-subtabs srw-section-tabs' });
-    const paneHost = el('div', { className: 'srw-settings-section' });
+    const paneHost = el('div', { className: 'srw-settings-section srw-form-grid' });
     const footer = el('div', { className: 'srw-toolbar' });
     function paintNav() {
       nav.replaceChildren(...STEPS.map((st, i) => {
