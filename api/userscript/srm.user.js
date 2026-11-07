@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         StashReleaseManager for stash-box sites
 // @namespace    stash-release-manager
-// @version      0.246.12
-// @description  On scene pages and scene cards: Send to wishlist, Send and search, Open in Stash, Copy Stash-ID, plus a status colour. On performer and studio pages: Watch / Unwatch.
+// @version      0.251.0
+// @description  On scene pages and scene cards: Send to wishlist (or as an upgrade of the file Stash has), Send and search, Open in Stash, Copy Stash-ID, plus a status colour. On performer and studio pages: Watch / Unwatch.
 // @match        https://stashdb.org/*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_setClipboard
@@ -125,11 +125,20 @@
 
   async function send(id, search, btn) {
     btn.disabled = true;
+    // Stash has a file for the scene (a preview, a low resolution): the button asks for an upgrade, the sidecar replaces the file after a verified download.
+    const s = state.scenes[id];
+    const replace = !!(s && s.stash_scene_id);
     try {
-      const r = await call('POST', '/userscript/wishlist?search=' + (search ? 'true' : 'false'), { origin: location.origin, id });
+      const r = await call('POST', '/userscript/wishlist?search=' + (search ? 'true' : 'false'), { origin: location.origin, id, replace });
       btn.title = r && r.already_in_library ? 'Stash already has this scene' : 'Done';
       btn.classList.remove('srm-failed');
-      if (r && r.already_in_library) toast('Stash already has this scene.', true);
+      if (r && r.replace) {
+        if (r.grabbed) toast('Sent as an upgrade: a better file was found and is downloading. It replaces the file in Stash after a verified download.', true);
+        else if (r.search_running) toast('Sent as an upgrade: the search is still running, the result is in the Activity page.', true);
+        else if (r.search_error) toast('Sent as an upgrade, but the search failed: ' + r.search_error, false);
+        else if (search) toast('Sent as an upgrade: nothing better found yet, it stays on the upgrade list.', true);
+        else toast('Sent as an upgrade of the file in Stash: it is searched by the schedule.', true);
+      } else if (r && r.already_in_library) toast('Stash already has this scene.', true);
       else if (r && r.already_sent) toast('Already on the wishlist.', true);
       else toast(search ? 'Sent to StashReleaseManager: added to the wishlist, searching now.' : 'Sent to StashReleaseManager: added to the wishlist.', true);
     } catch (e) {
@@ -211,8 +220,14 @@
       setChip(chips[0], s.stash_scene_id ? GREEN : GREY, s.stash_scene_id ? 'Stash has this scene with a file' : 'Not in your Stash library');
       setChip(chips[1], s.srm ? COLORS[s.srm] : GREY, s.srm ? LABELS[s.srm] : 'StashReleaseManager does not know this scene', SHORT[s.srm] || '');
     }
-    wrap.querySelector('.srm-btn-send').disabled = loading || inLib || wished || !!s.error;
-    wrap.querySelector('.srm-btn-search').disabled = loading || inLib || !!s.error;
+    // A scene Stash already has can still be sent: as an upgrade (the file is replaced by a better one, e.g. a preview by the full scene),
+    // unless it is on the wishlist already.
+    const sendBtn = wrap.querySelector('.srm-btn-send');
+    const searchBtn = wrap.querySelector('.srm-btn-search');
+    sendBtn.disabled = loading || !!s.error || (inLib ? s.srm === 'sent_to_whisparr' : wished);
+    searchBtn.disabled = loading || !!s.error;
+    sendBtn.title = inLib ? 'Stash has this scene: send it as an upgrade (a better file replaces it after a verified download; searched by the schedule)' : 'Send to wishlist (searched by the schedule)';
+    searchBtn.title = inLib ? 'Stash has this scene: send it as an upgrade and search now' : 'Send to wishlist and search now';
     wrap.querySelector('.srm-btn-stash').style.display = s.stash_scene_id ? '' : 'none';
   }
 

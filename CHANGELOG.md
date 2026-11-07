@@ -6,6 +6,9 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.251.0
+- **Userscript: a scene Stash already has can be sent as an upgrade.** The two send buttons were switched off as soon as Stash had any file for the scene, so a preview (7 minutes of a 27-minute scene) or a low-resolution copy could not be put on the wishlist from StashDB's page. They are on now: for a scene Stash has, "Send to wishlist" and "Send and search now" put it on the upgrade list (the same as "Re-add" on the Search page): a better release replaces the file after a verified download, the old file goes to the recycle bin. The pop-up says it was sent as an upgrade; a scene that is on the wishlist already keeps its send button off. The server side is the new `replace` flag of `POST /userscript/wishlist`. Update the script in your userscript manager afterwards.
+
 ## 0.250.9
 - **A finished torrent that the import cannot find says why.** When the download client calls its folder by a path the sidecar does not have (the folder pair under the client's settings is empty or wrong, e.g. the client says `/downloads/complete/...` while the sidecar mounts that folder as `/downloads`), the download showed "Download complete - waiting for import" for ever and History only said "Downloaded file not found - retrying automatically". The import error now names both paths and points to the download client's folder pair, History carries it in its details, and Activity / Releases show it in amber on the waiting download.
 
