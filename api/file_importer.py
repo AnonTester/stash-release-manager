@@ -68,6 +68,15 @@ def _to_local_path(remote_path, whisparr_root, local_media_mount):
     return local_media_mount + remote_path[len(whisparr_root):]
 
 
+def source_missing_message(error, local_path, client_path):
+    """Why the downloaded file was not found. The usual cause with a torrent client: it calls the folder by a path this container does not have
+    (the download client's folder pair is empty or wrong) -- then both paths are named instead of the bare "no video file found"."""
+    if os.path.exists(local_path):
+        return str(error)
+    return (f"the folder {local_path} does not exist in the sidecar (the download client reports {client_path}) -- "
+            "check the download client's folder pair: the folder as the client calls it / as this program sees it")
+
+
 def _find_media_file(local_path):
     """`local_path` may already be a single file (some releases) or a
     folder (most -- the release's own folder, possibly alongside nfo/
@@ -360,10 +369,11 @@ def _import_one(db, stash_client, stashdb_client, source_item, source_remote_roo
         # existing automatic per-cycle retry keep running unchanged.
         # Only the reason becomes visible now (Activity page's "Stuck"
         # section), where it was previously silent.
-        release_repo.set_import_error_for_scene(db, provider, stash_id, "source_missing", str(e))
+        error = source_missing_message(e, local_output_path, source_item["output_path"])
+        release_repo.set_import_error_for_scene(db, provider, stash_id, "source_missing", error)
         history.scene("warning", "import", "Downloaded file not found -- retrying automatically", provider, stash_id,
-                      details={"error": str(e)}, dedupe_minutes=24 * 60)
-        return {"stash_id": stash_id, "status": "failed", "error": str(e)}
+                      details={"error": error}, dedupe_minutes=24 * 60)
+        return {"stash_id": stash_id, "status": "failed", "error": error}
 
     rejected = _reject_unreadable(db, provider, stash_id, source_file, local_output_path,
                                   local_media_mount, recycle_bin_path, keep_source=keep_source)

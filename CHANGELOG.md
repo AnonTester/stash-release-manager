@@ -6,6 +6,9 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.250.9
+- **A finished torrent that the import cannot find says why.** When the download client calls its folder by a path the sidecar does not have (the folder pair under the client's settings is empty or wrong, e.g. the client says `/downloads/complete/...` while the sidecar mounts that folder as `/downloads`), the download showed "Download complete - waiting for import" for ever and History only said "Downloaded file not found - retrying automatically". The import error now names both paths and points to the download client's folder pair, History carries it in its details, and Activity / Releases show it in amber on the waiting download.
+
 ## 0.250.8
 - **Fix: upgrades moved to the wishlist ended up under "Imported" without being searched.** The pre-grab library check of the indexer search (a scene Stash already has is marked imported instead of searched) did not know about upgrades: every scene on the wishlist that replaces a library file is in the library by definition, so the next search run marked it imported, took it off the wishlist and dropped its cover. Upgrade rows are now left out of that check (a scene that is being upgraded is searched, held to the upgrade rules). Rows that were marked imported by mistake (an upgrade still on the wishlist, nothing downloaded for it) go back on the wishlist at the next search run.
 

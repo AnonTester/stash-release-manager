@@ -11,7 +11,7 @@
   // rule and the bug it caused when this drifted). Change this if you
   // install under a different folder name.
   // Must equal `version:` in stash-release-manager.yml (scripts/test_plugin_version.py checks it).
-  const PLUGIN_VERSION = '0.250.8';
+  const PLUGIN_VERSION = '0.250.9';
   const PLUGIN_ID = 'stash-release-manager';
   const PLUGIN_NAME = 'StashReleaseManager';
 
@@ -2264,6 +2264,8 @@
     if (!p) return null;
     switch (p.phase) {
       case 'waiting_import':
+        // The import has already looked for the file and not found it: that is why it still waits (a wrong folder pair of the download client).
+        if (p.import_error) return { pct: 100, warn: true, text: `⚠ Download complete, but the import cannot find the file: ${p.import_error}` };
         return { pct: 100, text: 'Download complete — waiting for import' };
       case 'preparing':
         return { pct: 0, text: 'Import starting…' };
