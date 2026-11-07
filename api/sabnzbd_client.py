@@ -52,6 +52,11 @@ class SabnzbdClient:
         clients' ping()."""
         self._call("queue", start=0, limit=1)
 
+    def complete_dir(self):
+        """SABnzbd's completed-downloads folder as SABnzbd calls it (Config > Folders > Completed Download Folder)."""
+        misc = self._call("get_config", section="misc").get("config", {}).get("misc", {})
+        return misc.get("complete_dir") or ""
+
     def get_queue(self):
         """Every job SABnzbd currently has queued/downloading. Returns
         the raw list of slot dicts from `queue.slots` -- shape kept

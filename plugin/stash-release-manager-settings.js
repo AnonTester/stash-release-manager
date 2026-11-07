@@ -1264,7 +1264,8 @@
             status.textContent = ' checking...';
             try {
               const result = await window.SRW.runOp('download_clients_check', { id: client.id });
-              status.textContent = result.error ? ` error: ${result.error}` : (result.version ? ` ok (qBittorrent ${result.version})` : ' ok');
+              status.textContent = checkText(result);
+              status.dataset.warn = result.folder && result.folder.ok === false ? '1' : '';
             } catch (err) {
               status.textContent = ` error: ${err.message}`;
             } finally {
@@ -1323,6 +1324,14 @@
 
     // Client form (v0.133.0): the type decides the protocol; qBittorrent carries the *arr-style client settings with their defaults
     // (category = app name, initial state Start, content layout Default, priorities Default, not sequential).
+    // "Completed folder visible" / the reason it is not: the folder part of a client check (api/download_folder_check.py).
+    const folderText = (r) => (r && r.folder && r.folder.message ? (r.folder.ok === false ? `⚠ ${r.folder.message}` : r.folder.message) : '');
+    const checkText = (r) => {
+      if (r.error) return ` error: ${r.error}`;
+      const folder = folderText(r);
+      return ` ok${r.version ? ` (qBittorrent ${r.version})` : ''}${folder ? ` — ${folder}` : ''}`;
+    };
+
     function buildClientForm(existing) {
       const opts = { initial_state: 'start', recent_priority: 'default', older_priority: 'default', sequential: false, first_last: false,
         content_layout: 'default', post_import_category: '', ...((existing && existing.options) || {}) };
@@ -1354,7 +1363,7 @@
       const seqBox = el('input', { type: 'checkbox' }); seqBox.checked = !!opts.sequential;
       const flBox = el('input', { type: 'checkbox' }); flBox.checked = !!opts.first_last;
       const postCat = el('input', { type: 'text', placeholder: 'Post-import category (optional)', value: opts.post_import_category || '' });
-      const remotePath = el('input', { type: 'text', placeholder: '/downloads', value: opts.remote_path || '' });
+      const remotePath = el('input', { type: 'text', placeholder: '/downloads/complete', value: opts.remote_path || '' });
       const localPath = el('input', { type: 'text', placeholder: '/downloads', value: opts.local_path || '' });
       const formStatus = el('span', { className: 'srw-key-status' });
       const removeBox = el('input', { type: 'checkbox' }); removeBox.checked = opts.remove_completed !== false;
@@ -1369,8 +1378,9 @@
         el('label', {}, ['Content layout: ', layoutSel]), el('br'),
         el('label', {}, [seqBox, ' Sequential order']), el('label', {}, [' ', flBox, ' First and last first']), el('br'),
         el('label', {}, ['Post-import category: ', postCat]), el('br'),
-        el('label', {}, ['Download folder in qBittorrent: ', remotePath]), el('label', {}, [' as this program sees it: ', localPath]), el('br'),
-        el('p', { className: 'srw-hint', textContent: 'Path mapping (like the *arr remote path mappings): the folder qBittorrent writes to, and the same folder in the sidecar container. Both empty = the SABnzbd downloads folder of Settings > File Import.' }),
+        el('label', {}, ['Completed downloads folder, as qBittorrent calls it: ', remotePath]), el('br'),
+        el('label', {}, ['... as this program sees it: ', localPath]), el('br'),
+        el('p', { className: 'srw-hint', textContent: 'Required: this program can only import what it can see. Mount the folder qBittorrent puts finished downloads in (its default save path) into this container and enter it twice: the path in qBittorrent (e.g. /downloads/complete) and the path of the same folder in this container (e.g. /downloads). Like the *arr remote path mappings. Both empty = the downloads pair of Settings > File Import. “Test connection” and “Check” tell whether the folder can be seen.' }),
         el('p', { className: 'srw-hint', textContent: 'Like the *arr applications: the downloaded files are hard-linked (else copied) into the library and the torrent keeps seeding; qBittorrent\'s own seeding limits (or the indexer\'s seed ratio / seed time) decide when it stops.' }),
       ]);
       const syncType = () => {
@@ -1459,8 +1469,9 @@
             try {
               const r = await window.SRW.runOp('download_clients_test', {
                 type: body.type, url: body.url, api_key: body.api_key, username: body.username, password: body.password,
+                category: body.category, remote_path: (body.options || {}).remote_path || '', local_path: (body.options || {}).local_path || '',
               });
-              formStatus.textContent = r && r.error ? ` error: ${r.error}` : (r && r.version ? ` ok (qBittorrent ${r.version})` : ' ok');
+              formStatus.textContent = checkText(r || {});
             } catch (err) {
               formStatus.textContent = ` error: ${err.message}`;
             } finally {
@@ -3107,15 +3118,17 @@
     downloadsMountWrap.appendChild(el('p', { className: 'srw-subsection-heading', textContent: 'This sidecar’s own downloads mount' }));
     downloadsMountWrap.appendChild(el('p', {
       className: 'srw-hint',
-      textContent: 'Translates SABnzbd’s own reported path for a completed job to where this sidecar can '
-        + 'actually reach the file.',
+      textContent: 'Required: this program can only import what it can see. Mount the folder your download client puts FINISHED downloads in '
+        + '(SABnzbd: its “complete” folder; qBittorrent: its default save path) into this container, and enter it twice: the path in the '
+        + 'client and the path of the same folder in this container. A torrent client can have its own pair in its settings; this one is used '
+        + 'for SABnzbd and where that pair is empty.',
     }));
     buildConnectionField(downloadsMountWrap, {
-      label: 'SABnzbd’s own downloads path', key: 'sabnzbd_downloads_root_path',
+      label: 'Completed downloads folder, as the client calls it (SABnzbd: its complete folder)', key: 'sabnzbd_downloads_root_path',
       value: settings.sabnzbd_downloads_root_path, placeholder: '/downloads',
     });
     buildConnectionField(downloadsMountWrap, {
-      label: 'This sidecar’s local mount of it', key: 'local_downloads_mount',
+      label: '... as this program sees it (the folder mounted into this container)', key: 'local_downloads_mount',
       value: settings.local_downloads_mount, placeholder: '/downloads',
     });
     // Only meaningful for the 'sidecar_sabnzbd' source -- previously
@@ -3127,6 +3140,7 @@
     // The Whisparr scope switch lives in its own block (General area, v0.144.0); it calls this when the derived source changes.
     section.applySource = (fileImportSource) => { downloadsMountWrap.hidden = fileImportSource !== 'sidecar_sabnzbd'; };
     section.appendChild(downloadsMountWrap);
+    section.downloadsMountWrap = downloadsMountWrap; // the setup guide shows just this part
 
     const intervalInput = el('input', { type: 'number', min: '0.1', step: '0.1', value: settings.file_import_interval_hours || '0.25' });
     section.appendChild(el('label', {}, ['Check interval (hours): ', intervalInput]));
@@ -4129,13 +4143,17 @@
           box.append(await buildSearchBackendSection(), buildProwlarrConnectionSection(settings, effective, secretPlaceholder, onFieldSaved), await buildIndexersSection(() => refreshStatus()));
           return box;
         } },
-      { key: 'download', title: 'Downloads', intro: 'Your download client, and where its finished downloads are for this sidecar: “SABnzbd’s own downloads path” is the '
-          + 'folder as SABnzbd calls it, the local mount is the folder you mounted into this container (/downloads in the example).',
+      { key: 'download', title: 'Downloads', intro: 'Your download client, and the folder it puts FINISHED downloads in. The completed-downloads folder is required: '
+          + 'this program can only import what it can see. Mount that folder into this container (/downloads in the example) and enter it twice: '
+          + 'as the client calls it (SABnzbd: its “complete” folder; qBittorrent: its default save path, e.g. /downloads/complete) and as this container sees it. '
+          + '“Check” tells whether the folder is visible.',
         build: async () => {
           const box = el('div');
           box.appendChild(await buildDownloadClientsSection(() => refreshStatus()));
-          const paths = wrapSubsection(buildFileImportSection(settings), 'This sidecar’s own downloads mount');
-          if (paths) box.appendChild(el('div', { className: 'srw-settings-section' }, [paths]));
+          // The completed-downloads folder pair is required for every client, whatever the file-import source says (it is hidden on the Settings page for others).
+          const paths = buildFileImportSection(settings).downloadsMountWrap;
+          paths.hidden = false;
+          box.appendChild(el('div', { className: 'srw-settings-section' }, [paths]));
           return box;
         } },
       { key: 'quality', title: 'Quality', intro: 'Which resolutions you accept. A release below the lowest one is never downloaded.',

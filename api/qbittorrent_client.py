@@ -157,6 +157,18 @@ class QbittorrentClient:
         """Authenticated, cheap: the application version ("v4.6.5")."""
         return self._call("GET", "app/version").text.strip()
 
+    def completed_folder(self, category=None):
+        """Where finished downloads go, as qBittorrent calls the folder: the category's own save path, else the default save path."""
+        category = self.category if category is None else category
+        if category:
+            try:
+                path = (self._call("GET", "torrents/categories").json().get(category) or {}).get("savePath") or ""
+            except QbittorrentError:
+                path = ""
+            if path:
+                return path
+        return self._call("GET", "app/preferences").json().get("save_path") or ""
+
     def webapi_version(self):
         return self._call("GET", "app/webapiVersion").text.strip()
 

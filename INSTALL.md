@@ -34,7 +34,7 @@ cp docker-compose.example.yml docker-compose.yml
 Edit the two **CHANGE** lines in `docker-compose.yml`:
 
 * `/path/to/your/library:/media` -- the folder that holds your library. It must be the same files that Stash has. If Stash runs in Docker with `- /some/path:/data`, use `/some/path` here.
-* `/path/to/sabnzbd/complete:/downloads` -- the folder where SABnzbd puts finished downloads.
+* `/path/to/sabnzbd/complete:/downloads` -- the folder where your download client puts FINISHED downloads (SABnzbd: its *complete* folder; qBittorrent: its default save path). **Required:** the sidecar can only import what it can see.
 
 Two cases that need one more line (both are commented in the file):
 
@@ -76,7 +76,7 @@ The **setup guide** opens by itself the first time you open *Release Manager* wh
 
 1. **Connections:** the **StashDB API key** (required), optionally the **ThePornDB API key**, **Prowlarr** (URL and key) and **Whisparr** if you use them. Further down on the same tab, **Download Clients**: add your SABnzbd (URL and API key).
 2. **Search & Quality:** the **Search backend** (Prowlarr, or your own Newznab **Indexers** entered on the same tab) and a **Quality profile** (which resolutions you accept).
-3. **Import & Naming:** under *File Import* the two SABnzbd paths -- "SABnzbd's own downloads path" is the folder as **SABnzbd** calls it (its *complete* folder inside its container), "This sidecar's local mount of it" is `/downloads` -- and, under *Naming*, how imported files are named and sorted.
+3. **Import & Naming:** under *File Import* the completed-downloads folder, entered twice -- "as the client calls it" (SABnzbd's *complete* folder inside its container) and "as this program sees it" (`/downloads`) -- and, under *Naming*, how imported files are named and sorted.
 4. **General:** *Content* (scenes, movies, or both) and the *Watchlist source* (your Stash favorites, or a tag).
 5. Then the **Watchlist** page: which performers / studios are followed.
 
@@ -160,7 +160,7 @@ location /events/ws {
 Usenet and torrents use the same search and import pipeline; torrents need two more things: a **torrent indexer** and **qBittorrent** as a download client. **Status: the least tested part** -- it follows the conventions of Radarr / Whisparr, but it has had little use against real trackers. Please report what does not work.
 
 1. **Download client:** *Settings > Connections > Download Clients > Add*, type **qBittorrent (Torrent)**: URL of its web UI, user name and password, optionally a category. Leave the other fields at their defaults.
-2. **Folders:** the sidecar must see the folder qBittorrent writes to. Mount it into the sidecar container (like `/downloads`) and enter the pair under *Download folder in qBittorrent* (the path as qBittorrent calls it) and *as this program sees it* (the path in the sidecar). Both empty = the usenet downloads folder. Finished torrents are **hard-linked** into the library (copied if that is not possible) so they can keep seeding; a hard link only works when the download folder and the library are on the **same file system**.
+2. **Folders (required):** the sidecar must see the folder qBittorrent puts finished downloads in (its default save path). Mount it into the sidecar container (like `/downloads`) and enter the pair under *Completed downloads folder, as qBittorrent calls it* (e.g. `/downloads/complete`) and *as this program sees it* (the path in the sidecar, e.g. `/downloads`). Both empty = the downloads pair of *File Import*. *Check* (and *Test connection*) says whether the folder can be seen; without it a finished torrent waits for import for ever. Finished torrents are **hard-linked** into the library (copied if that is not possible) so they can keep seeding; a hard link only works when the download folder and the library are on the **same file system**.
 3. **Indexers**, one of two ways:
    * **Prowlarr** as search backend (*Search & Quality*): it returns usenet and torrent results; results whose protocol has no enabled download client are dropped. Add your torrent trackers in Prowlarr.
    * **Direct indexers:** *Settings > Search & Quality > Indexers*, type **Torznab (Torrent)** -- the Torznab URL and API key come from Prowlarr or Jackett (one entry per tracker). *Minimum seeders* (default 1) drops dead torrents; *Seed ratio* / *Seed time* empty = qBittorrent's own limits apply.

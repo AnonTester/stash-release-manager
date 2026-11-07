@@ -2390,3 +2390,6 @@ a.srw-btn { text-decoration: none; display: inline-block; text-align: center; }
   .srw-release-row.srw-has-select.srw-release-row-nothumb { grid-template-columns: auto minmax(0, 1fr); }
 }
 .srw-bulk-page-select { display: inline-flex; align-items: center; gap: 0.3rem; margin: 0; }
+
+/* A check result that needs attention (e.g. a download client's completed folder the sidecar cannot see) */
+.srw-key-status[data-warn="1"] { color: #d69e2e; }

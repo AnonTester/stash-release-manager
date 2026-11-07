@@ -4,6 +4,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 import download_client_repo
+import download_folder_check
 import download_history_cleanup
 from qbittorrent_client import QbittorrentClient
 from sabnzbd_client import SabnzbdClient
@@ -113,14 +114,33 @@ def delete_client(client_id: int):
     return {"ok": True}
 
 
-def _ping(client_type, url, api_key, username, password):
-    """Cheapest authenticated call available for a client's type. Raises on any failure."""
+def _importer_pair(remote, local):
+    """The folder pair as the importer uses it: the client's own, else the downloads pair of Settings > File Import (the same fallback as
+    file_importer._import_one)."""
+    from routers.settings import get_setting_value
+    return (remote or get_setting_value(_db, "sabnzbd_downloads_root_path", "/downloads"),
+            local or get_setting_value(_db, "local_downloads_mount", "/downloads"))
+
+
+def _folder(client, remote, local):
+    """The completed-folder check of a client that answered; a failure to read it never fails the connection check."""
+    try:
+        client_path = client.complete_dir() if isinstance(client, SabnzbdClient) else client.completed_folder()
+        return download_folder_check.check_folder(client_path, *_importer_pair(remote, local))
+    except Exception as e:
+        return {"known": False, "ok": None, "message": f"could not read the client's completed folder: {e}"}
+
+
+def _ping(client_type, url, api_key, username, password, category="", remote="", local=""):
+    """Cheapest authenticated call available for a client's type, plus the completed-folder check. Raises on any failure of the call itself."""
     if client_type == "qbittorrent":
-        return {"ok": True, "version": QbittorrentClient(url, username, password).ping()}
+        client = QbittorrentClient(url, username, password, category=category)
+        return {"ok": True, "version": client.ping(), "folder": _folder(client, remote, local)}
     if client_type != "sabnzbd":
         raise ValueError(f"connection check not implemented for type {client_type!r} yet")
-    SabnzbdClient(url, api_key).ping()
-    return {"ok": True}
+    client = SabnzbdClient(url, api_key)
+    client.ping()
+    return {"ok": True, "folder": _folder(client, "", "")}
 
 
 class DownloadClientCheckBody(BaseModel):
@@ -129,6 +149,9 @@ class DownloadClientCheckBody(BaseModel):
     api_key: str = ""
     username: str = ""
     password: str = ""
+    category: str = ""
+    remote_path: str = ""
+    local_path: str = ""
 
 
 @router.post("/check")
@@ -138,7 +161,7 @@ def check_entered(body: DownloadClientCheckBody):
     if not body.url.strip():
         return {"ok": False, "error": "enter the URL first"}
     try:
-        return _ping(body.type, body.url.strip(), body.api_key, body.username, body.password)
+        return _ping(body.type, body.url.strip(), body.api_key, body.username, body.password, body.category, body.remote_path, body.local_path)
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
@@ -181,7 +204,9 @@ def check_client(client_id: int):
     if client_row is None:
         raise HTTPException(404, "download client not found")
     try:
-        return _ping(client_row["type"], client_row["url"], client_row["api_key"], client_row["username"], client_row["password"])
+        opts = client_row.get("options") or {}
+        return _ping(client_row["type"], client_row["url"], client_row["api_key"], client_row["username"], client_row["password"],
+                     client_row.get("category") or "", opts.get("remote_path") or "", opts.get("local_path") or "")
     except ValueError as e:
         raise HTTPException(400, str(e))
     except Exception as e:
