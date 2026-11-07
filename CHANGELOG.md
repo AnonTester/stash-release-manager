@@ -6,6 +6,9 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.250.8
+- **Fix: upgrades moved to the wishlist ended up under "Imported" without being searched.** The pre-grab library check of the indexer search (a scene Stash already has is marked imported instead of searched) did not know about upgrades: every scene on the wishlist that replaces a library file is in the library by definition, so the next search run marked it imported, took it off the wishlist and dropped its cover. Upgrade rows are now left out of that check (a scene that is being upgraded is searched, held to the upgrade rules). Rows that were marked imported by mistake (an upgrade still on the wishlist, nothing downloaded for it) go back on the wishlist at the next search run.
+
 ## 0.250.7 (with 0.250.6)
 - **A release posted before the scene existed is no longer taken for it.** Some studios give every new episode the same title, and the release names carry no date, so old posts of other episodes matched a brand-new scene and several wrong downloads came in. Every automatic search now sets aside a result whose indexer age is more than 14 days older than the scene's release date; the search log shows it as "posted before the scene was released (another scene)". No full date or no age = nothing changes. Manual search is unaffected.
 - **Fix: a moved file that Stash never scanned stayed "verifying" for ever.** If Stash was restarted right after a file was moved into the library, the scan job was lost. The 15-minute retry now asks Stash about every still-pending file and starts one new scan for those it does not know (at most once per file and 20 minutes).

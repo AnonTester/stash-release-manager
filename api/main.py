@@ -1472,6 +1472,9 @@ def run_indexer_search(only_stuck=False):
             return {"grabbed": [], "skipped_scope": scope}
         quality_profile, vr_search_enabled = resolve_quality_profiles(db)
         grabbed = []
+        restored = release_repo.restore_upgrade_rows_marked_imported(db)
+        if restored:
+            logger.info("run_indexer_search: %d upgrade row(s) that an earlier run had marked imported are back on the wishlist", restored)
         pending = release_repo.list_sent_to_whisparr_without_grab(db)
         # RSS mode (2026-09-30): ONE blank-query pull of the newest releases per tick, searched locally;
         # a release only gets its OWN indexer query when its back-off says so (_targeted_due). If the
@@ -1507,10 +1510,13 @@ def run_indexer_search(only_stuck=False):
             scene_stashdb_id = release["scene_stashdb_id"]
             if scene_stashdb_id in already_in_library:
                 continue
-            if link_imported_equivalent(db, release["provider"], scene_stashdb_id, get_stash_client):
+            # A scene that is being upgraded (release.upgrade_of) is in the library BY DEFINITION: the file there is the one to replace.
+            # Marking it 'imported' here took the wishlist's upgrade rows off the wishlist unsearched.
+            upgrading = bool(release.get("upgrade_of"))
+            if not upgrading and link_imported_equivalent(db, release["provider"], scene_stashdb_id, get_stash_client):
                 already_in_library.append(scene_stashdb_id)
                 continue
-            if release["provider"] == "stashdb" and scene_stashdb_id in in_library:
+            if not upgrading and release["provider"] == "stashdb" and scene_stashdb_id in in_library:
                 if scene_stashdb_id not in already_in_library:
                     release_repo.set_status_for_scene(db, "stashdb", scene_stashdb_id, "imported")
                     already_in_library.append(scene_stashdb_id)
