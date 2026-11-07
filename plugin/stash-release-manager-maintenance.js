@@ -518,6 +518,22 @@
     return { mismatchCount: mismatches.length, reviewCount: others.length };
   }
 
+  // "Dismiss N on this page" / "Dismiss all N matching" for a findings list whose rows are all in the browser (v0.250.1): the matching ones are what the
+  // list's own search leaves (the same filter function as the list); `onRemoved(items)` takes them out of the list's data; an Undo calls `reread()`.
+  function localBulkBar({ getRows, getView, fields, shown, keyOf, pick, dismissChunk, undo, onRemoved, reread, noun = 'findings', selection = null, selectUi = true }) {
+    const matching = () => { const v = getView(); return v ? window.SRW.filterLocally(getRows(), v.state, fields) : []; };
+    return window.SRW.buildBulkDismissBar({
+      getPage: shown, getTotal: () => matching().length,
+      filterActive: () => { const v = getView(); return Boolean(v && (v.state.search || '').trim()); },
+      loadAll: async () => matching(), keyOf, pick, dismissChunk, undo, noun, selection, selectUi,
+      redraw: () => { const v = getView(); if (v) v.reload(); }, // the lists are in the browser: no request
+      onDone: async (items, all) => {
+        if (all && !items.length) { await reread(); return; } // an Undo: read the list again
+        onRemoved(items);
+      },
+    });
+  }
+
   function buildMismatchSection(mismatches, resultsWrap) {
     const { el } = window.SRW;
     // "Select all" selects the findings of the CURRENT PAGE only (v0.157.0); when more match the search, a button selects all of them on purpose.
@@ -526,6 +542,7 @@
     selectMore.hidden = true;
     let pageFindings = [];
     let matchingFindings = [];
+    let bulkBarRef = null;
     const syncSelectAll = () => {
       selectAll.checked = pageFindings.length > 0 && pageFindings.every((f) => selectedIds.has(f.id));
       const rest = matchingFindings.filter((f) => !selectedIds.has(f.id)).length;
@@ -539,6 +556,7 @@
       applyBtn.textContent = `Apply selected (${selectedIds.size})`;
       applyBtn.disabled = selectedIds.size === 0;
       syncSelectAll();
+      if (bulkBarRef) bulkBarRef.update(); // "Dismiss n selected" reads the same ticks
     };
 
     // Paged + searchable since 2026-09-26; the selection (selectedIds) lives across pages.
@@ -587,6 +605,7 @@
         pageFindings = shown.items || [];
         matchingFindings = (await fetcher(f, 1, 1000000)).items || []; // local data, no request
         syncSelectAll();
+        bulkBar.update(); // (defined right below: this line runs after the first await, when it exists)
         return shown;
       },
       renderItems: (items) => {
@@ -595,6 +614,31 @@
       },
     });
     view.reset();
+
+    // "Dismiss N on this page" / "Dismiss all N matching" (v0.250.1): the findings in the browser change at once, one Undo reads the list again.
+    const heading = el('h3', { textContent: `Mismatches (${mismatches.length})` });
+    const bulkBar = window.SRW.buildBulkDismissBar({
+      getPage: () => pageFindings, getTotal: () => matchingFindings.length, filterActive: () => Boolean((view.state.search || '').trim()),
+      loadAll: async () => matchingFindings, keyOf: (f) => String(f.id), pick: (f) => ({ id: f.id }), noun: 'findings',
+      dismissChunk: (chunk) => window.SRW.runOp('check_bulk_dismiss', { ids: chunk.map((x) => x.id) }),
+      undo: (rows) => window.SRW.runOp('check_bulk_restore', { rows }),
+      // the same ticks as "Apply selected": tick rows, then Apply or Dismiss them
+      selection: {
+        has: (k) => selectedIds.has(Number(k)), add: (k, item) => selectedIds.add(item.id), delete: (k) => selectedIds.delete(Number(k)), clear: () => selectedIds.clear(),
+        items: () => mismatches.filter((f) => selectedIds.has(f.id)).map((f) => ({ id: f.id })), get size() { return selectedIds.size; },
+      },
+      selectUi: false, redraw: () => view.reload(),
+      onDone: async (items, all) => {
+        if (all && !items.length) { await renderFindings(resultsWrap); return; } // an Undo: read again
+        const gone = new Set(items.map((x) => x.id));
+        for (let i = mismatches.length - 1; i >= 0; i -= 1) if (gone.has(mismatches[i].id)) mismatches.splice(i, 1);
+        gone.forEach((id) => selectedIds.delete(id));
+        heading.textContent = `Mismatches (${mismatches.length})`;
+        updateApplyBtn(); view.reload(); // local data: no request
+        bulkBar.update();
+      },
+    });
+    bulkBarRef = bulkBar;
 
     selectAll.addEventListener('change', () => {
       pageFindings.forEach((f) => { if (selectAll.checked) selectedIds.add(f.id); else selectedIds.delete(f.id); });
@@ -610,12 +654,13 @@
     applyBtn.addEventListener('click', () => runApplySelected(mismatches, applyBtn, resultsWrap));
 
     return el('div', { className: 'srw-maintenance-mismatches' }, [
-      el('h3', { textContent: `Mismatches (${mismatches.length})` }),
+      heading,
       el('div', { className: 'srw-toolbar' }, [
         el('label', {}, [selectAll, ' Select all on this page']),
         selectMore,
         applyBtn,
       ]),
+      bulkBar.node,
       view.node,
     ]);
   }
@@ -733,6 +778,7 @@
       }) : null;
       const pathLines = (f.file_paths || []).map((p) => el('div', { className: 'srw-maintenance-file-path', textContent: p }));
       return el('li', { className: 'srw-release-item' }, [
+        bulkBar.checkbox(f),
         el('div', {}, [
           f.kind === 'ambiguous'
             ? el('span', {}, [`[${f.kind}] ${f.scene_title} -- ${f.reason ? `${f.reason}. ` : ''}candidates: `,
@@ -749,19 +795,34 @@
         dismissBtn,
       ]);
     };
-    const view = window.SRW.buildFilteredPagedList({
+    let view = null;
+    let shown = [];
+    const fields = { text: (f) => `${f.kind} ${f.scene_title} ${(f.file_paths || []).join(' ')} ${f.reason || ''}` };
+    const summaryEl = el('summary', { textContent: `Needs manual review (${others.length})` });
+    const bulkBar = localBulkBar({
+      getRows: () => others, getView: () => view, fields, shown: () => shown, keyOf: (f) => String(f.id), pick: (f) => ({ id: f.id }),
+      dismissChunk: (chunk) => window.SRW.runOp('check_bulk_dismiss', { ids: chunk.map((x) => x.id) }),
+      undo: (rows) => window.SRW.runOp('check_bulk_restore', { rows }),
+      onRemoved: (items) => {
+        const gone = new Set(items.map((x) => x.id));
+        for (let i = others.length - 1; i >= 0; i -= 1) if (gone.has(others[i].id)) others.splice(i, 1);
+        summaryEl.textContent = `Needs manual review (${others.length})`;
+        view.reload(); // local data: no request
+      },
+      reread: () => renderFindings(resultsWrap),
+    });
+    view = window.SRW.buildFilteredPagedList({
       filters: ['search'],
       perPage: 50,
       showFilterBarFrom: 10,
-      fetchPage: window.SRW.localPageFetcher(() => others, {
-        text: (f) => `${f.kind} ${f.scene_title} ${(f.file_paths || []).join(' ')} ${f.reason || ''}`,
-      }),
-      renderItems: (items) => el('ul', { className: 'srw-release-list' }, items.map(buildItem)),
+      fetchPage: window.SRW.localPageFetcher(() => others, fields),
+      renderItems: (items) => { shown = items; const ul = el('ul', { className: 'srw-release-list' }, items.map(buildItem)); bulkBar.update(); return ul; },
     });
     view.reset();
 
     return window.SRW.rememberOpen(el('details', { className: 'srw-panel' }, [
-      el('summary', { textContent: `Needs manual review (${others.length})` }),
+      summaryEl,
+      bulkBar.node,
       view.node,
     ]), 'maintenance:needs-manual-review', false);
   }
@@ -782,6 +843,7 @@
     const dismissedList = el('div');
     let findings = []; // declared before the tabs: their labels read the counts straight away
     let dismissed = [];
+    let vrBulk = null; // "Dismiss N on this page" / "all N matching" of the findings list (v0.250.1)
     const counts = el('span', { hidden: true }); // text changes -> the tab labels follow (buildPaneTabs `watch`)
     const quickBtn = el('button', {
       className: 'srw-btn srw-btn-primary', textContent: 'Quick check',
@@ -874,16 +936,31 @@
       }
       dismissedView.reload();
       if (!view) {
+        const fields = { text: (f) => `${f.scene_title} ${f.file_path}` };
+        let shown = [];
+        vrBulk = localBulkBar({
+          getRows: () => findings, getView: () => view, fields, shown: () => shown, keyOf: (f) => String(f.id), pick: (f) => ({ id: f.id }),
+          dismissChunk: (chunk) => window.SRW.runOp('vr_check_bulk_dismiss', { ids: chunk.map((x) => x.id) }),
+          undo: (rows) => window.SRW.runOp('vr_check_bulk_restore', { rows }),
+          onRemoved: (items) => {
+            const gone = new Set(items.map((x) => x.id));
+            const out = findings.filter((x) => gone.has(x.id));
+            findings = findings.filter((x) => !gone.has(x.id));
+            dismissed = [...out.map((x) => ({ ...x, finding_status: 'dismissed' })), ...dismissed];
+            counts.textContent = `${findings.length}/${dismissed.length}`;
+            view.reload(); if (dismissedView) dismissedView.reload();
+          },
+          reread: () => loadFindings(),
+        });
         view = window.SRW.buildFilteredPagedList({
           filters: ['search'],
           perPage: 40,
           showFilterBarFrom: 10,
           emptyText: 'No 2D files found (among the files checked so far).',
-          fetchPage: window.SRW.localPageFetcher(() => findings, {
-            text: (f) => `${f.scene_title} ${f.file_path}`,
-          }),
-          renderItems: (items) => el('ul', { className: 'srw-release-list' }, items.map((f) => buildRow(f))),
+          fetchPage: window.SRW.localPageFetcher(() => findings, fields),
+          renderItems: (items) => { shown = items; const ul = el('ul', { className: 'srw-release-list' }, items.map((f) => buildRow(f))); vrBulk.update(); return ul; },
         });
+        list.appendChild(vrBulk.node);
         list.appendChild(view.node);
       }
       view.reload();
@@ -998,6 +1075,7 @@
         title: 'Open the scene in Stash (new tab)',
       }, [el('img', { className: 'srw-vr-thumb', src: `/scene/${f.scene_id}/screenshot`, loading: 'lazy', alt: '' })]);
       return el('li', { className: 'srw-release-item' }, [
+        !isDismissed && vrBulk ? vrBulk.checkbox(f) : null, // the tick box of the bulk Dismiss bar
         el('span', { className: `srw-vr-verdict srw-vr-verdict-${f.verdict}`, textContent: verdict }),
         thumb,
         el('div', { className: 'srw-row-info' }, [
@@ -1060,10 +1138,31 @@
       const ss = String(t % 60).padStart(2, '0');
       return h ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
     };
-    const view = window.SRW.buildFilteredPagedList({
+    // "Dismiss N on this page" / "Dismiss all N matching" (v0.250.1): only rows that are not dismissed yet; one Undo restores them.
+    let view = null;
+    let shownFindings = [];
+    const durationFields = { text: (x) => `${x.scene_title} ${x.file_path}` };
+    const open = (x) => x.status !== 'ignored';
+    const bulkBar = window.SRW.buildBulkDismissBar({
+      getPage: () => shownFindings.filter(open),
+      getTotal: () => (view ? window.SRW.filterLocally(findings, view.state, durationFields).filter(open).length : 0),
+      filterActive: () => Boolean(view && (view.state.search || '').trim()),
+      loadAll: async () => window.SRW.filterLocally(findings, view.state, durationFields).filter(open),
+      keyOf: (x) => String(x.scene_id), pick: (x) => ({ scene_id: x.scene_id }), noun: 'scenes',
+      redraw: () => view.reload(), // local data: no request
+      dismissChunk: (chunk) => window.SRW.runOp('duration_check_bulk_ignore', { scene_ids: chunk.map((x) => x.scene_id) }),
+      undo: (rows) => window.SRW.runOp('duration_check_bulk_ignore', { scene_ids: rows.map((x) => x.scene_id), restore: true }),
+      onDone: async (items, all) => {
+        if (all && !items.length) { await load(); return; } // an Undo: read the list again
+        const gone = new Set(items.map((x) => x.scene_id));
+        findings = findings.filter((f) => !gone.has(f.scene_id));
+        view.reload(); updateSummary(); // local data: no request
+      },
+    });
+    view = window.SRW.buildFilteredPagedList({
       filters: ['search'], perPage: 30, showFilterBarFrom: 10, emptyText: inGroup ? 'No scene of a movie deviates from the provider\'s length by more than the threshold.' : 'No scene deviates from the provider\'s length by more than the threshold.',
       fetchPage: window.SRW.localPageFetcher(() => findings, { text: (x) => `${x.scene_title} ${x.file_path}` }),
-      renderItems: (page) => el('ul', { className: 'srw-release-list' }, page.map((x) => {
+      renderItems: (page) => { shownFindings = page; bulkBar.update(); return el('ul', { className: 'srw-release-list' }, page.map((x) => {
         const rowStatus = el('span', { className: 'srw-key-status' });
         const pct = Math.round(Math.abs(x.deviation) * 100);
         const shorter = x.deviation < 0;
@@ -1105,6 +1204,7 @@
           ignoreBtn,
         ].filter(Boolean);
         return el('li', { className: 'srw-release-item' }, [
+          open(x) ? bulkBar.checkbox(x) : null, // the tick box of the bulk Dismiss bar
           el('span', { className: `srw-upgrade-reason srw-upgrade-reason-${shorter ? 'dur_short' : 'dur_long'}`, textContent: shorter ? 'file shorter' : 'file longer',
             title: shorter ? 'The file is shorter than the provider\'s length: a sample or a cut / broken download' : 'The file is longer than the provider\'s length' }),
           el('a', { className: 'srw-vr-thumb-link', href: sceneHref, target: '_blank', rel: 'noopener noreferrer' },
@@ -1119,7 +1219,7 @@
           ]),
           el('div', { className: 'srw-upgrade-actions' }, actions),
         ]);
-      })),
+      })); },
     });
     const dirSel = el('select', { onChange: (e) => { direction = e.target.value; load(); } },
       [['', 'file shorter or longer'], ['shorter', 'file shorter (samples, cut files)'], ['longer', 'file longer']].map(([v, t]) => el('option', { value: v, textContent: t })));
@@ -1162,7 +1262,7 @@
         ? 'Scenes that belong to a movie (a group) whose file is clearly shorter or longer than the length the provider has. They are kept apart from the library list because a movie’s scenes are cut and numbered differently from a normal scene; there is no “Re-add” here — look at the file and the movie yourself. “Run check” is the same run as the duration check in Upgrade wanted (reason: wrong length).'
         : 'Library scenes whose file is clearly shorter or longer than the length the provider has — samples, cut or broken downloads. Scenes that are part of a movie are checked under Movies > Duration: movie scenes. Scenes the provider has no length for are not checked. “Re-add” puts the scene on the upgrade list: a release of about the right length replaces the file (the old one goes to the recycle bin).' }),
       el('div', { className: 'srw-toolbar' }, [runBtn, dirSel, el('label', {}, ['deviation over ', thrInput, ' %']), el('label', {}, [ignoredBox, ' show dismissed']), status]),
-      summary, view.node,
+      summary, bulkBar.node, view.node,
     ]);
   }
 
@@ -2701,10 +2801,31 @@
     let ignored = 0;
     const status = el('span', { className: 'srw-key-status' });
     const summary = el('p', { className: 'srw-hint' });
-    const pairView = window.SRW.buildFilteredPagedList({
+    // "Dismiss N on this page" / "Dismiss all N matching" (v0.250.1) = "Not this" for every suggested group of those video folders; one Undo takes it back.
+    let pairView = null;
+    let shownPairs = [];
+    const pairFields = { text: (p) => `${p.title} ${p.candidates.map((c) => c.group.name).join(' ')}` };
+    const pairsBar = localBulkBar({
+      getRows: () => pairs, getView: () => pairView, fields: pairFields, shown: () => shownPairs, noun: 'folders',
+      keyOf: (x) => String(x.key || x.folder_key), pick: (p) => ({ key: p.key, groups: p.candidates.map((c) => c.group.id) }),
+      dismissChunk: async (chunk) => {
+        const list = chunk.flatMap((x) => x.groups.map((g) => ({ folder_key: x.key, group_id: g })));
+        const res = await window.SRW.runOp('movies_compare_groups_bulk_ignore', { pairs: list });
+        return res.error ? res : { previous: res.previous || list };
+      },
+      undo: (rows) => window.SRW.runOp('movies_compare_groups_bulk_ignore', { pairs: rows, undo: true }),
+      onRemoved: (items) => {
+        const gone = new Set(items.map((x) => x.key));
+        pairs = pairs.filter((x) => !gone.has(x.key));
+        root.srwCount = pairs.length;
+        pairView.reload(); // local data: no request
+      },
+      reread: () => load(),
+    });
+    pairView = window.SRW.buildFilteredPagedList({
       filters: ['search'], perPage: 25, emptyText: 'No video matches an empty group by name.',
-      fetchPage: window.SRW.localPageFetcher(() => pairs, { text: (p) => `${p.title} ${p.candidates.map((c) => c.group.name).join(' ')}` }),
-      renderItems: (page) => el('ul', { className: 'srw-release-list' }, page.map(buildPairRow)),
+      fetchPage: window.SRW.localPageFetcher(() => pairs, pairFields),
+      renderItems: (page) => { shownPairs = page; const ul = el('ul', { className: 'srw-release-list' }, page.map(buildPairRow)); pairsBar.update(); return ul; },
     });
     // Empty groups that have a namesake WITH files (v0.241.9): usually a duplicate group made by a scrape or an import.
     let namesakes = [];
@@ -2761,6 +2882,7 @@
       const candSlot = el('div');
       const doneSlot = el('span');
       const li = el('li', { className: 'srw-release-item' }, [
+        pairsBar.checkbox(p), // the tick box of the bulk Dismiss bar
         el('span', { className: 'srw-release-title', textContent: p.title }),
         el('span', { className: 'srw-release-date', textContent: `${p.year || 'no year'} · ${p.videos.length} video(s) · ${p.minutes} min` }),
         el('div', { className: 'srw-review-box' }, [
@@ -2835,7 +2957,7 @@
         + 'The numbers in the names must be the same, the year is only a hint. Nothing changes until you click.' }),
       el('div', { className: 'srw-toolbar' }, [window.SRW.iconButton('button', 'faRotate', 'Reload', { title: 'Reload: read the movie folders and the groups from Stash again (they are kept until then)', onClick: () => load(true) }), status]),
       summary,
-      el('h4', { textContent: 'Possible matches' }), pairView.node,
+      el('h4', { textContent: 'Possible matches' }), pairsBar.node, pairView.node,
       el('h4', { textContent: 'Empty groups with a namesake that has files' }),
       el('p', { className: 'srw-hint' }, ['A group without files whose name is the same film as a group WITH files (accents, "Vol.", ", The" and brackets do not count; the numbers must agree): usually a duplicate. ', namesakeStatus]),
       namesakeView.node,

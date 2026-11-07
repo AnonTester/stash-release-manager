@@ -123,6 +123,26 @@ def _date_plausible(scene_date, candidate_title):
     padded_candidate = " " + re.sub(r"[^a-z0-9]+", " ", (candidate_title or "").lower()) + " "
     return any(f" {y} {month} {day} " in padded_candidate for y in (year, year[2:]))
 
+# A release cannot be older than the scene it claims to be (v0.250.7). Some studios call their newest episode "placeholder title" every time:
+# the title matches ALL of them, and the release names carry no date -- three-year-old posts by other girls were taken for the new scene. The
+# indexer's age (days since the post) is the proof: a post older than the scene's release date (plus some slack for studios whose date is
+# weeks off, and for early posts) belongs to another scene.
+PREDATE_SLACK_DAYS = 14
+
+
+def predates_scene(scene_date, release, today=None):
+    """True when `release` (indexer age in days) was posted clearly BEFORE the scene's release date. No full date or no age -> False (no proof)."""
+    age = release.get("age") if isinstance(release, dict) else None
+    m = _ISO_DATE_RE.match(scene_date or "")
+    if age is None or not m:
+        return False
+    try:
+        scene_day = datetime(int(m.group(1)), int(m.group(2)), int(m.group(3)), tzinfo=timezone.utc)
+        days_since = ((today or datetime.now(timezone.utc)) - scene_day).days
+        return float(age) > days_since + PREDATE_SLACK_DAYS
+    except (ValueError, TypeError):
+        return False
+
 
 class AliasName(str):
     """A name a credited performer is also known under (the scene's own "as" credit and full-name aliases from StashDB, v0.218.2): any of them in a
@@ -820,6 +840,8 @@ def _select_best(releases, allowed_resolutions, indexer_priorities, scene_title,
         title = r.get("title")
         if _is_rejected(title, rejected, r) or _review_identity(title) in taken_identities:
             continue
+        if predates_scene(scene_date, r):
+            continue
         if not _candidate_plausible(scene_title, scene_date, performer_names, title):
             continue
         quality = (r.get("quality") or {}).get("quality") or {}
@@ -910,7 +932,7 @@ _SEARCH_LOG_MAX_CANDIDATES = 500
 # Display order of verdicts in the log -- the interesting ones first.
 _VERDICT_ORDER = ("grabbed", "review", "lower_rank", "quality_not_allowed", "not_vr",
                   "vr_2d", "vr_no_format", "vr_res_too_high", "vr_too_large", "vr_too_small",
-                  "too_large", "title_mismatch", "other_scene", "blocklisted")
+                  "too_large", "title_mismatch", "too_old", "other_scene", "blocklisted")
 
 
 def torrent_facts(r, duration_s=None):
@@ -964,6 +986,8 @@ def _explain_candidates(releases, allowed_resolutions, scene_title, scene_date, 
             verdict = "blocklisted"
         elif _review_identity(title) in taken_identities:
             verdict = "other_scene"
+        elif predates_scene(scene_date, r):
+            verdict = "too_old"
         elif not _candidate_plausible(scene_title, scene_date, performer_names, title):
             verdict = "title_mismatch"
         elif require_vr and quality.get("source") != "vr":
@@ -1160,7 +1184,7 @@ def _select_review_candidate(releases, scene_title, scene_date, performer_names,
     best, best_key = None, None
     for r in releases:
         title = r.get("title")
-        if _is_rejected(title, rejected, r):
+        if _is_rejected(title, rejected, r) or predates_scene(scene_date, r):
             continue
         if _candidate_plausible(scene_title, scene_date, performer_names, title):
             continue  # already auto-acceptable, not a "review" case
@@ -1649,7 +1673,7 @@ def search_and_grab(db, whisparr_client, movie_id, provider, scene_stashdb_id, s
         # "something looked right but the quality/VR tag didn't match"
         # -- both are None from _select_best(), but they mean very
         # different things to a user checking why nothing was grabbed.
-        any_title_match = any(_candidate_plausible(scene_title, scene_date, performer_names, r.get("title"))
+        any_title_match = any(_candidate_plausible(scene_title, scene_date, performer_names, r.get("title")) and not predates_scene(scene_date, r)
                                for r in releases)
         return _finish(RESULT_NO_QUALITY_MATCH if any_title_match else RESULT_TITLE_MISMATCH_ONLY)
 

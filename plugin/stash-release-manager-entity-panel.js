@@ -93,6 +93,23 @@
     const summaryText = panel.querySelector('summary span');
     const entities = ids.map(({ stashId }) => [entityType, stashId]);
     let view = null;
+    // "Dismiss N on this page" / "Dismiss all N matching" (v0.250.0, as on the Releases page's New list)
+    let shownRows = [];
+    let shownTotal = 0;
+    let shownFiltered = false;
+    const bar = window.SRW.buildBulkDismissBar({
+      getPage: () => shownRows, getTotal: () => shownTotal, filterActive: () => shownFiltered,
+      loadAll: async () => {
+        const all = await window.SRW.runOp('releases_query', { ...window.SRW.releaseQueryArgs(view.state), statuses: ['new'], entities, ids_only: true });
+        return all.error ? all : all.scenes;
+      },
+      onDone: async (scenes, all) => {
+        if (all) { await view.reload(); return; }
+        const gone = new Set(scenes.map((x) => `${x.provider}\u0000${x.scene_stashdb_id}`));
+        view.patchItems((rows) => rows.filter((x) => !gone.has(`${x.provider}\u0000${x.scene_stashdb_id}`)));
+      },
+      redraw: () => view.redraw(),
+    });
     view = window.SRW.buildFilteredPagedList({
       filters: ['search', 'description', 'vr', 'dates', 'providers'],
       perPage: 25,
@@ -105,8 +122,21 @@
         if (response.error) return response;
         return { total: response.total, items: response.rows };
       },
-      renderItems: (items) => buildReleaseList(items, () => view.reload()),
+      keep: true, // pages already read are shown at once and checked quietly behind it; a Dismiss / Add takes the row out without a request
+      renderItems: (items) => {
+        shownRows = items;
+        const list = buildReleaseList(items, (release, change) => {
+          if (release && change && change.remove) {
+            return view.patchItems((rows) => rows.filter((x) => !(x.provider === release.provider && x.scene_stashdb_id === release.scene_stashdb_id)));
+          }
+          return view.reload();
+        }, undefined, (r) => bar.checkbox(r));
+        bar.update();
+        return list;
+      },
       onTotal: (total, active) => {
+        shownTotal = total; shownFiltered = active;
+        if (!total) { shownRows = []; bar.update(); } // an empty list draws no rows: the bar is told here
         // The "Releases" tab on the page shows how many new releases there are (unfiltered numbers only).
         document.querySelectorAll('.srw-entity-tab-count').forEach((n) => { n.textContent = String(total); n.hidden = !total || active; });
         summaryText.textContent = total || active
@@ -115,6 +145,7 @@
       },
     });
     body.textContent = '';
+    body.appendChild(bar.node);
     body.appendChild(view.node);
     await view.reset();
   }
@@ -130,8 +161,8 @@
   // this needs (provider, entity_type, entity_stashdb_id, scene_stashdb_id)
   // already lives on the release row itself, so neither function needs
   // entityType/ids passed in separately any more.
-  function buildReleaseList(releases, onDone, countHint) {
-    const list = buildReleaseListItems(releases, onDone);
+  function buildReleaseList(releases, onDone, countHint, selectBox) {
+    const list = buildReleaseListItems(releases, onDone, undefined, selectBox);
     // Fire-and-forget: patches an "In Library"/Whisparr-quality badge
     // into each row once the check comes back, rather than delaying
     // the whole list on it -- best-effort, see annotateLibraryStatus().
@@ -145,12 +176,13 @@
   // year/quarter group) and still only make ONE batched
   // releases_library_status call across the whole thing afterward,
   // rather than one per group.
-  function buildReleaseListItems(releases, onDone, showSearchStatus) {
+  function buildReleaseListItems(releases, onDone, showSearchStatus, selectBox) {
     const { el } = window.SRW;
     const list = el('ul', { className: 'srw-release-list' });
     releases.forEach((r) => {
       const isTpdb = r.provider !== 'stashdb'; // any provider but StashDB: handled by this sidecar without Whisparr
       const items = [
+        selectBox ? selectBox(r) : null, // the tick box of the bulk Dismiss bar (first column)
         buildReleaseThumb(r),
         el('a', {
           className: 'srw-release-title', href: sceneUrl(r.provider, r.scene_stashdb_id),
@@ -235,7 +267,7 @@
       items.push(el('button', {
         className: 'btn btn-outline-danger srw-btn-fit srw-btn-dismiss',
         textContent: 'Dismiss',
-        onClick: () => dismissRelease(r, onDone),
+        onClick: (e) => dismissRelease(r, onDone, e.currentTarget),
       }));
       // Same amber accent as the Releases page's Calendar/List views
       // for a ThePornDB-sourced release (2026-09-12).
@@ -264,15 +296,26 @@
   // before -- every caller already treats "no entry for this id" as
   // "nothing known", so an empty map is a safe, valid result to hand
   // back rather than a special case every caller has to check for.
+  // Kept for two minutes per scene (v0.250.0): a list drawn again after a Dismiss / Add asked Stash for the whole page's status once more (about 2 s).
+  const libraryStatusCache = new Map(); // scene id -> { info, at }
   async function fetchLibraryStatus(releases) {
-    const scenes = releases.filter((r) => r.provider !== 'theporndb')
-      .map((r) => ({ scene_stashdb_id: r.scene_stashdb_id, is_vr: !!r.is_vr }));
-    if (!scenes.length) return {};
+    const now = Date.now();
+    const wanted = releases.filter((r) => r.provider !== 'theporndb');
+    const out = {};
+    const missing = [];
+    wanted.forEach((r) => {
+      const hit = libraryStatusCache.get(r.scene_stashdb_id);
+      if (hit && now - hit.at < 120000) { if (hit.info) out[r.scene_stashdb_id] = hit.info; } else missing.push(r);
+    });
+    if (!missing.length) return out;
+    const scenes = missing.map((r) => ({ scene_stashdb_id: r.scene_stashdb_id, is_vr: !!r.is_vr }));
     try {
       const status = await window.SRW.runOp('releases_library_status', { scenes });
-      return status.error ? {} : status;
+      if (status.error) return out;
+      missing.forEach((r) => libraryStatusCache.set(r.scene_stashdb_id, { info: status[r.scene_stashdb_id] || null, at: now }));
+      return { ...out, ...status };
     } catch (e) {
-      return {};
+      return out;
     }
   }
 
@@ -343,8 +386,8 @@
 
   // One plain list for a page of "Missing from Catalog" releases (already sorted newest first by the caller; the old
   // Year > Quarter folding was dropped in v0.101.3 now that the list pages), each row decorated with its library/search status.
-  function buildFlatReleaseList(releases, onDone, statusById) {
-    const ul = buildReleaseListItems(releases, onDone, true);
+  function buildFlatReleaseList(releases, onDone, statusById, selectBox) {
+    const ul = buildReleaseListItems(releases, onDone, true, selectBox);
     releases.forEach((r) => {
       const li = ul.querySelector(`li[data-scene-id="${CSS.escape(r.scene_stashdb_id)}"]`);
       if (li) decorateReleaseRow(li, statusById[r.scene_stashdb_id], r, onDone);
@@ -467,13 +510,14 @@
     if (actionLabel !== 'Search now') {
       const title = release.title || release.scene_stashdb_id;
       window.SRW.confirmInline(btn, `Add "${title}" to your wishlist and search for it?`,
-        () => doHandoff(release, onDone, localPatch));
+        () => doHandoff(release, onDone, localPatch, true, btn));
       return;
     }
-    await doHandoff(release, onDone, localPatch);
+    await doHandoff(release, onDone, localPatch, true, btn);
   }
 
-  async function doHandoff(release, onDone, localPatch, search = true) {
+  async function doHandoff(release, onDone, localPatch, search = true, from = null) {
+    const unmark = window.SRW.markRowBusy(from, 'Adding…');
     try {
       const result = await window.SRW.runOp('releases_handoff', {
         provider: release.provider, entity_type: release.entity_type,
@@ -497,9 +541,11 @@
       // since a handed-off release genuinely should disappear from a
       // status='new'-only query on its next fetch.
       if (localPatch) await patchReleaseRow(release, result, onDone);
-      else await onDone();
+      else await onDone(release, { remove: true }); // handed off: it leaves the list of NEW releases (the shown page is changed in place)
     } catch (e) {
       window.SRW.notify(`Adding failed: ${release.title || ''}`, e.message, 'error');
+    } finally {
+      unmark();
     }
   }
 
@@ -554,7 +600,8 @@
     );
   }
 
-  async function dismissRelease(release, onDone) {
+  async function dismissRelease(release, onDone, from) {
+    const unmark = window.SRW.markRowBusy(from, 'Dismissing…');
     try {
       // Scene-scoped, not entity-scoped (see routers/releases.py's
       // dismiss() docstring) -- dismissing here also clears this same
@@ -563,10 +610,13 @@
       const res = await window.SRW.runOp('releases_dismiss', {
         provider: release.provider, scene_stashdb_id: release.scene_stashdb_id,
       });
-      window.SRW.releaseDismissedNotice(release, res, onDone);
-      await onDone();
+      // A failed dismiss says so and the row STAYS; a successful one takes the row out of the shown page (no request, see refreshPanel).
+      const ok = window.SRW.releaseDismissedNotice(release, res, () => onDone(release, null));
+      if (ok) await onDone(release, { remove: true });
     } catch (e) {
       window.SRW.notify('Dismiss', `Dismiss failed: ${e.message}`, 'error');
+    } finally {
+      unmark();
     }
   }
 
@@ -1019,7 +1069,7 @@
       // once this same check would otherwise run afterward.
       resultsArea.textContent = 'Checking library/Whisparr status...';
       const statusById = await fetchLibraryStatus(sorted);
-      const missing = sorted.filter((r) => !(statusById[r.scene_stashdb_id] || {}).satisfied);
+      let missing = sorted.filter((r) => !(statusById[r.scene_stashdb_id] || {}).satisfied);
       // Scene pairing (v0.182.0): scenes loaded before the cast was recorded get it read now (<= 200 per call, StashDB batches).
       if (missing.some((r) => r.provider === provider && (r.cast_pairing == null || r.cast_names == null))) {
         resultsArea.textContent = `Reading the cast of ${missing.filter((r) => r.cast_pairing == null || r.cast_names == null).length} scene(s)...`;
@@ -1073,29 +1123,62 @@
         eligibleForBulk, () => refreshBacklogResults(resultsArea, provider, entityType, stashId, entityName),
       );
       if (bulkBtn) resultsArea.appendChild(bulkBtn);
+      // "Dismiss N on this page" / "Dismiss all N matching" (v0.250.2) and a Dismiss per row that takes the row out of the list in the browser (no
+      // new read of the whole backlog). A scene that is downloading is not offered.
+      let view = null;
+      let shownRows = [];
+      const fields = {
+        text: (r) => `${r.title || ''} ${r.studio_name || ''}`,
+        description: (r) => r.details,
+        vr: (r) => r.is_vr,
+        provider: (r) => r.provider,
+        date: (r) => r.scene_date || r.scene_created,
+        late: (r) => r.late_addition,
+        pairing: (r) => r.cast_pairing,
+        cast: (r) => r.cast_names,
+      };
+      const dismissible = (r) => !r.download_job_id;
+      const removeRows = (list) => {
+        const gone = new Set(list.map((r) => `${r.provider}\u0000${r.scene_stashdb_id}`));
+        missing = missing.filter((r) => !gone.has(`${r.provider}\u0000${r.scene_stashdb_id}`));
+        countHint.textContent = missing.length ? `${missing.length} scene(s) need attention.` : 'Nothing left that needs attention.';
+        view.reload(); // the list is in the browser: no request
+      };
+      const backlogBar = window.SRW.buildBulkDismissBar({
+        getPage: () => shownRows.filter(dismissible),
+        getTotal: () => (view ? window.SRW.filterLocally(missing, view.state, fields).filter(dismissible).length : 0),
+        filterActive: () => Boolean(view && window.SRW.isFilterActive(view.state)),
+        loadAll: async () => window.SRW.filterLocally(missing, view.state, fields).filter(dismissible),
+        onDone: async (scenes, all) => {
+          if (all && !scenes.length) { await refreshBacklogResults(resultsArea, provider, entityType, stashId, entityName); return; } // an Undo: read again
+          removeRows(scenes);
+        },
+        noun: 'scenes',
+        redraw: () => view.reload(), // local data: no request
+      });
+      resultsArea.appendChild(backlogBar.node);
       // Filter + paging (2026-09-26) over the already-loaded rows; each
       // page is still grouped by year/quarter as before. "Added late"
       // narrows to back-catalogue additions found by the scan.
-      const view = window.SRW.buildFilteredPagedList({
+      view = window.SRW.buildFilteredPagedList({
         filters: ['search', 'description', 'vr', 'late', 'cast', 'pairing', 'dates', 'providers'],
         perPage: 40,
         showFilterBarFrom: 10,
         pairingOptions: window.SRW.pairingOptionsFor(missing),
         castOptions: window.SRW.castOptionsFor(missing, entityType === 'performer' ? entityName : ''),
-        fetchPage: window.SRW.localPageFetcher(() => missing, {
-          text: (r) => `${r.title || ''} ${r.studio_name || ''}`,
-          description: (r) => r.details,
-          vr: (r) => r.is_vr,
-          provider: (r) => r.provider,
-          date: (r) => r.scene_date || r.scene_created,
-          late: (r) => r.late_addition,
-          pairing: (r) => r.cast_pairing,
-          cast: (r) => r.cast_names,
-        }),
+        fetchPage: window.SRW.localPageFetcher(() => missing, fields),
         // Flat, newest first, one page at a time (v0.101.3) -- the year/quarter folding is gone now that the list pages.
-        renderItems: (items) => buildFlatReleaseList(
-          items, () => refreshBacklogResults(resultsArea, provider, entityType, stashId, entityName), statusById,
-        ),
+        renderItems: (items) => {
+          shownRows = items;
+          const ul = buildFlatReleaseList(
+            items, (release, change) => (release && change && change.remove
+              ? removeRows([release]) // a Dismiss: the row leaves at once
+              : refreshBacklogResults(resultsArea, provider, entityType, stashId, entityName)), statusById,
+            (r) => (dismissible(r) ? backlogBar.checkbox(r) : null),
+          );
+          backlogBar.update();
+          return ul;
+        },
       });
       resultsArea.appendChild(view.node);
       await view.reset();

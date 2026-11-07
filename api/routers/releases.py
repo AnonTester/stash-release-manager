@@ -1,5 +1,6 @@
 import json
 import logging
+import threading
 import os
 import time
 from urllib.parse import quote
@@ -903,6 +904,46 @@ def bulk_status(body: BulkStatusRequest):
     if changed:
         history.event("info", "dismiss", f"Bulk {body.action}: {len(scenes)} scene(s)")
     return {"ok": True, "changed": changed}
+
+
+BULK_DISMISS_MAX = 600  # scenes per call; the page sends bigger sets in several calls
+
+
+class BulkScenesRequest(BaseModel):
+    scenes: list[BulkScene]  # no `action`: this endpoint only dismisses (the page sends just the scenes)
+
+
+@router.post("/bulk-dismiss")
+def bulk_dismiss(body: BulkScenesRequest):
+    """Dismiss many scenes at once, whatever open status they have (v0.250.0: "Dismiss N on this page" / "Dismiss all N matching" on the lists of the
+    Studio/Performer page, the wishlist and Activity). Unlike bulk_status() (only 'new' -> 'dismissed') this also takes scenes that are on the wishlist or
+    failed; the answer carries `previous` -- the rows as they were -- so ONE Undo (POST /releases/restore) puts every row back to its own status.
+    A wishlist scene that is monitored in Whisparr is unmonitored there afterwards (best effort, in the background, as dismiss() does for one scene)."""
+    scenes = [(sc.provider, sc.scene_stashdb_id) for sc in body.scenes][:BULK_DISMISS_MAX]
+    previous, changed, wishlist = [], 0, []
+    for provider, scene_id in scenes:
+        rows = release_repo.snapshot_scene_rows(_db, provider, scene_id)
+        if not rows:
+            continue
+        release_repo.set_status_for_scene(_db, provider, scene_id, "dismissed")
+        previous.extend(rows)
+        changed += 1
+        if any(r.get("status") == "sent_to_whisparr" for r in rows) and uses_whisparr(_db, provider):
+            wishlist.append(scene_id)
+    if changed:
+        history.event("info", "dismiss", f"Bulk dismiss: {changed} scene(s)")
+    if wishlist:
+        def unmonitor():
+            for scene_id in wishlist:
+                try:
+                    movie = _get_whisparr_client().find_by_stash_id(scene_id)
+                    if movie and movie.get("monitored") and not movie.get("hasFile"):
+                        _get_whisparr_client().set_movie_monitored(movie["id"], False)
+                        history.scene("info", "dismiss", "Unmonitored in Whisparr", "stashdb", scene_id)
+                except Exception:
+                    logger.exception("bulk dismiss: could not unmonitor %s in Whisparr", scene_id)
+        threading.Thread(target=unmonitor, daemon=True, name="bulk-dismiss-unmonitor").start()
+    return {"ok": True, "changed": changed, "previous": previous, "skipped": max(0, len(body.scenes) - len(scenes))}
 
 
 class LibraryStatusScene(BaseModel):

@@ -36,9 +36,35 @@
     if (!document.hidden && refreshProgress && document.querySelector('.srw-activity-page')) refreshProgress();
   });
 
+  // A Dismiss made on this page takes its row out at once (buildSection); the server's live push of the same change must not rebuild the page (filters,
+  // page numbers and open panels would be lost, and the rebuild asks the sidecar about ten times, about 2 s each). So a push is checked QUIETLY: the page
+  // is read again, but only built again when something OTHER than the rows removed here changed (v0.250.0).
+  let lastActivityKeys = null; // what the shown page was built from: one entry per scene / movie row
+  const locallyRemoved = new Set(); // 'provider:scene' of the rows taken out here since that build
+  let selfChangeAt = 0;
+  let quietTimer = null;
+  const sceneKey = (r) => `${r.provider}:${r.scene_stashdb_id}`;
+  function liveChanged(container) {
+    clearTimeout(quietTimer);
+    // right after an own change the check waits for the clicking to pause; otherwise it follows the push after a moment
+    quietTimer = setTimeout(() => window.SRW.whenNoOpenPanel(container, () => render(container, true)), Date.now() - selfChangeAt < 20000 ? 8000 : 1500);
+  }
+  // The keys of everything the page shows. A movie's progress changes all the time and is not part of it.
+  function activityKeys(responses, reviews, films) {
+    const rows = responses.flatMap((r) => (r.rows || []).map((x) => `${x.provider}:${x.scene_stashdb_id}|${x.entity_stashdb_id}|${x.status}|${x.last_search_result || ''}|${x.last_search_at || ''}|${x.download_job_id || ''}|${x.import_error_code || ''}|${x.is_vr ? 1 : 0}`));
+    const reviewText = JSON.stringify(reviews || {});
+    return [...rows, `reviews:${reviewText.length}:${[...reviewText].reduce((h, c) => (h * 31 + c.charCodeAt(0)) | 0, 7)}`,
+      ...(films || []).map((f) => `film:${f.id}|${f.status}|${f.import_error || ''}|${f.last_search_at || ''}|${f.review_candidate ? 1 : 0}`)];
+  }
+  const sameKeys = (a, b) => {
+    // Rows taken out here are not counted: the shown page no longer has them, the server's answer may still (or no longer) carry them.
+    const strip = (list) => list.filter((k) => !(locallyRemoved.size && [...locallyRemoved].some((rm) => k.startsWith(`${rm}|`)))).join('\n');
+    return strip(a) === strip(b);
+  };
+
   let uploadEnabled = false; // Settings > fingerprint_upload_enabled, set by render(), read by buildSection()'s Import failed rows
 
-  async function render(container) {
+  async function render(container, quiet = false) {
     const { el } = window.SRW;
     const mySeq = ++renderSeq;
     // The old subscription is dropped only once the new one is attached (below): with no listener left in between, the live connection
@@ -110,6 +136,14 @@
       return;
     }
     if (mySeq !== renderSeq) return;
+    // A quiet check (a live push): nothing but the rows removed here changed -> the page stays exactly as it is (filters, pages, open panels).
+    const keys = activityKeys(responses, reviews, films);
+    if (quiet && lastActivityKeys && sameKeys(lastActivityKeys, keys)) {
+      liveDetach = previousDetach; // the subscription goes on
+      return;
+    }
+    lastActivityKeys = keys;
+    locallyRemoved.clear();
     const [sent, failed] = responses.map((r) => r.rows);
 
     const sentGrouped = window.SRW.groupByScene(sent);
@@ -158,7 +192,7 @@
     // Built side by side (each one asks the sidecar for its own bits), the downloads first in the list.
     const stuckSection = (async () => {
       const [scenesPreview, moviesPreview, torrents] = await stuckExtras;
-      const stuckGroup = withTorrentProblems(withStuckToolbar(await buildSection('Stuck (searched, nothing usable found)', stuck, {
+      const stuckGroup = await withTorrentProblems(withStuckToolbar(await buildSection('Stuck (searched, nothing usable found)', stuck, {
         emptyText: 'Nothing stuck right now.',
         showSearchStatus: true, showSearchActions: true, showImportError: true, sortBy: 'last_search_at', onChanged: () => render(container),
         movieRows: movieRows(filmsStuck, progressElements, container),
@@ -210,8 +244,8 @@
     liveDetach = window.SRW.attachLive(hint, {
       onProgress: (data) => applyProgressData(progressElements, container, data),
       // (a search panel the user has open stays until it is closed, see whenNoOpenPanel)
-      onChange: () => window.SRW.whenNoOpenPanel(container, () => render(container)),
-      onResync: () => window.SRW.whenNoOpenPanel(container, () => render(container)),
+      onChange: () => liveChanged(container),
+      onResync: () => liveChanged(container),
       poll: () => updateDownloadProgress(progressElements, container),
       pollMs: progressElements.size > 0 ? 5000 : 10000,
       hint,
@@ -357,12 +391,11 @@
       return { _filmLi: li, title: f.title, studio_name: f.studio_name || '', scene_date: (f.release_date || '').slice(0, 10),
                _when: f.imported_at || f.last_search_at || f.grabbed_at || '' };
     });
-    const sorted = (sortBy
+    let sorted = (sortBy
       ? [...releases, ...movieItems].sort((a, b) => ((b[sortBy] || b._when || '')).localeCompare((a[sortBy] || a._when || '')))
       : [...releases, ...movieItems]);
-    const group = el('details', { className: 'srw-date-group' }, [
-      el('summary', { textContent: `${label} — ${sorted.length}` }),
-    ]);
+    const summaryEl = el('summary', { textContent: `${label} — ${sorted.length}` });
+    const group = el('details', { className: 'srw-date-group' }, [summaryEl]);
     // Open/closed remembered per browser (2026-09-25), `collapsed` is
     // only the default until the user toggles it -- see core.js's
     // rememberOpen().
@@ -377,6 +410,7 @@
     function renderRow(r) {
       if (r._filmLi) return r._filmLi; // a movie
       const li = [
+        dismissible(r) && showSearchActions ? bar.checkbox(r) : null, // the tick box of the bulk Dismiss bar
         showThumb ? buildReleaseThumb(r) : null,
         buildEntityIcons(r.entity_types),
         buildLocalEntityLink(r),
@@ -406,7 +440,13 @@
       // The same search actions as on the Releases page's On Wishlist rows (v0.106.9): Last search (what was searched and why
       // nothing was taken), Search via Whisparr, and Search… (own query + Grab).
       if (showSearchActions) li.push(window.SRW.buildSearchActions(r, () => (onChanged ? onChanged() : null)));
-      if (showSearchActions && r.status === 'sent_to_whisparr' && !r.download_job_id) li.push(window.SRW.buildWishlistDismiss(r, () => (onChanged ? onChanged() : null)));
+      // A Dismiss takes its row out of this list at once (no page rebuild): the answer of the sidecar is not read again (see liveChanged()); its Undo asks for a redraw.
+      if (showSearchActions && r.status === 'sent_to_whisparr' && !r.download_job_id) {
+        li.push(window.SRW.buildWishlistDismiss(r, (release, change) => {
+          if (release && change && change.remove) { removeRows([release]); return null; }
+          return onChanged ? onChanged() : null;
+        }));
+      }
       if (showProgress && r.download_job_id) {
         const fill = el('div', { className: 'srw-download-progress-fill' });
         const text = el('span', { className: 'srw-download-progress-text' });
@@ -609,28 +649,60 @@
       }
       return window.SRW.arrangeReleaseRow(el('li', { className: 'srw-release-item', 'data-scene-id': r.scene_stashdb_id }, li), r);
     }
+    // Rows taken out here: the list, the count in the heading (and so the tab) follow without any request.
+    let view = null;
+    function removeRows(list) {
+      const gone = new Set(list.map(sceneKey));
+      list.forEach((r) => locallyRemoved.add(sceneKey(r)));
+      selfChangeAt = Date.now();
+      sorted = sorted.filter((x) => x._filmLi || !gone.has(sceneKey(x)));
+      summaryEl.textContent = `${label} — ${sorted.length}`;
+      view.reload(); // the list is in the browser: no request
+      bar.update();
+    }
+    const dismissible = (r) => !r._filmLi && r.status === 'sent_to_whisparr' && !r.download_job_id;
+    let shownItems = [];
+    let shownFiltered = false;
+    const fields = {
+      text: (r) => `${r.title || ''} ${r.studio_name || ''}`,
+      description: (r) => r.details,
+      type: (r) => (r.entity_types && r.entity_types.length === 1 ? r.entity_types[0] : r.entity_type),
+      vr: (r) => r.is_vr,
+      upgrade: (r) => Boolean(r.upgrade_of),
+      provider: (r) => r.provider,
+      date: (r) => r.scene_date || r.scene_created,
+      kind: (r) => (r._filmLi ? 'movies' : 'scenes'),
+    };
+    // "Dismiss N on this page" / "Dismiss all N matching" where the rows have a Dismiss (Stuck, Source file missing): the same pair as the Releases page.
+    const bar = window.SRW.buildBulkDismissBar({
+      getPage: () => shownItems.filter(dismissible), getTotal: () => (view ? window.SRW.filterLocally(sorted, view.state, fields).filter(dismissible).length : 0),
+      filterActive: () => shownFiltered,
+      loadAll: async () => (view ? window.SRW.filterLocally(sorted, view.state, fields).filter(dismissible) : []),
+      onDone: async (scenes, all) => {
+        if (all && !scenes.length) { if (onChanged) await onChanged(); return; } // an Undo: the page is read again
+        removeRows(scenes);
+      },
+      noun: 'scenes',
+      redraw: () => view.reload(), // the list is in the browser: no request
+    });
+    const hasDismiss = Boolean(showSearchActions);
     // Filter bar + paging (2026-09-26, user principle), same component as
     // everywhere else; the bar shows once a section has >10 entries.
-    const view = window.SRW.buildFilteredPagedList({
+    view = window.SRW.buildFilteredPagedList({
       filters: ['search', 'kind', 'description', 'type', 'vr', 'dates', 'providers', 'upgrades'],
       perPage: 40,
       showFilterBarFrom: 10,
-      fetchPage: window.SRW.localPageFetcher(() => sorted, {
-        text: (r) => `${r.title || ''} ${r.studio_name || ''}`,
-        description: (r) => r.details,
-        type: (r) => (r.entity_types && r.entity_types.length === 1 ? r.entity_types[0] : r.entity_type),
-        vr: (r) => r.is_vr,
-        upgrade: (r) => Boolean(r.upgrade_of),
-        provider: (r) => r.provider,
-        date: (r) => r.scene_date || r.scene_created,
-        kind: (r) => (r._filmLi ? 'movies' : 'scenes'),
-      }),
+      fetchPage: window.SRW.localPageFetcher(() => sorted, fields),
+      onTotal: (total, active) => { shownFiltered = active; },
       renderItems: (items) => {
+        shownItems = items;
         const ul = el('ul', { className: 'srw-release-list' }, items.map(renderRow));
         if (openScene) resolveOpenScenes(ul);
+        bar.update();
         return ul;
       },
     });
+    if (hasDismiss && sorted.some(dismissible)) group.appendChild(bar.node);
     group.appendChild(view.node);
     await view.reset(); // rows (and their progress bars) exist before the poll below starts
     return group;
