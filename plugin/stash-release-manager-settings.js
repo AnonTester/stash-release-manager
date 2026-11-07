@@ -1521,7 +1521,7 @@
       ]);
       typeSelect.value = existing ? existing.type : 'sabnzbd';
       const priorityInput = el('input', {
-        type: 'number', min: '1', step: '1', placeholder: 'Priority',
+        type: 'number', min: '1', step: '1', placeholder: 'Priority', style: 'width: 5rem',
         value: existing ? existing.priority : '25',
       });
       const urlInput = el('input', { type: 'text', placeholder: 'URL (e.g. http://192.168.1.20:8080)', value: existing ? existing.url : '' });

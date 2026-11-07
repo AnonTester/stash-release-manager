@@ -6,6 +6,9 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.253.3
+- The priority field of a download client is only as wide as its number (it kept the width of a field with a placeholder).
+
 ## 0.253.2
 - **Connection forms are laid out as a grid.** In Settings > Connections and in the setup guide every label sits in one column and its field in the next; a number field (priority, intervals, delays) is only as wide as a number instead of as long as the URL box; check boxes keep their inline look; on a narrow screen label and field stack.
 - **"Torrents: after seeding" and "SABnzbd history lookup" only show when such a client exists.** The torrent option needs a qBittorrent client, the history lookup a SABnzbd client; they appear and disappear as clients are added or removed.
