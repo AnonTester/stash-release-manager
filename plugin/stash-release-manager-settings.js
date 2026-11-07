@@ -768,18 +768,33 @@
 
   // Connections > Overview (v0.253.0): every connection on one screen with what it points to and whether it answers, an Edit button that opens its
   // tab and buttons to add another one. One /connections/check for the services, one check per download client (with its completed folder).
+  // The status shown on the overview is kept (localStorage) for 10 minutes and dropped when a setting, a download client or a stash-box is changed
+  // (core.js stamps `srw:conn-changed` after such a save), so opening the tab does not ask every service again. "Check again" asks anyway.
+  const CONN_CACHE_KEY = 'srw:conn-status';
+  const CONN_CHANGED_KEY = 'srw:conn-changed';
+  const CONN_TTL_MS = 10 * 60 * 1000;
+  function readConnCache() {
+    try {
+      const c = JSON.parse(window.localStorage.getItem(CONN_CACHE_KEY) || 'null');
+      const changed = Number(window.localStorage.getItem(CONN_CHANGED_KEY) || 0);
+      return c && Date.now() - c.at < CONN_TTL_MS && c.at >= changed ? c : null;
+    } catch (e) { return null; }
+  }
+  function writeConnCache(c) { try { window.localStorage.setItem(CONN_CACHE_KEY, JSON.stringify(c)); } catch (e) { /* no storage */ } }
+
   function buildConnectionsOverview(settings, effective, goTo) {
     const { el } = window.SRW;
     const wrap = el('div');
     const list = el('div');
-    const again = el('button', { type: 'button', className: 'srw-btn', textContent: 'Check again', onClick: () => paint() });
+    const age = el('span', { className: 'srw-hint' });
+    const again = el('button', { type: 'button', className: 'srw-btn', textContent: 'Check again', onClick: () => paint(true) });
     wrap.append(
       el('p', { className: 'srw-hint', textContent: 'What this program is connected to, and whether it answers. Edit opens the connection’s own tab; the keys are never shown here.' }),
       el('div', { className: 'srw-toolbar' }, [
         el('button', { type: 'button', className: 'srw-btn srw-btn-primary', textContent: 'Add a stash-box', onClick: () => goTo('stashboxes', true) }),
         el('button', { type: 'button', className: 'srw-btn srw-btn-primary', textContent: 'Add a download client', onClick: () => goTo('clients', true) }),
         el('button', { type: 'button', className: 'srw-btn srw-btn-primary', textContent: 'Add Prowlarr / Whisparr', onClick: () => goTo('search', true) }),
-        again,
+        again, age,
       ]),
       list,
     );
@@ -790,65 +805,65 @@
       el('span', { className: 'srw-conn-status', 'data-state': state, textContent: text }),
       edit,
     ]);
-    const editBtn = (label, key) => el('button', { type: 'button', className: 'srw-btn srw-btn-sm', textContent: label, onClick: () => goTo(key, false) });
+    const editBtn = (label, tab, entry) => el('button', { type: 'button', className: 'srw-btn srw-btn-sm', textContent: label, onClick: () => goTo(tab, false, entry) });
     const group = (title, rows) => el('div', { className: 'srw-conn-group' }, [el('h4', { textContent: title }), ...rows]);
     const answer = (c) => (!c ? ['none', 'not checked'] : c.ok ? ['ok', 'answers'] : ['error', c.error || 'does not answer']);
 
+    function render(data) {
+      const c = (data.checks && !data.checks.error) ? data.checks : {};
+      const stashRow = (key, name, url, tab) => {
+        if (!url) return row(name, '', 'none', 'not set up', editBtn('Set up', tab, key));
+        const [state, text] = answer(c[key]);
+        return row(name, url, state, text, editBtn('Edit', tab, key));
+      };
+      const groups = [];
+      const [stashState, stashText] = answer(c.stash);
+      groups.push(group('Stash', [row('Stash', effective.stash_url || '', effective.stash_url ? stashState : 'none', effective.stash_url ? stashText : 'not set up',
+        el('a', { className: 'srw-btn srw-btn-sm', href: '/plugins/stash-release-manager/setup', textContent: 'Edit', title: 'The setup guide’s Stash step' }))]));
+      groups.push(group('Stash-boxes', [
+        stashRow('stashdb', 'StashDB', effective.stashdb_url, 'stashboxes'),
+        stashRow('theporndb', 'ThePornDB', effective.theporndb_url, 'stashboxes'),
+        ...(Array.isArray(data.providers) ? data.providers : []).map((p) => stashRow(p.key, p.name, p.url, 'stashboxes')),
+      ]));
+      const clientRows = (Array.isArray(data.clients) ? data.clients : []).map((cl) => {
+        const res = (data.clientChecks || {})[cl.id] || { error: 'not checked' };
+        const folder = res.folder;
+        const state = res.error ? 'error' : (folder && folder.ok === false ? 'warn' : 'ok');
+        const text = res.error ? res.error : `answers${folder && folder.message ? ` — ${folder.ok === false ? '⚠ ' : ''}${folder.message}` : ''}`;
+        return row(cl.name, `${cl.type}${cl.enabled ? '' : ', disabled'}`, state, text, editBtn('Edit', 'clients', `client-${cl.id}`));
+      });
+      groups.push(group('Download clients', clientRows.length ? clientRows
+        : [row('No download client', '', 'warn', 'nothing can be downloaded yet', editBtn('Set up', 'clients'))]));
+      groups.push(group('Search and Whisparr', [
+        stashRow('prowlarr', 'Prowlarr', effective.prowlarr_url, 'search'),
+        stashRow('whisparr', 'Whisparr (optional)', effective.whisparr_url, 'search'),
+      ]));
+      list.replaceChildren(...groups);
+      const mins = Math.floor((Date.now() - data.at) / 60000);
+      age.textContent = ` checked ${mins < 1 ? 'just now' : `${mins} min ago`}`;
+    }
+
     let seq = 0;
-    async function paint() {
+    async function paint(force) {
       const mine = ++seq;
+      const cached = force ? null : readConnCache();
+      if (cached) { render(cached); return; }
       list.replaceChildren(el('p', { className: 'srw-hint', textContent: 'checking…' }));
       const [checks, providers, clients] = await Promise.all([
         window.SRW.runOp('connections_check').catch(() => ({})),
         window.SRW.runOp('metadata_providers_list').catch(() => []),
         window.SRW.runOp('download_clients_list').catch(() => []),
       ]);
+      const clientChecks = {};
+      await Promise.all((Array.isArray(clients) ? clients : []).map((cl) => window.SRW.runOp('download_clients_check', { id: cl.id })
+        .then((res) => { clientChecks[cl.id] = res; }).catch((err) => { clientChecks[cl.id] = { error: err.message }; })));
       if (mine !== seq) return;
-      const c = (checks && !checks.error) ? checks : {};
-      const groups = [];
-
-      const stashRow = (key, name, url, tab) => {
-        if (!url) return row(name, '', 'none', 'not set up', editBtn('Set up', tab));
-        const [state, text] = answer(c[key]);
-        return row(name, url, state, text, editBtn('Edit', tab));
-      };
-      groups.push(group('Stash', [
-        (() => { const [state, text] = answer(c.stash); return row('Stash', effective.stash_url || '', effective.stash_url ? state : 'none', effective.stash_url ? text : 'not set up',
-          el('a', { className: 'srw-btn srw-btn-sm', href: '/plugins/stash-release-manager/setup', textContent: 'Edit', title: 'The setup guide’s Stash step' })); })(),
-      ]));
-      groups.push(group('Stash-boxes', [
-        stashRow('stashdb', 'StashDB', effective.stashdb_url, 'stashboxes'),
-        stashRow('theporndb', 'ThePornDB', effective.theporndb_url, 'stashboxes'),
-        ...(Array.isArray(providers) ? providers : []).map((p) => stashRow(p.key, p.name, p.url, 'stashboxes')),
-      ]));
-
-      const clientRows = (Array.isArray(clients) ? clients : []).map((cl) => {
-        const r = row(cl.name, `${cl.type}${cl.enabled ? '' : ', disabled'}`, 'none', 'checking…', editBtn('Edit', 'clients'));
-        window.SRW.runOp('download_clients_check', { id: cl.id }).then((res) => {
-          const status = r.querySelector('.srw-conn-status');
-          const folder = res && res.folder;
-          const bad = res && res.error;
-          const state = bad ? 'error' : (folder && folder.ok === false ? 'warn' : 'ok');
-          r.querySelector('.srw-conn-dot').dataset.state = status.dataset.state = state;
-          status.textContent = bad ? res.error : `answers${folder && folder.message ? ` — ${folder.ok === false ? '⚠ ' : ''}${folder.message}` : ''}`;
-        }).catch((err) => {
-          const status = r.querySelector('.srw-conn-status');
-          r.querySelector('.srw-conn-dot').dataset.state = status.dataset.state = 'error';
-          status.textContent = err.message;
-        });
-        return r;
-      });
-      groups.push(group('Download clients', clientRows.length ? clientRows
-        : [row('No download client', '', 'warn', 'nothing can be downloaded yet', editBtn('Set up', 'clients'))]));
-
-      groups.push(group('Search and Whisparr', [
-        stashRow('prowlarr', 'Prowlarr', effective.prowlarr_url, 'search'),
-        stashRow('whisparr', 'Whisparr (optional)', effective.whisparr_url, 'search'),
-      ]));
-      list.replaceChildren(...groups);
+      const data = { at: Date.now(), checks, providers, clients, clientChecks };
+      writeConnCache(data);
+      render(data);
     }
-    paint();
-    return { node: wrap, refresh: paint };
+    paint(false);
+    return { node: wrap, refresh: () => paint(false) };
   }
 
   // The Connections area (v0.253.0): sub-tabs Overview, Stash-boxes, Download clients, Search & Whisparr instead of one long stack.
@@ -870,13 +885,21 @@
     try { window.localStorage.removeItem(tabKey); } catch (e) { /* no storage */ } // always starts on the overview (or the tab the address names)
     const tabRow = window.SRW.buildPaneTabs(order.map(([key, label]) => ({ key, label, pane: panes[key], onShow: key === 'overview' ? () => overview && overview.refresh() : null })),
       tabKey, order.some(([k]) => k === wantedSub) ? wantedSub : 'overview');
-    function goTo(key, openAdd) {
+    // Switches to the tab; `openAdd` opens its add form, `entry` scrolls to that connection's own box and flashes it.
+    function goTo(key, openAdd, entry) {
       const i = order.findIndex(([k]) => k === key);
       const btn = tabRow.querySelectorAll('button')[i];
       if (btn) btn.click();
       if (openAdd) {
         const trigger = panes[key].querySelector('.srw-add-trigger') || panes[key].querySelector('select');
         if (trigger) { trigger.scrollIntoView({ block: 'center' }); if (trigger.tagName === 'BUTTON') trigger.click(); else trigger.focus(); }
+      } else if (entry) {
+        const target = [...panes[key].querySelectorAll('[data-conn-key]')].find((n) => n.dataset.connKey === entry);
+        if (target) {
+          target.scrollIntoView({ block: 'start', behavior: 'smooth' });
+          target.classList.add('srw-conn-flash');
+          setTimeout(() => target.classList.remove('srw-conn-flash'), 2500);
+        }
       }
     }
     overview = buildConnectionsOverview(settings, effective, goTo);
@@ -906,6 +929,7 @@
 
     async function buildEntry(type) {
       const box = await type.build(settings, effective, secretPlaceholder, onFieldSaved);
+      box.dataset.connKey = type.key; // the overview's Edit scrolls to it
       const removeStatus = el('span', { className: 'srw-key-status' });
       box.appendChild(el('button', {
         className: 'srw-btn srw-btn-danger', textContent: 'Remove connection',
@@ -1282,11 +1306,9 @@
     }
 
     async function buildEntry(item) {
-      return item.kind === 'builtin' ? buildBuiltinEntry(item.type) : buildGenericProviderEntry(item.provider, refresh);
-    }
-
-    async function buildAdder() {
-      return collapsedAdder('Add a stash-box…', buildAdderForm);
+      const node = item.kind === 'builtin' ? await buildBuiltinEntry(item.type) : buildGenericProviderEntry(item.provider, refresh);
+      node.dataset.connKey = item.kind === 'builtin' ? item.type.key : item.provider.key; // the overview's Edit scrolls to it
+      return node;
     }
 
     async function buildAdderForm() {
@@ -1313,7 +1335,14 @@
       return wrap;
     }
 
-    const { refresh } = buildManagedList(section, {
+    // The add button and the Stash import / "Update keys" row sit at the top of the tab (v0.253.1), the list of stash-boxes below.
+    const adderSlot = el('div');
+    const importSlot = el('div');
+    const listSection = el('div');
+    section.append(adderSlot, importSlot, listSection);
+    const renderAdder = () => adderSlot.replaceChildren(collapsedAdder('Add a stash-box…', buildAdderForm));
+    async function refresh() { await refreshList(); renderAdder(); }
+    const { refresh: refreshList } = buildManagedList(listSection, {
       emptyMessage: 'No metadata providers configured yet.',
       fetchItems: async () => {
         const builtins = BUILTIN_METADATA_PROVIDER_TYPES
@@ -1327,14 +1356,13 @@
         return [...builtins, ...generics];
       },
       buildEntry: (item) => buildEntry(item),
-      buildAdder: () => buildAdder(),
     });
     await refresh();
-    // Stash-boxes configured in Stash: offered below the list (v0.186.0).
+    // Stash-boxes configured in Stash: offered at the top (v0.186.0).
     let stashReport = null;
     const syncFromStash = async (args) => { stashReport = await window.SRW.runOp('stash_sync', args || {}); return stashReport; };
     await syncFromStash();
-    section.appendChild(buildStashBoxImport({
+    importSlot.appendChild(buildStashBoxImport({
       getReport: () => stashReport,
       compact: true,
       sync: syncFromStash,
@@ -1378,15 +1406,22 @@
           + 'enabled client matching a release\'s protocol (usenet/torrent) wins.',
       }),
     ]);
+    // Top of the tab (v0.253.1): the add button, the torrent and SABnzbd options; the clients themselves below.
+    const adderSlot = el('div');
+    const topSlot = el('div');
+    const listSection = el('div');
+    section.append(adderSlot, topSlot, listSection);
+    const renderAdder = () => adderSlot.replaceChildren(collapsedAdder('Add a download client…', () => buildClientForm(null)));
+    async function refresh() { await refreshList(); renderAdder(); }
 
-    const { refresh } = buildManagedList(section, {
+    listSection.appendChild(el('p', { className: 'srw-subsection-heading', textContent: 'Your download clients' }));
+    const { refresh: refreshList } = buildManagedList(listSection, {
       emptyMessage: 'No download clients configured yet.',
       fetchItems: async () => {
         const result = await window.SRW.runOp('download_clients_list');
         return Array.isArray(result) ? result : [];
       },
       buildEntry: (client) => buildClientRow(client),
-      buildAdder: () => collapsedAdder('Add a download client…', () => buildClientForm(null)),
     });
 
     function buildClientRow(client) {
@@ -1452,7 +1487,7 @@
       // The client's settings are open under its line (v0.253.0), not behind an "Edit" button; its check (with the completed-folder line) runs
       // when the card appears, so a folder the sidecar cannot see is visible without a click.
       queueMicrotask(() => { const b = row.querySelector('button'); if (b && b.textContent === 'Check') b.click(); });
-      return el('div', { className: 'srw-dc-card' }, [row, buildClientForm(client)]);
+      return el('div', { className: 'srw-dc-card', 'data-conn-key': `client-${client.id}` }, [row, buildClientForm(client)]);
     }
 
     // Client form (v0.133.0): the type decides the protocol; qBittorrent carries the *arr-style client settings with their defaults
@@ -1628,10 +1663,10 @@
       const r = await window.SRW.runOp('settings_set', { key: 'remove_completed_downloads', value: removeBox.checked ? 'true' : 'false' });
       removeStatus.textContent = r && r.error ? ` error: ${r.error}` : ' saved';
     });
-    section.appendChild(el('p', { className: 'srw-subsection-heading', textContent: 'Torrents: after seeding' }));
-    section.appendChild(el('label', {}, [removeBox, ' Remove a finished torrent (with its files) from the client once its seeding goal is reached']));
-    section.appendChild(removeStatus);
-    section.appendChild(el('p', { className: 'srw-hint', textContent: 'Off by default, like the *arr applications. Only torrents this program grabbed and imported are touched, and only when qBittorrent itself reports the seed ratio / seed time limit as reached (torrent paused or stopped). The library keeps its own copy (hard link or copy).' }));
+    topSlot.appendChild(el('p', { className: 'srw-subsection-heading', textContent: 'Torrents: after seeding' }));
+    topSlot.appendChild(el('label', {}, [removeBox, ' Remove a finished torrent (with its files) from the client once its seeding goal is reached']));
+    topSlot.appendChild(removeStatus);
+    topSlot.appendChild(el('p', { className: 'srw-hint', textContent: 'Off by default, like the *arr applications. Only torrents this program grabbed and imported are touched, and only when qBittorrent itself reports the seed ratio / seed time limit as reached (torrent paused or stopped). The library keeps its own copy (hard link or copy).' }));
 
     // SABnzbd history lookup -- finds where a completed job actually
     // landed on disk (its "storage" path), for tracking down a
@@ -1640,11 +1675,11 @@
     // (against whichever usenet client the backend resolves, see
     // main.py's get_sabnzbd_client()) since it's still generically
     // useful.
-    section.appendChild(el('p', { className: 'srw-subsection-heading', textContent: 'SABnzbd history lookup' }));
+    topSlot.appendChild(el('p', { className: 'srw-subsection-heading', textContent: 'SABnzbd history lookup' }));
     const searchInput = el('input', { type: 'text', placeholder: 'Job name (optional, filters server-side)' });
     const resultsWrap = el('div');
-    section.appendChild(el('label', {}, ['Search: ', searchInput]));
-    section.appendChild(el('button', {
+    topSlot.appendChild(el('label', {}, ['Search: ', searchInput]));
+    topSlot.appendChild(el('button', {
       className: 'srw-btn srw-btn-primary', textContent: 'Look up',
       onClick: async (e) => {
         e.target.disabled = true;
@@ -1676,7 +1711,7 @@
         }
       },
     }));
-    section.appendChild(resultsWrap);
+    topSlot.appendChild(resultsWrap);
 
     return section;
   }

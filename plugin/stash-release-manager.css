@@ -2409,3 +2409,6 @@ a.srw-btn { text-decoration: none; display: inline-block; text-align: center; }
 .srw-conn-dot[data-state="error"] { background: #e05c5c; }
 .srw-dc-card { margin: 0.5rem 0 1rem; padding: 0.5rem 0.75rem; border: 1px solid rgba(128, 128, 128, 0.25); border-radius: 4px; }
 .srw-adder { margin-top: 0.75rem; }
+[data-conn-key] { scroll-margin-top: 5rem; }
+.srw-conn-flash { animation: srw-conn-flash 2.5s ease-out; }
+@keyframes srw-conn-flash { from { box-shadow: 0 0 0 3px var(--primary, #137cbd); } to { box-shadow: 0 0 0 3px transparent; } }

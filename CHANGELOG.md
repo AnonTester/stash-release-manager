@@ -6,6 +6,11 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.253.1
+- **Connections > Overview keeps its status for 10 minutes.** The services are asked once; opening the tab again shows the kept result ("checked 3 min ago"). It is dropped when a setting, a download client or a stash-box is saved, added or removed (or keys are taken over from Stash), and "Check again" asks anyway. The kept result lives in the browser, so a reload does not ask again either.
+- **Edit on the overview scrolls to the connection.** It opens the tab, scrolls to that stash-box, download client, Prowlarr or Whisparr box and flashes it for a moment, instead of only switching the tab.
+- **The add buttons and the options moved to the top of the tabs.** Stash-boxes: "Add a stash-box…" and "Update keys from Stash" (the import block, when there is something to import) first, the stash-boxes below. Download clients: "Add a download client…", "Torrents: after seeding" and the SABnzbd history lookup first, then "Your download clients".
+
 ## 0.253.0
 - **Settings > Connections is organised in tabs.** The long stack of boxes is split into **Overview**, **Stash-boxes** (StashDB, ThePornDB, the stash-boxes you added), **Download clients** and **Search & Whisparr** (Prowlarr, Whisparr). The Overview opens first and lists every connection with its address and whether it answers (green / amber / red; a download client also shows its completed-folder check), an **Edit** button that opens the connection's tab and buttons to add a stash-box, a download client or Prowlarr / Whisparr (they switch to the tab and open the add form). The keys are never shown there.
 - **Download clients: each client's settings are open under its line** (the folder pair, the check result), not behind an "Edit" button; the form for a new client is folded away behind "Add a download client…", and the new-stash-box form behind "Add a stash-box…". A client is checked when the tab opens.

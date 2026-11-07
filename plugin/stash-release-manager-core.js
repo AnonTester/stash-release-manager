@@ -11,7 +11,7 @@
   // rule and the bug it caused when this drifted). Change this if you
   // install under a different folder name.
   // Must equal `version:` in stash-release-manager.yml (scripts/test_plugin_version.py checks it).
-  const PLUGIN_VERSION = '0.253.0';
+  const PLUGIN_VERSION = '0.253.1';
   const PLUGIN_ID = 'stash-release-manager';
   const PLUGIN_NAME = 'StashReleaseManager';
 
@@ -98,6 +98,11 @@
       }
     } else {
       value = output?.output ?? output ?? {};
+    }
+    // A saved setting / download client / stash-box makes the overview's kept connection status stale (Settings > Connections > Overview).
+    if (!(value && value.error) && (/^(settings_set|(download_clients|metadata_providers)_(create|update|delete))$/.test(mode)
+        || (mode === 'stash_sync' && (args.add || args.overwrite)))) {
+      try { window.localStorage.setItem('srw:conn-changed', String(Date.now())); } catch (e) { /* no storage */ }
     }
     if (RENAMER_APPLY_MODES.has(mode) && value && value.error && Array.isArray(value.renamers)) {
       // held back by another enabled renamer: from now on the safety panels show the warning (with its "continue anyway" box)
