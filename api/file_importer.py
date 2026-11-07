@@ -1227,7 +1227,7 @@ def retry_pending_verifications(db, stash_client, stashdb_client, get_provider_c
 
     Returns {"checked", "imported": [...], "import_failed": [...]},
     same shape run_file_import() merges its own result with."""
-    imported, failed = [], []
+    imported, failed, unscanned = [], [], []
     pending = release_repo.list_pending_sidecar_verifications(db)
     for release in pending:
         stash_id = release["scene_stashdb_id"]
@@ -1247,10 +1247,39 @@ def retry_pending_verifications(db, stash_client, stashdb_client, get_provider_c
             logger.exception("retry_pending_verifications: verification failed for scene %s", stash_id)
             continue
         if result is None:
-            continue  # still not ready -- pending_import_path stays set, retried again next run
+            # Still not ready -- pending_import_path stays set, retried again next run. If Stash does not know the file at all, its scan
+            # job was lost (Stash restarted between the move and the scan, 2026-11-07): collect the path for ONE new scan below.
+            try:
+                if stash_client.find_scene_by_path(path) is None:
+                    unscanned.append(path)
+            except Exception:
+                logger.exception("retry_pending_verifications: Stash lookup failed for %s", path)
+            continue
         (imported if result["status"] == "imported" else failed).append(result)
 
+    _rescan_unknown(stash_client, unscanned)
     return {"checked": len(pending), "imported": imported, "import_failed": failed}
+
+
+_rescan_last = {}  # path -> time of the last re-scan request (memory; a restart allows one extra scan, harmless)
+_RESCAN_MIN_SECONDS = 20 * 60  # a scan of a busy Stash queue can take a while: do not stack scan jobs on top of each other
+
+
+def _rescan_unknown(stash_client, paths):
+    """One Stash scan job for the moved files Stash has not picked up (lost scan job), at most once per path and 20 minutes."""
+    now = time.time()
+    due = [p for p in paths if now - _rescan_last.get(p, 0) >= _RESCAN_MIN_SECONDS]
+    if not due:
+        return None
+    try:
+        job = stash_client.scan_paths(due)
+    except Exception:
+        logger.exception("retry_pending_verifications: re-scan of %d unknown file(s) failed", len(due))
+        return None
+    for p in due:
+        _rescan_last[p] = now
+    logger.info("retry_pending_verifications: Stash did not know %d moved file(s), scan job %s started", len(due), job)
+    return job
 
 
 # Last re-check per scene id (in-memory, resets on restart -- then one

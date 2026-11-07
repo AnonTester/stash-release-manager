@@ -11,7 +11,7 @@
   // rule and the bug it caused when this drifted). Change this if you
   // install under a different folder name.
   // Must equal `version:` in stash-release-manager.yml (scripts/test_plugin_version.py checks it).
-  const PLUGIN_VERSION = '0.250.5';
+  const PLUGIN_VERSION = '0.250.7';
   const PLUGIN_ID = 'stash-release-manager';
   const PLUGIN_NAME = 'StashReleaseManager';
 
@@ -1713,6 +1713,7 @@
     too_large: 'larger than the maximum file size',
     vr_too_small: 'too small (low-quality re-encode)',
     title_mismatch: 'title/date/performers don\'t match',
+    too_old: 'posted before the scene was released (another scene)',
     other_scene: 'already downloaded for another scene',
     blocklisted: 'previously rejected / blocklisted',
   };

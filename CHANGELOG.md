@@ -6,6 +6,10 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.250.7 (with 0.250.6)
+- **A release posted before the scene existed is no longer taken for it.** Some studios give every new episode the same title, and the release names carry no date, so old posts of other episodes matched a brand-new scene and several wrong downloads came in. Every automatic search now sets aside a result whose indexer age is more than 14 days older than the scene's release date; the search log shows it as "posted before the scene was released (another scene)". No full date or no age = nothing changes. Manual search is unaffected.
+- **Fix: a moved file that Stash never scanned stayed "verifying" for ever.** If Stash was restarted right after a file was moved into the library, the scan job was lost. The 15-minute retry now asks Stash about every still-pending file and starts one new scan for those it does not know (at most once per file and 20 minutes).
+
 ## 0.250.5 (with 0.250.4)
 - **Bulk Dismiss: choose single rows.** Every list with "Dismiss N on this page" / "Dismiss all N matching" now has a tick box in front of each row and a "select this page" box in its bar. Filter, tick what you want (or "select this page" / "Select all N matching"), take single rows out again, then "Dismiss n selected" takes exactly those. The selection stays while you turn pages, "Clear selection" empties it, and one Undo puts everything back. Same on the Studio / Performer page (New releases, Missing from Catalog), On Wishlist, Added late, Activity, the new movies and the Maintenance findings lists. 0.250.5 fixes the row layout around the new tick box.
 
