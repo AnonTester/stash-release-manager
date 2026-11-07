@@ -2434,3 +2434,8 @@ a.srw-btn { text-decoration: none; display: inline-block; text-align: center; }
   .srw-form-grid label:has(> input[type="number"]) { grid-template-columns: minmax(0, 1fr); }
   .srw-form-grid label > input[type="number"], .srw-form-grid label > input[type="number"][placeholder] { width: 100%; max-width: 12rem; }
 }
+
+/* Buttons side by side or stacked in the connection forms keep a gap (v0.253.4): Save / Check connection / Test connection / Reset, Remove below */
+.srw-form-grid .srw-btn { margin: 0.25rem 0.5rem 0.25rem 0; }
+.srw-form-grid .srw-btn-danger { margin-top: 0.75rem; }
+.srw-form-grid .srw-inline-confirm-buttons .srw-btn { margin: 0; }

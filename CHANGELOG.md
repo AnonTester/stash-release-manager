@@ -6,6 +6,10 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.253.4
+- The two number fields of an added stash-box (query delay, favorites sync interval) are on separate lines.
+- The buttons in the connection forms have a gap: Save / Check connection / Test connection / Reset no longer touch each other, and "Remove connection" sits clear of the buttons above it.
+
 ## 0.253.3
 - The priority field of a download client is only as wide as its number (it kept the width of a field with a placeholder).
 

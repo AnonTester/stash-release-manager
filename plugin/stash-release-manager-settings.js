@@ -355,7 +355,6 @@
       type: 'number', min: '0', step: '0.1', value: settings.stashdb_query_delay || '0.3',
     });
     section.appendChild(el('label', {}, ['Query delay (seconds between requests): ', delayInput]));
-    section.appendChild(el('br'));
     section.appendChild(el('button', {
       className: 'srw-btn', textContent: 'Save',
       onClick: async () => {
@@ -1166,6 +1165,7 @@
       placeholder: 'default (as StashDB)',
     });
     section.appendChild(el('label', {}, ['Query delay (seconds between requests): ', delayInput]));
+    section.appendChild(el('br'));
     const favInput = el('input', {
       type: 'number', min: '1', step: '1', value: provider.favorites_interval == null ? '' : String(provider.favorites_interval),
       placeholder: 'default (as StashDB)',
