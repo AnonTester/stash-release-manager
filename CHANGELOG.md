@@ -6,6 +6,9 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.252.1
+- **"Stash-boxes in your Stash" only shows when there is something to import.** The block (and its buttons "Update keys from Stash" / "Read Stash again") was always there, also when Stash has no other stash-box or every one is set up here already ("there are no further ones to add"). It is hidden then; it stays for a stash-box that can be added, for one that has no API key in Stash (it needs you), and when Stash's configuration could not be read (so you see why). The setup guide's "Other stash-boxes" step says in one line that there is nothing to add.
+
 ## 0.252.0
 - **The completed-downloads folder of a download client is required, and it is checked.** A finished torrent that the sidecar cannot find (the client calls its folder `/downloads/complete`, the sidecar has it as `/downloads`) used to wait for import for ever; 0.250.9 made the error visible, this makes it findable at set-up. The labels now say what the folder is ("Completed downloads folder, as the client calls it" / "as this program sees it") and that it is required, in the download client form, in Settings > File Import and in the setup guide's Downloads step (which showed no folder fields before; they are shown now for every client). "Check" and "Test connection" ask the client (qBittorrent: the category's or the default save path; SABnzbd: its complete folder) and tell whether the folder can be seen from here, or why not, with both paths. Nothing is blocked: a pair left empty still works where the client and the sidecar use the same path.
 

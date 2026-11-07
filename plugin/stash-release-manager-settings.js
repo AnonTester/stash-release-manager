@@ -848,7 +848,7 @@
   // taken over automatically while the sidecar has none; every other stash-box is offered here and added as a provider on request (each
   // provider is queried on every scan). `getReport()` is the last `stash_sync` report (no keys in it), `sync(args)` runs it again
   // ({add: [endpoint, ...]} adds, {overwrite: true} also replaces keys already set), `onChange()` lets the caller refresh its own view.
-  function buildStashBoxImport({ getReport, sync, onChange }) {
+  function buildStashBoxImport({ getReport, sync, onChange, emptyText }) {
     const { el, confirmInline } = window.SRW;
     const wrap = el('div', { className: 'srw-settings-section' });
     const status = el('span', { className: 'srw-key-status' });
@@ -887,13 +887,15 @@
         return;
       }
       const boxes = report.boxes || [];
-      if (!boxes.length) {
-        wrap.replaceChildren(head, el('p', {
-          className: 'srw-hint', textContent: 'No stash-box endpoints are configured in Stash (Stash > Settings > Metadata Providers).',
-        }));
+      const addable = boxes.filter((b) => b.status === 'available');
+      // Nothing to import (no stash-box in Stash, or every one is set up here already): the block stays away -- only the setup guide says so
+      // in a line (`emptyText`). A box without a key in Stash still shows: it needs the user.
+      if (!addable.length && !boxes.some((b) => b.status === 'skipped')) {
+        wrap.hidden = !emptyText;
+        wrap.replaceChildren(...(emptyText ? [el('p', { className: 'srw-hint', textContent: emptyText })] : []));
         return;
       }
-      const addable = boxes.filter((b) => b.status === 'available');
+      wrap.hidden = false;
       const rows = boxes.map((b) => {
         const builtin = BUILTIN_LABEL[b.kind];
         const label = !builtin ? b.name
@@ -4136,7 +4138,8 @@
         } },
       { key: 'stashboxes', title: 'Other stash-boxes', optional: true,
         intro: 'Optional: further stash-boxes you set up in Stash (JAVStash, FansDB, ...) can be watched for new releases as well.',
-        build: async () => buildStashBoxImport({ getReport: () => stashReport, sync: resync, onChange: () => refreshStatus() }) },
+        build: async () => buildStashBoxImport({ getReport: () => stashReport, sync: resync, onChange: () => refreshStatus(),
+          emptyText: 'Your Stash has no further stash-boxes to add (every stash-box set up in Stash is already here).' }) },
       { key: 'search', title: 'Search', intro: 'Where releases are looked for: Prowlarr (one connection, all indexers) or your own Newznab indexers. One of the two is enough.',
         build: async () => {
           const box = el('div');
