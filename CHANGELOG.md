@@ -6,6 +6,11 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.253.0
+- **Settings > Connections is organised in tabs.** The long stack of boxes is split into **Overview**, **Stash-boxes** (StashDB, ThePornDB, the stash-boxes you added), **Download clients** and **Search & Whisparr** (Prowlarr, Whisparr). The Overview opens first and lists every connection with its address and whether it answers (green / amber / red; a download client also shows its completed-folder check), an **Edit** button that opens the connection's tab and buttons to add a stash-box, a download client or Prowlarr / Whisparr (they switch to the tab and open the add form). The keys are never shown there.
+- **Download clients: each client's settings are open under its line** (the folder pair, the check result), not behind an "Edit" button; the form for a new client is folded away behind "Add a download client…", and the new-stash-box form behind "Add a stash-box…". A client is checked when the tab opens.
+- A small "Update keys from Stash" button stays on the Stash-boxes tab while the big import block is hidden (0.252.1).
+
 ## 0.252.1
 - **"Stash-boxes in your Stash" only shows when there is something to import.** The block (and its buttons "Update keys from Stash" / "Read Stash again") was always there, also when Stash has no other stash-box or every one is set up here already ("there are no further ones to add"). It is hidden then; it stays for a stash-box that can be added, for one that has no API key in Stash (it needs you), and when Stash's configuration could not be read (so you see why). The setup guide's "Other stash-boxes" step says in one line that there is nothing to add.
 

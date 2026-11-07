@@ -2393,3 +2393,19 @@ a.srw-btn { text-decoration: none; display: inline-block; text-align: center; }
 
 /* A check result that needs attention (e.g. a download client's completed folder the sidecar cannot see) */
 .srw-key-status[data-warn="1"] { color: #d69e2e; }
+
+/* Settings > Connections (v0.253.0): sub-tabs, the overview rows, a download client's card */
+.srw-conn-group { margin: 0.75rem 0 1.25rem; }
+.srw-conn-group > h4 { margin: 0 0 0.35rem; }
+.srw-conn-row { display: flex; align-items: center; flex-wrap: wrap; gap: 0.5rem 0.75rem; padding: 0.4rem 0; border-bottom: 1px solid rgba(128, 128, 128, 0.15); }
+.srw-conn-name { flex: 1 1 14rem; min-width: 0; overflow-wrap: anywhere; }
+.srw-conn-status { flex: 2 1 14rem; min-width: 0; overflow-wrap: anywhere; font-size: 0.92em; }
+.srw-conn-status[data-state="error"] { color: #e05c5c; }
+.srw-conn-status[data-state="warn"] { color: #d69e2e; }
+.srw-conn-status[data-state="none"] { opacity: 0.7; }
+.srw-conn-dot { flex: 0 0 auto; width: 0.7rem; height: 0.7rem; border-radius: 50%; background: #8a8f98; }
+.srw-conn-dot[data-state="ok"] { background: #2f8f4e; }
+.srw-conn-dot[data-state="warn"] { background: #d69e2e; }
+.srw-conn-dot[data-state="error"] { background: #e05c5c; }
+.srw-dc-card { margin: 0.5rem 0 1rem; padding: 0.5rem 0.75rem; border: 1px solid rgba(128, 128, 128, 0.25); border-radius: 4px; }
+.srw-adder { margin-top: 0.75rem; }
