@@ -77,6 +77,51 @@
   // Greying out settings that do nothing under the chosen Whisparr scope: see SRW.createScopeStateRegistry() in core.js (shared with Maintenance).
   const createScopeStateRegistry = () => window.SRW.createScopeStateRegistry();
 
+  // One grid row per field (v0.254.1): a label with its field, the Save button and the "saved" text that follow it are put into one
+  // `.srw-setting-row` (label | field | buttons | status), so every Settings tab, the connection forms and the setup guide line up the same way
+  // whichever builder made them. Runs over a subtree now and over everything added to the page later (lists and modals are built after the
+  // page); nodes only move, so their listeners stay. A label whose next sibling is not a button (a form with its buttons below) is left alone.
+  function groupSettingRows(root) {
+    const parents = [root, ...root.querySelectorAll('*')].filter((n) => n.children && [...n.children].some((c) => c.tagName === 'LABEL'));
+    parents.forEach((parent) => {
+      if (parent.classList.contains('srw-setting-row')) return;
+      [...parent.children].forEach((label) => {
+        if (label.tagName !== 'LABEL' || label.parentNode !== parent) return;
+        const next = label.nextElementSibling;
+        if (!next || next.tagName !== 'BUTTON' || !label.querySelector('input, select, textarea')) return;
+        const row = document.createElement('div');
+        row.className = 'srw-setting-row';
+        if (label.querySelector('input[type="checkbox"], input[type="radio"]')) row.classList.add('srw-setting-row-check');
+        parent.insertBefore(row, label);
+        row.appendChild(label);
+        const actions = document.createElement('span');
+        actions.className = 'srw-setting-actions';
+        row.appendChild(actions);
+        let node = row.nextElementSibling;
+        while (node && ((node.tagName === 'BUTTON' && !node.classList.contains('srw-btn-danger')) || node.classList.contains('srw-key-status'))) {
+          const following = node.nextElementSibling;
+          actions.appendChild(node);
+          node = following;
+        }
+      });
+    });
+  }
+
+  let rowObserver = null;
+  function watchSettingRows(container) {
+    if (rowObserver) rowObserver.disconnect();
+    container.classList.add('srw-form-grid');
+    groupSettingRows(container);
+    rowObserver = new MutationObserver((mutations) => {
+      if (!container.isConnected && !document.querySelector('.srw-modal')) { rowObserver.disconnect(); return; }
+      mutations.forEach((m) => m.addedNodes.forEach((n) => {
+        if (n.nodeType !== 1 || n.classList.contains('srw-setting-row')) return;
+        if (n.closest('.srw-form-grid, .srw-modal')) groupSettingRows(n);
+      }));
+    });
+    rowObserver.observe(document.body, { childList: true, subtree: true });
+  }
+
   async function render(container) {
     const { el } = window.SRW;
     container.innerHTML = '';
@@ -222,6 +267,7 @@
     if (wantedRaw === 'watchlist') { window.location.replace('/plugins/stash-release-manager/watchlist'); return; } // moved to its own page (v0.147.0)
     const wanted = OLD_TAB_KEYS[wantedRaw] || wantedRaw;
     showTab(SETTINGS_TABS.some((t) => t.key === wanted) ? wanted : SETTINGS_TABS[0].key);
+    watchSettingRows(tabContent);
 
   }
 
@@ -2868,7 +2914,6 @@
       : el('input', { type: 'number', min, max, step });
     control.value = value;
     const status = el('span', { className: 'srw-key-status' });
-    if (hint) section.appendChild(el('p', { className: 'srw-hint', textContent: hint }));
     section.appendChild(el('label', {}, [`${label}: `, control]));
     section.appendChild(el('button', {
       className: 'srw-btn', textContent: 'Save',
@@ -2878,6 +2923,7 @@
       },
     }));
     section.appendChild(status);
+    if (hint) section.appendChild(el('p', { className: 'srw-hint srw-setting-hint', textContent: hint })); // under the field (v0.254.1)
   }
 
   // "Upgrade search" (v0.155.0): the automatic search for the candidates of Maintenance > Upgrade wanted -- a job, so its three settings live
@@ -3043,26 +3089,28 @@
     const filmStatus = el('span', { className: 'srw-key-status' });
     section.appendChild(el('p', { className: 'srw-hint', textContent: 'Searches the indexers for the movies on the Movies wishlist (1-3 requests per movie) and proposes the best plausible release in Activity > Needs review. Nothing is downloaded without your Accept. Where Whisparr searches (Settings > General > Workflow: “Whisparr searches + downloads, this sidecar imports” or “Full Whisparr management”) the movies registered in Whisparr are left to Whisparr; this search then covers only the others.' }));
     section.appendChild(el('label', {}, [filmEnabled, ' Search automatically']));
-    section.appendChild(el('br'));
     section.appendChild(el('label', {}, ['Run every (hours): ', filmInterval]));
-    section.appendChild(el('label', {}, [' Movies per run: ', filmPerRun]));
-    section.appendChild(el('label', {}, [' Ask the same movie again after (days): ', filmDays]));
-    section.appendChild(el('br'));
-    section.appendChild(el('label', {}, ['New movies (released within the last ', filmRecentDays, ' days or still to come) are asked again after (days): ', filmRecentMin]));
-    section.appendChild(el('button', {
-      className: 'srw-btn', textContent: 'Save',
-      onClick: async () => {
-        const pairs = [['film_search_enabled', filmEnabled.checked ? 'true' : 'false'], ['film_search_interval_hours', filmInterval.value],
-          ['film_search_per_run', filmPerRun.value], ['film_search_min_days', filmDays.value],
-          ['film_search_recent_days', filmRecentDays.value], ['film_search_recent_min_days', filmRecentMin.value]];
-        for (const [key, value] of pairs) {
-          const r = await window.SRW.runOp('settings_set', { key, value });
-          if (r && r.error) { filmStatus.textContent = ` error: ${r.error}`; return; }
-        }
-        filmStatus.textContent = ' saved';
-      },
-    }));
-    section.appendChild(filmStatus);
+    section.appendChild(el('label', {}, ['Movies per run: ', filmPerRun]));
+    section.appendChild(el('label', {}, ['Ask the same movie again after (days): ', filmDays]));
+    section.appendChild(el('label', {}, ['A movie is new for (days after its release, or still to come): ', filmRecentDays]));
+    section.appendChild(el('label', {}, ['A new movie is asked again after (days): ', filmRecentMin]));
+    const filmSave = el('div', { className: 'srw-setting-save' }, [
+      el('button', {
+        className: 'srw-btn', textContent: 'Save',
+        onClick: async () => {
+          const pairs = [['film_search_enabled', filmEnabled.checked ? 'true' : 'false'], ['film_search_interval_hours', filmInterval.value],
+            ['film_search_per_run', filmPerRun.value], ['film_search_min_days', filmDays.value],
+            ['film_search_recent_days', filmRecentDays.value], ['film_search_recent_min_days', filmRecentMin.value]];
+          for (const [key, value] of pairs) {
+            const r = await window.SRW.runOp('settings_set', { key, value });
+            if (r && r.error) { filmStatus.textContent = ` error: ${r.error}`; return; }
+          }
+          filmStatus.textContent = ' saved';
+        },
+      }),
+      filmStatus,
+    ]);
+    section.appendChild(filmSave);
 
     // v0.131.0: new movies of the watched ThePornDB studios -> Movies wishlist > Suggestions (api/film_feed.py). ONE feed request per run.
     section.appendChild(el('p', { className: 'srw-subsection-heading', textContent: 'New movies of watched studios (Movies wishlist > Suggestions)' }));
@@ -3587,7 +3635,7 @@
         + 'Illegal characters of file names are replaced by a space; a name longer than the file system allows has its title shortened.',
     }));
     const sceneFormatInput = el('input', { type: 'text', style: 'width: 100%;', value: settings.scene_naming_format || '' });
-    section.appendChild(el('label', {}, ['Scene Format: ', sceneFormatInput]));
+    section.appendChild(el('label', { className: 'srw-wide' }, ['Scene Format: ', sceneFormatInput]));
     section.appendChild(el('button', {
       className: 'srw-btn', textContent: 'Save',
       onClick: async () => {
@@ -3596,7 +3644,7 @@
     }));
 
     const folderFormatInput = el('input', { type: 'text', style: 'width: 100%;', value: settings.scene_folder_format || '' });
-    section.appendChild(el('label', {}, ['Scene Folder Format: ', folderFormatInput]));
+    section.appendChild(el('label', { className: 'srw-wide' }, ['Scene Folder Format: ', folderFormatInput]));
     section.appendChild(el('button', {
       className: 'srw-btn', textContent: 'Save',
       onClick: async () => {
@@ -3619,9 +3667,9 @@
       const r = await window.SRW.runOp('settings_set', { key, value: input.value });
       if (r.error) window.SRW.notify('Naming', r.error, 'error'); else window.SRW.notify('Naming', 'Saved.', 'success');
     };
-    section.appendChild(el('label', {}, ['Movie Folder Format: ', movieFolderInput]));
+    section.appendChild(el('label', { className: 'srw-wide' }, ['Movie Folder Format: ', movieFolderInput]));
     section.appendChild(el('button', { className: 'srw-btn', textContent: 'Save', onClick: saveMovieFormat('movie_folder_format', movieFolderInput) }));
-    section.appendChild(el('label', {}, ['Movie File Format: ', movieFileInput]));
+    section.appendChild(el('label', { className: 'srw-wide' }, ['Movie File Format: ', movieFileInput]));
     section.appendChild(el('button', { className: 'srw-btn', textContent: 'Save', onClick: saveMovieFormat('movie_naming_format', movieFileInput) }));
 
     // Example under the format fields (v0.193.0): what the formats, replacement rules and tag folders -- also unsaved edits -- produce. Writes nothing.
@@ -3634,11 +3682,11 @@
         const r = await window.SRW.runOp('settings_naming_preview', { folder_format: folderFormatInput.value, filename_format: sceneFormatInput.value,
           movie_folder_format: movieFolderInput.value, movie_filename_format: movieFileInput.value, ...previewExtra });
         if (r.error) { previewBox.textContent = `Example not available: ${r.error}`; return; }
-        previewBox.replaceChildren(el('div', { textContent: `Example: ${r.example}` }),
+        previewBox.replaceChildren(...[el('div', { textContent: `Example: ${r.example}` }),
           r.example_with_tag ? el('div', { textContent: `Example with the tag "${r.tag}": ${r.example_with_tag}` }) : null,
           el('div', { textContent: `Movie: ${r.movie_example}` }),
           el('div', { textContent: `Movie, scene 2 of several: ${r.movie_example_part}` }),
-          el('div', { textContent: `Movie without a year: ${r.movie_example_no_year}` }));
+          el('div', { textContent: `Movie without a year: ${r.movie_example_no_year}` })].filter(Boolean)); // (a null child would be shown as the text "null")
       }, 300);
     };
     sceneFormatInput.addEventListener('input', refreshPreview);
@@ -4403,6 +4451,7 @@
 
     const nav = el('div', { className: 'srw-subtabs srw-section-tabs' });
     const paneHost = el('div', { className: 'srw-settings-section srw-form-grid' });
+    watchSettingRows(paneHost);
     const footer = el('div', { className: 'srw-toolbar' });
     function paintNav() {
       nav.replaceChildren(...STEPS.map((st, i) => {

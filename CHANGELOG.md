@@ -6,6 +6,11 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.254.1
+- **The same grid layout on every Settings tab** (General, Search & Quality, Import & Naming, Jobs, and the setup guide): label in one column, the field in the next, its Save button and "saved" text right behind it, the hint of a setting under the field. Number, date and drop-down fields are only as wide as they need, paths and the naming formats are wide (the Movie File Format field was cut off), checkbox settings keep their Save next to them; on a narrow screen label and field stack. Sections have the same spacing everywhere. Plugin only.
+- The Movie search settings had one long label holding two fields ("New movies (released within the last [60] days ... after (days): [1]"); they are two rows now.
+- The naming preview no longer shows a stray line "null" under the examples.
+
 ## 0.254.0
 - **Every scene row has a cover again** (Releases > On Wishlist / Imported / Dismissed / Added late, the Calendar, the Studio and Performer panels, Activity > Downloading & importing / Imported / Wishlist). Until now a cover was only drawn while the release row still held the stash-box's image address, and that address was deleted as soon as the scene was in Stash (to keep the database small): upgrades, backlog additions and everything imported showed no cover. Pages are paged now, so the cover loads that this was meant to avoid are no longer a problem.
 - **Where the cover comes from:** a scene that is in Stash shows Stash's own cover. Any other scene shows its stash-box cover (StashDB, ThePornDB, an added stash-box), which the sidecar fetches once, cuts to a small JPEG (320 px wide, about 10-20 KB) and keeps under `/data/covers`; the browser gets it through the plugin's normal calls, so it works on an https Stash page too. As soon as the scene is in Stash the cached copy is deleted; copies of scenes without a release row are swept daily. A scene whose stash-box has no image (or blocks it) is asked about again after a day, not on every view.
