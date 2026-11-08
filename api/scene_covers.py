@@ -6,7 +6,7 @@ down and keeps it under <data>/covers/<kind>/<provider>/<id>.<jpg|png>; the brow
 as the item is in Stash the picture is Stash's own (answered as {"stash": <local id>}; the plugin builds the path) and the cached copy is deleted.
 
 Sizes: scenes 320 px wide JPEG, performers 240 px wide JPEG, studios fit into 256 px as PNG (logos are often transparent, JPEG would make
-that black). An item whose stash-box has no image (or blocks it) is remembered with a `.none` marker for a day.
+that black); an SVG logo is kept as it is. An item whose stash-box has no image (or blocks it) is remembered with a `.none` marker for a day.
 
 Where the provider's address comes from: never from the browser. For a scene any release row with an `image_url`; for performers, studios and
 the scenes of the Search page the addresses the stash-box itself sent with the search results (table `image_hint`, filled by routers/search.py);
@@ -55,6 +55,23 @@ def download(url):
     if len(data) > MAX_BYTES:
         raise ValueError("image too large")
     return data
+
+
+MAX_SVG_BYTES = 512 * 1024
+
+
+def is_svg(data):
+    return b"<svg" in data[:2048].lower()
+
+
+def sniff_mime(data, default):
+    """The media type of the stored picture: scaled ones are JPEG / PNG, a studio logo that is an SVG is kept as it is (ffmpeg cannot read SVG,
+    and an <img> shows one without running anything in it)."""
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    if data[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    return "image/svg+xml" if is_svg(data) else default
 
 
 def make_thumb(data, kind="scene"):
@@ -116,7 +133,7 @@ class SceneCovers:
                 data = fh.read()
             if kind != "scene":
                 os.utime(path, (self.now(), self.now()))  # "used": the sweep keeps what is still looked at
-            return f"data:{KINDS[kind][2]};base64," + base64.b64encode(data).decode("ascii")
+            return f"data:{sniff_mime(data, KINDS[kind][2])};base64," + base64.b64encode(data).decode("ascii")
         except OSError:
             return None
 
@@ -167,7 +184,14 @@ class SceneCovers:
             if not url:
                 self._mark_none(kind, provider, entity_id)
                 return None
-            self._write(self.path(kind, provider, entity_id), self.thumb(self.fetch(url), kind))
+            raw = self.fetch(url)
+            if is_svg(raw):
+                if len(raw) > MAX_SVG_BYTES:
+                    raise ValueError("SVG too large")
+                small = raw  # vector: scales by itself
+            else:
+                small = self.thumb(raw, kind)
+            self._write(self.path(kind, provider, entity_id), small)
             return self._read(kind, provider, entity_id)
         except Exception as e:
             logger.info("%s picture of %s %s: %s", kind, provider, entity_id, e)

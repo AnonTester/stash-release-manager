@@ -1,5 +1,6 @@
 """Scene covers (v0.254.0), performer pictures and studio logos (v0.256.0): in Stash -> Stash's picture and no cached copy; otherwise the
 stash-box picture, fetched once, scaled and cached."""
+import base64
 import os
 import sys
 import tempfile
@@ -132,6 +133,18 @@ n = len(fetched)
 out = c4.covers_for(items[:2] + items[3:4])
 check("second view comes from the cache", len(fetched) == n and out["studio:stashdb:S1"]["data"] and out["performer:stashdb:P_HINT"]["data"])
 check("the plain scene form still answers with provider:id keys", c4.covers_for_scenes([("stashdb", "A")])["stashdb:A"]["data"])
+
+# a studio logo that is an SVG is kept as it is (ffmpeg cannot read SVG)
+svg = b'<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10"/></svg>'
+fetched_svg = {}
+def fetch_svg(url): return svg
+def thumb_must_not_run(data, kind="scene"): raise AssertionError("ffmpeg must not be used for an SVG")
+c6 = sc.SceneCovers(db, tmp, lambda: Stash2(), lambda p: prov2, fetch=fetch_svg, thumb=thumb_must_not_run, now=lambda: clock[0], endpoint_of=lambda p: "x")
+got = c6.covers_for([("studio", "stashdb", "S_SVG")])["studio:stashdb:S_SVG"]
+check("SVG logo: stored as it is, served as image/svg+xml", got and got["data"].startswith("data:image/svg+xml;base64,") and base64.b64decode(got["data"].split(",", 1)[1]) == svg)
+big = b"<svg>" + b"x" * (sc.MAX_SVG_BYTES + 1)
+c7 = sc.SceneCovers(db, tmp, lambda: Stash2(), lambda p: prov2, fetch=lambda u: big, thumb=thumb, now=lambda: clock[0], endpoint_of=lambda p: "x")
+check("an oversized SVG is not kept", c7.covers_for([("studio", "stashdb", "S_BIG")])["studio:stashdb:S_BIG"] is None)
 
 # a performer picture nobody used for a long time is swept, a recently used one stays; old hints go
 clock[0] += (sc.UNUSED_DAYS + 1) * 86400

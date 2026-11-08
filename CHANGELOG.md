@@ -6,6 +6,9 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.256.1
+- **Studio logos that are SVG files are cached too.** ffmpeg cannot read SVG, so about one studio logo in five (StashDB serves many as SVG) was not cached and fell back to the stash-box's own address. An SVG is now kept as it is (up to 512 KB) and shown from the cache; the type is recognised from the file itself.
+
 ## 0.256.0
 - **Performer pictures and studio logos are cached, scaled and replaced by Stash's own, like the scene covers.** They were loaded straight from the stash-box's CDN (Search page > Performers / Studios), unscaled, uncached and, on an https page, exposed to mixed content. Now: a performer or studio that is in Stash shows Stash's picture (a Stash entry that only has Stash's placeholder keeps showing the stash-box picture); any other gets the stash-box picture fetched once by the sidecar, scaled (performers 240 px wide, studio logos fitted into 256 px and kept as PNG so a transparent logo stays transparent) and kept under `/data/covers`, delivered through the plugin's normal calls. The Search page's scene cards use the same path (Stash's screenshot for a scene in the library).
 - The sidecar never takes a picture address from the browser: it uses the addresses the stash-box sent with the search results (kept 30 days in a small table) or asks the stash-box for that one item. Performer and studio pictures nobody looked at for 30 days are removed by the daily sweep; the scene covers of 0.254.0 moved to `covers/scene/`.
