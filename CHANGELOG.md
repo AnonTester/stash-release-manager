@@ -6,6 +6,9 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.256.2
+- **The safety check's "Check again" button on Settings > Import & Naming shows its text** again (it was only a clipboard icon). Plugin only.
+
 ## 0.256.1
 - **Studio logos that are SVG files are cached too.** ffmpeg cannot read SVG, so about one studio logo in five (StashDB serves many as SVG) was not cached and fell back to the stash-box's own address. An SVG is now kept as it is (up to 512 KB) and shown from the cache; the type is recognised from the file itself.
 

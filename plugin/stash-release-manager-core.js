@@ -11,7 +11,7 @@
   // rule and the bug it caused when this drifted). Change this if you
   // install under a different folder name.
   // Must equal `version:` in stash-release-manager.yml (scripts/test_plugin_version.py checks it).
-  const PLUGIN_VERSION = '0.256.1';
+  const PLUGIN_VERSION = '0.256.2';
   const PLUGIN_ID = 'stash-release-manager';
   const PLUGIN_NAME = 'StashReleaseManager';
 
@@ -1663,7 +1663,7 @@
         cb.addEventListener('change', () => setIgnoreRenamers(cb.checked));
         parts.push(el('label', { className: 'srw-provider-filter-item', title: 'Only for this browser session' }, [cb, ' I know: continue anyway (this browser session)']));
       }
-      if (!compact) parts.push(el('div', { className: 'srw-toolbar' }, [iconButton('button', 'faClipboardCheck', 'Check again', { className: 'srw-btn', onClick: load }), status]));
+      if (!compact) parts.push(el('div', { className: 'srw-toolbar' }, [el('button', { type: 'button', className: 'srw-btn', textContent: 'Check again', onClick: load }), status]));
       box.replaceChildren(...parts);
     }
     if (!compact) box.appendChild(status);
