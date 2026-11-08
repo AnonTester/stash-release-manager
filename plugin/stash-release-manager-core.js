@@ -11,7 +11,7 @@
   // rule and the bug it caused when this drifted). Change this if you
   // install under a different folder name.
   // Must equal `version:` in stash-release-manager.yml (scripts/test_plugin_version.py checks it).
-  const PLUGIN_VERSION = '0.253.9';
+  const PLUGIN_VERSION = '0.253.10';
   const PLUGIN_ID = 'stash-release-manager';
   const PLUGIN_NAME = 'StashReleaseManager';
 
@@ -867,7 +867,7 @@
       probe.remove();
       const rgb = (c) => (c.match(/[\d.]+/g) || []).map(Number);
       // The measured `.form-control` came out white with dark text on this Stash (its theme styles the fields of its own pages only), next to dark
-      // buttons: the fields follow the secondary-button palette instead (v0.253.9) -- the same colors in every list, filter bar, form and dialog.
+      // buttons: the fields follow the secondary-button palette instead (v0.253.10) -- the same colors in every list, filter bar, form and dialog.
       if (btn.bg && btn.fg && rgb(btn.bg).length >= 3 && !(rgb(btn.bg).length === 4 && rgb(btn.bg)[3] === 0)) { bg = btn.bg; fg = btn.fg; border = btn.border; }
       if (!bg || bg === 'transparent' || (rgb(bg).length === 4 && rgb(bg)[3] === 0)) bg = getComputedStyle(document.body).backgroundColor;
       const [r, g, b] = rgb(bg);
@@ -2396,7 +2396,7 @@
       || !providersAllOn(f.providers) || f.late !== 'all' || f.upgrades !== 'all' || Boolean(f.pairing) || Boolean(f.cast.trim()));
   }
 
-  // The statuses a list asks for: its own, plus 'dismissed' while the filter "Show dismissed" is ticked (v0.253.9).
+  // The statuses a list asks for: its own, plus 'dismissed' while the filter "Show dismissed" is ticked (v0.253.10).
   function statusesFor(f, base) {
     return f && f.showDismissed ? [...base, 'dismissed'] : base;
   }
@@ -2468,7 +2468,7 @@
     return sel;
   }
 
-  // ==================== The filter bar (v0.253.9) ====================
+  // ==================== The filter bar (v0.253.10) ====================
   //
   // One look for every list that filters by more than a search text. Row 1 is always the same and short: [search] [description] [tags] [Filters (n)]
   // [presets] [clear]; the two small icon switches widen the search to the scene's description / tags, the funnel opens a panel with the other filters
@@ -2510,7 +2510,8 @@
       drawArrow();
     }
     const clearBtn = onClear ? iconButton('button', 'faXmark', 'Clear all filters', { className: 'srw-btn srw-fb-clear', title: 'Clear all filters', onClick: onClear }) : null;
-    const row = el('div', { className: 'srw-fb-row' }, [search, ...toggles, funnel, presets, clearBtn]);
+    // The chips stand in row 1, right behind the funnel (v0.253.10): the active filters are read where the search is.
+    const row = el('div', { className: 'srw-fb-row' }, [search, ...toggles, funnel, chipsBox, presets, clearBtn]);
     function refresh() {
       const active = describe();
       count.textContent = active.length ? String(active.length) : '';
@@ -2523,7 +2524,7 @@
       if (clearBtn) clearBtn.hidden = !(active.length || hasText());
     }
     refresh();
-    return { node: el('div', { className: 'srw-filter-bar srw-fb' }, [row, panel, chipsBox]), refresh };
+    return { node: el('div', { className: 'srw-filter-bar srw-fb' }, [row, panel]), refresh };
   }
 
   // opts.rebuild(): the caller builds the bar again (after a chip was removed or "clear" was clicked: the state is changed, the controls follow it).
@@ -2797,7 +2798,7 @@
     // keep: true (v0.250.0, for lists the SERVER pages -- every fetch goes through Stash, ~2 s): a page already read is shown AT ONCE when it is asked
     // for again (back to a page, a filter seen before) and re-read quietly behind it (drawn again only when it differs); patchItems() changes the
     // page that is shown without any request. itemSig(item) = what decides how a row looks.
-    keep = false, itemSig = null,
+    keep = false, itemSig = null, bulkBar = null,
   }) {
     const state = defaultFilterState();
     state.pairingOptions = pairingOptions;
@@ -2810,6 +2811,7 @@
     let barShown = false;
     // The filter bar is built once the list needs it; after a chip was removed / "clear" it is built again from the (changed) state.
     let barNode = null;
+    let bulkNode = bulkBar; // the "select this page / Dismiss" bar (see draw())
     function mountBar() {
       const fresh = buildPagedFilterBar(state, filters, () => load(1), { rebuild: () => { mountBar(); load(1); } });
       if (barNode && barNode.parentNode) barNode.replaceWith(fresh); else (barTarget || barSlot).appendChild(fresh);
@@ -2839,11 +2841,18 @@
         barShown = true;
       }
       if (onTotal) onTotal(result.total, active);
+      // One row under the filter bar (v0.253.10): the list's "select this page / Dismiss" bar on the left, the page selector in the middle. The bar is
+      // the one the caller put right before the list (or `bulkBar`); it is taken into this row, so every list gets the same place. It stays when the
+      // list is empty (its Undo note is in it).
+      const before = node.previousElementSibling;
+      if (!bulkNode && before && before.classList.contains('srw-bulk-dismiss')) bulkNode = before;
       if (!result.items.length) {
+        if (bulkNode) listArea.appendChild(el('div', { className: 'srw-list-toolbar' }, [bulkNode, el('span')]));
         listArea.appendChild(el('p', { className: 'srw-hint', textContent: active ? filteredEmptyText : emptyText }));
         return true;
       }
-      if (totalPages > 1) listArea.appendChild(buildPagerControls(page, totalPages, result.total, load, perPage));
+      const topPager = totalPages > 1 ? buildPagerControls(page, totalPages, result.total, load, perPage) : null;
+      if (bulkNode || topPager) listArea.appendChild(el('div', { className: 'srw-list-toolbar' }, [bulkNode || el('span'), topPager || el('span')]));
       listArea.appendChild(renderItems(result.items));
       if (totalPages > 1) listArea.appendChild(buildPagerControls(page, totalPages, result.total, load, perPage));
       return true;

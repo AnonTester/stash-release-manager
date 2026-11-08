@@ -6,6 +6,10 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.253.10
+- **The active filters stand in row 1 of the filter bar**, right behind the funnel.
+- **"Select this page" and the Dismiss buttons have one place on every list: directly under the filter bar, left-aligned, in the same row as the page selector.** Plugin only.
+
 ## 0.253.9
 - **Every field of the Studio / Performer page's Releases tab takes the plugin's field colors** (the "Date window" fields had a fixed dark grey of their own). Plugin only.
 

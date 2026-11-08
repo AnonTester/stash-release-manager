@@ -1503,7 +1503,7 @@
 .srw-bulk-dismiss {
   display: flex;
   flex-wrap: wrap;
-  justify-content: center;
+  justify-content: flex-start; /* left-aligned (v0.253.10) */
   align-items: center;
   gap: 7px;
 }
@@ -2457,11 +2457,12 @@ a.srw-btn { text-decoration: none; display: inline-block; text-align: center; }
 .srw-fb-count { display: inline-block; margin-left: 0.3rem; min-width: 1.1rem; padding: 0 0.3rem; border-radius: 0.6rem; background: #2b6cb0; color: #fff; font-size: 0.78rem; line-height: 1.15rem; text-align: center; }
 .srw-fb-funnel.srw-btn-on .srw-fb-count { background: rgba(255, 255, 255, 0.25); }
 .srw-fb-panel { display: flex; flex-wrap: wrap; gap: 6px 22px; justify-content: center; padding: 8px 4px 2px; border-top: 1px solid rgba(128, 128, 128, 0.3); }
-.srw-fb-panel[hidden], .srw-fb-chips[hidden] { display: none; }
+.srw-fb-panel[hidden] { display: none; }
+.srw-fb-chips[hidden] { display: none; }
 .srw-fb-group { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; }
 .srw-fb-group-label { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em; opacity: 0.65; }
 .srw-fb-group-body { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 7px; }
-.srw-fb-chips { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
+.srw-fb-chips { display: contents; } /* the chips are items of row 1 */
 .srw-fb-chip { display: inline-flex; align-items: center; gap: 0.3rem; padding: 0.05rem 0.2rem 0.05rem 0.55rem; border-radius: 0.8rem; border: 1px solid rgba(43, 108, 176, 0.8); font-size: 0.88rem; }
 .srw-fb-chip-x { background: none; border: 0; color: inherit; padding: 0 0.35rem; cursor: pointer; opacity: 0.8; }
 .srw-fb-chip-x:hover { opacity: 1; }
@@ -2486,3 +2487,11 @@ a.srw-btn { text-decoration: none; display: inline-block; text-align: center; }
 #srw-plugin-root .srw-fb select option, .srw-fb select option { background-color: var(--srw-field-bg, #394b59); color: var(--srw-field-fg, #fff); }
 .srw-fb-arrow { display: inline-flex; margin-left: 0.35rem; }
 .srw-fb-arrow .srw-icon { width: 0.7em; height: 0.7em; }
+
+/* The row under the filter bar (v0.253.10): the bulk Dismiss bar left, the page selector in the middle */
+.srw-list-toolbar { display: grid; grid-template-columns: 1fr auto 1fr; align-items: start; gap: 0.5rem 1rem; margin: 0.4rem 0; }
+.srw-list-toolbar > :first-child { justify-self: start; }
+.srw-list-toolbar > :nth-child(2) { grid-column: 2; }
+.srw-list-toolbar .srw-bulk-dismiss { justify-content: flex-start; }
+.srw-list-toolbar .srw-pager { margin: 0; }
+@media (max-width: 800px) { .srw-list-toolbar { grid-template-columns: 1fr; } .srw-list-toolbar > :nth-child(2) { grid-column: 1; justify-self: center; } }

@@ -924,21 +924,23 @@
       const filterActive = Boolean(args.q || args.entity_type || args.vr || args.date_from || args.date_until
         || !window.SRW.providersAllOn(listProviderFilter));
       // With the dismissed ones shown the counts would include them: no bulk Dismiss then (untick "Show dismissed" for it).
-      bulkSlot.appendChild(buildBulkDismissSlot([], filterActive && !listShowDismissed, container, {
+      const bulkNode = buildBulkDismissSlot([], filterActive && !listShowDismissed, container, {
         count: response.total,
         pageScenes: response.rows.filter((r) => r.status !== 'dismissed').map((r) => ({ provider: r.provider, scene_stashdb_id: r.scene_stashdb_id })),
         loadScenes: async () => {
           const all = await window.SRW.runOp('releases_query', { ...args, statuses: ['new'], ids_only: true });
           return all.error ? all : all.scenes;
         },
-      }));
+      });
+      // The bulk Dismiss bar left and the page selector in the middle, one row under the filter bar (v0.253.10; the same as every other list).
       if (!response.rows.length) {
+        newListWrap.appendChild(el('div', { className: 'srw-list-toolbar' }, [bulkNode, el('span')]));
         newListWrap.appendChild(el('p', {
           textContent: filterActive ? 'No releases match the current filter.' : 'No new releases.',
         }));
         return;
       }
-      if (totalPages > 1) newListWrap.appendChild(buildServerPager(page, totalPages, response.total, loadPage, perPage));
+      newListWrap.appendChild(el('div', { className: 'srw-list-toolbar' }, [bulkNode, totalPages > 1 ? buildServerPager(page, totalPages, response.total, loadPage, perPage) : el('span')]));
       newListWrap.appendChild(buildNewReleasesByDate(response.rows, container));
       if (totalPages > 1) newListWrap.appendChild(buildServerPager(page, totalPages, response.total, loadPage, perPage));
       // Fire-and-forget Whisparr/library badge pass, capped to the newest
