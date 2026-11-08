@@ -111,9 +111,9 @@
       redraw: () => view.redraw(),
     });
     view = window.SRW.buildFilteredPagedList({
-      filters: ['search', 'description', 'vr', 'dates', 'providers'],
+      filters: ['search', 'description', 'vr', 'dates', 'providers', 'dismissed'],
       perPage: 25,
-      showFilterBarFrom: 10,
+      showFilterBarFrom: 0, // the short first row is always there: "Show dismissed" is wanted exactly when the list is empty
       emptyText: 'No new releases found.',
       fetchPage: async (f, page, perPage) => {
         const response = await window.SRW.runOp('releases_query', {
@@ -145,7 +145,6 @@
       },
     });
     body.textContent = '';
-    body.appendChild(window.SRW.buildShowDismissedToggle(() => view));
     body.appendChild(bar.node);
     body.appendChild(view.node);
     await view.reset();
@@ -219,8 +218,7 @@
         items.push(window.SRW.iconButton('button', 'faRotateLeft', 'Restore', {
           className: 'srw-btn', title: 'Restore: back on the list of new releases',
           onClick: async () => {
-            const res = await window.SRW.runOp('releases_restore', { rows: [{
-              provider: r.provider, scene_stashdb_id: r.scene_stashdb_id, entity_type: r.entity_type, entity_stashdb_id: r.entity_stashdb_id, status: 'new' }] });
+            const res = await window.SRW.runOp('releases_undismiss', { provider: r.provider, scene_stashdb_id: r.scene_stashdb_id });
             if (res && res.error) { window.SRW.notify('Restore failed', res.error, 'error'); return; }
             onDone(r, null); // the list is read again: the row is a new one now
           },

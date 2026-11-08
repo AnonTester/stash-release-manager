@@ -11,7 +11,7 @@
   // rule and the bug it caused when this drifted). Change this if you
   // install under a different folder name.
   // Must equal `version:` in stash-release-manager.yml (scripts/test_plugin_version.py checks it).
-  const PLUGIN_VERSION = '0.253.5';
+  const PLUGIN_VERSION = '0.253.6';
   const PLUGIN_ID = 'stash-release-manager';
   const PLUGIN_NAME = 'StashReleaseManager';
 
@@ -2393,17 +2393,9 @@
       || !providersAllOn(f.providers) || f.late !== 'all' || f.upgrades !== 'all' || Boolean(f.pairing) || Boolean(f.cast.trim()));
   }
 
-  // The statuses a list asks for: its own, plus 'dismissed' while the filter "Show dismissed" is ticked (v0.253.5).
+  // The statuses a list asks for: its own, plus 'dismissed' while the filter "Show dismissed" is ticked (v0.253.6).
   function statusesFor(f, base) {
     return f && f.showDismissed ? [...base, 'dismissed'] : base;
-  }
-
-  // The tick box "Show dismissed" above a list (v0.253.5): its own control, not part of the filter bar, because that bar only appears from ten
-  // entries on -- and "nothing is shown" is exactly when you want to see what you dismissed. `getView()` = the filtered paged list it controls.
-  function buildShowDismissedToggle(getView) {
-    const box = el('input', { type: 'checkbox' });
-    box.addEventListener('change', () => { const v = getView(); if (v) { v.state.showDismissed = box.checked; v.reload(); } });
-    return el('label', { className: 'srw-filter-check srw-show-dismissed', title: 'Also list the releases you dismissed (marked, with Restore)' }, [box, ' Show dismissed']);
   }
 
   function releaseQueryArgs(f) {
@@ -2473,58 +2465,111 @@
     return sel;
   }
 
-  function buildPagedFilterBar(state, filters, onChange) {
-    const parts = [];
+  // ==================== The filter bar (v0.253.6) ====================
+  //
+  // One look for every list that filters by more than a search text. Row 1 is always the same and short: [search] [description] [tags] [Filters (n)]
+  // [presets] [clear]; the two small icon switches widen the search to the scene's description / tags, the funnel opens a panel with the other filters
+  // in labelled groups (What / When / Source / Also show), the active ones are also shown as chips under the row (click x = off). A list with only a
+  // search field gets row 1 and nothing else.
+  const filterPanelOpen = new WeakMap(); // the state object -> panel open? (kept while the bar is built again)
+
+  // A small icon switch (pressed / not pressed): `get()` / `set(v)` read and write the value, `onChange()` runs after a click. node.sync() = redraw after the
+  // value was set from outside (a preset).
+  function iconToggle(iconName, label, title, get, set, onChange) {
+    const node = iconButton('button', iconName, label, { className: 'srw-btn srw-fb-toggle', title });
+    const sync = () => { node.classList.toggle('srw-btn-on', Boolean(get())); node.setAttribute('aria-pressed', get() ? 'true' : 'false'); };
+    node.addEventListener('click', () => { set(!get()); sync(); onChange(); });
+    node.sync = sync;
+    sync();
+    return node;
+  }
+
+  // The shell: `search` (node), `toggles` ([node]), `clusters` ([{label, nodes}]), `presets` (node | null), `describe()` -> [{label, clear()}] of the active
+  // filters, `onClear()` clears everything. Returns { node, refresh() }; call refresh() after any change of a filter.
+  function buildFilterShell({ key, search = null, toggles = [], clusters = [], presets = null, describe = () => [], onClear = null, hasText = () => false }) {
+    const groups = clusters.map((c) => ({ label: c.label, nodes: c.nodes.filter(Boolean) })).filter((c) => c.nodes.length);
+    const chipsBox = el('div', { className: 'srw-fb-chips' });
+    const panel = el('div', { className: 'srw-fb-panel' }, groups.map((g) => el('div', { className: 'srw-fb-group' }, [
+      el('span', { className: 'srw-fb-group-label', textContent: g.label }),
+      el('span', { className: 'srw-fb-group-body' }, g.nodes),
+    ])));
+    panel.hidden = !(key && filterPanelOpen.get(key));
+    const count = el('span', { className: 'srw-fb-count' });
+    const funnel = groups.length ? iconButton('button', 'faFilter', 'Filters', { className: 'srw-btn srw-fb-funnel',
+      title: 'Filters: type, VR, dates, source ... (the active ones are listed below the bar)' }) : null;
+    if (funnel) {
+      funnel.appendChild(count);
+      funnel.addEventListener('click', () => { panel.hidden = !panel.hidden; if (key) filterPanelOpen.set(key, !panel.hidden); funnel.classList.toggle('srw-btn-on', !panel.hidden); });
+      funnel.classList.toggle('srw-btn-on', !panel.hidden);
+    }
+    const clearBtn = onClear ? iconButton('button', 'faXmark', 'Clear all filters', { className: 'srw-btn srw-fb-clear', title: 'Clear all filters', onClick: onClear }) : null;
+    const row = el('div', { className: 'srw-fb-row' }, [search, ...toggles, funnel, presets, clearBtn]);
+    function refresh() {
+      const active = describe();
+      count.textContent = active.length ? String(active.length) : '';
+      count.hidden = !active.length;
+      chipsBox.replaceChildren(...active.map((a) => el('span', { className: 'srw-fb-chip' }, [
+        el('span', { textContent: a.label }),
+        el('button', { type: 'button', className: 'srw-fb-chip-x', title: 'Remove this filter', 'aria-label': `Remove: ${a.label}`, textContent: '×', onClick: a.clear }),
+      ])));
+      chipsBox.hidden = !active.length;
+      if (clearBtn) clearBtn.hidden = !(active.length || hasText());
+    }
+    refresh();
+    return { node: el('div', { className: 'srw-filter-bar srw-fb' }, [row, panel, chipsBox]), refresh };
+  }
+
+  // opts.rebuild(): the caller builds the bar again (after a chip was removed or "clear" was clicked: the state is changed, the controls follow it).
+  function buildPagedFilterBar(state, filters, onChange, opts = {}) {
+    let shell = null;
+    const change = () => { if (shell) shell.refresh(); onChange(); };
+    const rebuild = opts.rebuild || (() => {});
+    let search = null;
     let debounce = null;
     if (filters.includes('search')) {
-      parts.push(el('input', {
+      search = el('input', {
         type: 'search', placeholder: filters.includes('description') ? 'Search title or studio…' : 'Search…',
         value: state.search, className: 'srw-search-input',
         oninput: (e) => {
           state.search = e.target.value;
+          if (shell) shell.refresh();
           clearTimeout(debounce);
           debounce = setTimeout(onChange, 300);
         },
-      }));
+      });
     }
+    const toggles = [];
     if (filters.includes('description')) {
-      const cb = el('input', { type: 'checkbox' });
-      cb.checked = state.description;
-      cb.addEventListener('change', () => { state.description = cb.checked; onChange(); });
-      parts.push(el('label', {
-        className: 'srw-provider-filter-item', title: 'Also match the scene description, not only title/studio',
-      }, [cb, ' incl. description']));
-      const tagCb = el('input', { type: 'checkbox' });
-      tagCb.checked = Boolean(state.tags);
-      tagCb.addEventListener('change', () => { state.tags = tagCb.checked; onChange(); });
-      parts.push(el('label', {
-        className: 'srw-provider-filter-item', title: 'Also match the scene\'s tags (e.g. "anal", "MILF") -- for videos whose title does not say it',
-      }, [tagCb, ' incl. tags']));
+      toggles.push(iconToggle('faFileLines', 'Also search the description', 'Also match the scene description, not only title/studio',
+        () => state.description, (v) => { state.description = v; }, change));
+      toggles.push(iconToggle('faTag', 'Also search the tags', 'Also match the scene\'s tags (e.g. "anal", "MILF") -- for videos whose title does not say it',
+        () => state.tags, (v) => { state.tags = v; }, change));
     }
+    const what = [];
     if (filters.includes('kind')) {
-      parts.push(buildSelect(
+      what.push(buildSelect(
         [{ key: 'all', label: 'All releases' }, { key: 'movies', label: 'Movies' }, { key: 'scenes', label: 'Scenes' }],
-        () => state.kind, (v) => { state.kind = v; onChange(); }, 'Scenes, movies or both (lists that hold both)'));
+        () => state.kind, (v) => { state.kind = v; change(); }, 'Scenes, movies or both (lists that hold both)'));
     }
     if (filters.includes('type')) {
-      parts.push(buildSelect(
+      what.push(buildSelect(
         [{ key: 'both', label: 'All types' }, { key: 'studio', label: 'Studios' }, { key: 'performer', label: 'Performer' }],
-        () => state.type, (v) => { state.type = v; onChange(); }, 'Came in through a watched studio or a watched performer'));
+        () => state.type, (v) => { state.type = v; change(); }, 'Came in through a watched studio or a watched performer'));
     }
     if (filters.includes('vr')) {
-      parts.push(buildSelect(
+      what.push(buildSelect(
         [{ key: 'all', label: 'VR + Non-VR' }, { key: 'vr', label: 'VR' }, { key: 'non_vr', label: 'Non-VR' }],
-        () => state.vr, (v) => { state.vr = v; onChange(); }, 'VR or flat releases'));
+        () => state.vr, (v) => { state.vr = v; change(); }, 'VR or flat releases'));
     }
     if (filters.includes('upgrades')) {
-      parts.push(buildSelect(
+      what.push(buildSelect(
         [{ key: 'all', label: 'With upgrades' }, { key: 'hide', label: 'Hide upgrades' }, { key: 'only', label: 'Only upgrades' }],
-        () => state.upgrades, (v2) => { state.upgrades = v2; onChange(); }, 'Upgrades replace a file that is already in your library (re-adds, better versions)'));
+        () => state.upgrades, (v2) => { state.upgrades = v2; change(); }, 'Upgrades replace a file that is already in your library (re-adds, better versions)'));
     }
     if (filters.includes('late')) {
-      parts.push(buildSelect(
+      what.push(buildSelect(
         [{ key: 'all', label: 'All additions' }, { key: 'only', label: 'Added late' }, { key: 'hide', label: 'Not added late' }],
-        () => state.late, (v) => { state.late = v; onChange(); }, 'Back-catalogue additions found by the scan'));
+        () => state.late, (v) => { state.late = v; change(); }, 'Back-catalogue additions found by the scan'));
     }
     if (filters.includes('cast')) {
       // Co-performer filter (v0.182.0): type a name (matches any part of it) or pick one from the list of the performers in these scenes.
@@ -2537,8 +2582,8 @@
       input.value = state.cast;
       const dl = el('datalist', { id: listId }, state.castOptions.map((o) => el('option', { value: o.name, label: `${o.name} (${o.count})` })));
       let t = null;
-      input.addEventListener('input', () => { clearTimeout(t); t = setTimeout(() => { state.cast = input.value; onChange(); }, 250); });
-      parts.push(el('span', {}, [input, dl]));
+      input.addEventListener('input', () => { clearTimeout(t); t = setTimeout(() => { state.cast = input.value; change(); }, 250); });
+      what.push(el('span', {}, [input, dl]));
     }
     if (filters.includes('pairing') && state.pairingOptions.length) {
       const sel = el('select', {
@@ -2547,33 +2592,67 @@
       }, [el('option', { value: '', textContent: 'All pairings' }),
         ...state.pairingOptions.map((o) => el('option', { value: o.key, textContent: `${o.label} (${o.count})` }))]);
       sel.value = state.pairing;
-      sel.addEventListener('change', () => { state.pairing = sel.value; onChange(); });
-      parts.push(sel);
+      sel.addEventListener('change', () => { state.pairing = sel.value; change(); });
+      what.push(sel);
     }
+    const when = [];
     if (filters.includes('dates')) {
       const from = el('input', { type: 'date', className: 'srw-list-date-filter', value: state.dateFrom });
       const until = el('input', { type: 'date', className: 'srw-list-date-filter', value: state.dateUntil });
-      from.addEventListener('change', () => { state.dateFrom = from.value; onChange(); });
-      until.addEventListener('change', () => { state.dateUntil = until.value; onChange(); });
-      parts.push(el('span', { className: 'srw-list-date-range' }, [
+      from.addEventListener('change', () => { state.dateFrom = from.value; change(); });
+      until.addEventListener('change', () => { state.dateUntil = until.value; change(); });
+      when.push(el('span', { className: 'srw-list-date-range' }, [
         el('span', { className: 'srw-list-date-range-label', textContent: 'from' }), from,
         el('span', { className: 'srw-list-date-range-label', textContent: 'until' }), until,
-        el('button', {
-          className: 'srw-btn srw-btn-sm', textContent: '×', title: 'Clear date filter',
-          onClick: () => { state.dateFrom = ''; state.dateUntil = ''; from.value = ''; until.value = ''; onChange(); },
-        }),
       ]));
     }
+    const source = [];
     if (filters.includes('providers')) {
       const boxes = providerKeys().map((key) => {
         const cb = el('input', { type: 'checkbox' });
         cb.checked = providerOn(state.providers, key);
-        cb.addEventListener('change', () => { state.providers[key] = cb.checked; onChange(); });
+        cb.addEventListener('change', () => { state.providers[key] = cb.checked; change(); });
         return el('label', { className: 'srw-provider-filter-item' }, [cb, ` ${providerLabel(key)}`]);
       });
-      parts.push(el('span', { className: 'srw-provider-filter' }, boxes));
+      source.push(el('span', { className: 'srw-provider-filter' }, boxes));
     }
-    return el('div', { className: 'srw-filter-bar' }, parts);
+    const also = [];
+    if (filters.includes('dismissed')) {
+      const cb = el('input', { type: 'checkbox' });
+      cb.checked = Boolean(state.showDismissed);
+      cb.addEventListener('change', () => { state.showDismissed = cb.checked; change(); });
+      also.push(el('label', { className: 'srw-provider-filter-item', title: 'Also list the releases you dismissed (marked, with Restore)' }, [cb, ' Show dismissed']));
+    }
+    const label = (list, v) => (list.find((o) => o[0] === v) || [v, v])[1];
+    const describe = () => {
+      const out = [];
+      const add = (text, undo) => out.push({ label: text, clear: () => { undo(); rebuild(); } });
+      if (state.type !== 'both' && filters.includes('type')) add(`Type: ${state.type === 'studio' ? 'Studios' : 'Performer'}`, () => { state.type = 'both'; });
+      if (state.kind !== 'all' && filters.includes('kind')) add(`Only ${state.kind}`, () => { state.kind = 'all'; });
+      if (state.vr !== 'all' && filters.includes('vr')) add(state.vr === 'vr' ? 'VR' : 'Non-VR', () => { state.vr = 'all'; });
+      if (state.upgrades !== 'all' && filters.includes('upgrades')) add(state.upgrades === 'only' ? 'Only upgrades' : 'Hide upgrades', () => { state.upgrades = 'all'; });
+      if (state.late !== 'all' && filters.includes('late')) add(state.late === 'only' ? 'Added late' : 'Not added late', () => { state.late = 'all'; });
+      if (state.cast && state.cast.trim() && filters.includes('cast')) add(`With ${state.cast.trim()}`, () => { state.cast = ''; });
+      if (state.pairing && filters.includes('pairing')) add(`Pairing ${label([[PAIRING_NONE, 'none listed']], state.pairing)}`, () => { state.pairing = ''; });
+      if ((state.dateFrom || state.dateUntil) && filters.includes('dates')) {
+        add(`${state.dateFrom || '…'} – ${state.dateUntil || '…'}`, () => { state.dateFrom = ''; state.dateUntil = ''; });
+      }
+      if (!providersAllOn(state.providers) && filters.includes('providers')) {
+        add(`Source: ${providerKeys().filter((k) => providerOn(state.providers, k)).map(providerLabel).join(', ') || 'none'}`, () => { providerKeys().forEach((k) => { state.providers[k] = true; }); });
+      }
+      if (state.showDismissed && filters.includes('dismissed')) add('Dismissed shown', () => { state.showDismissed = false; });
+      return out;
+    };
+    shell = buildFilterShell({
+      key: state, search, toggles,
+      clusters: [{ label: 'What', nodes: what }, { label: 'When', nodes: when }, { label: 'Source', nodes: source }, { label: 'Also show', nodes: also }],
+      describe, hasText: () => Boolean((state.search || '').trim()) || state.description || state.tags,
+      onClear: () => {
+        Object.assign(state, { ...defaultFilterState(), pairingOptions: state.pairingOptions, castOptions: state.castOptions });
+        rebuild();
+      },
+    });
+    return shell.node;
   }
 
   function buildPagerControls(page, totalPages, total, onPage, perPage = null) {
@@ -2722,6 +2801,13 @@
     let page = 1;
     let seq = 0;
     let barShown = false;
+    // The filter bar is built once the list needs it; after a chip was removed / "clear" it is built again from the (changed) state.
+    let barNode = null;
+    function mountBar() {
+      const fresh = buildPagedFilterBar(state, filters, () => load(1), { rebuild: () => { mountBar(); load(1); } });
+      if (barNode && barNode.parentNode) barNode.replaceWith(fresh); else (barTarget || barSlot).appendChild(fresh);
+      barNode = fresh;
+    }
     const kept = new Map(); // 'filters|page' -> { result, sig }
     const sigOf = (result) => `${result.total}|${(result.items || []).map(itemSig || ((it) => `${it.provider || ''}:${it.scene_stashdb_id || it.id || ''}:${it.status || ''}:${it.last_search_result || ''}:${it.download_job_id || ''}`)).join(',')}`;
     const keyFor = (targetPage) => `${JSON.stringify({ ...state, pairingOptions: 0, castOptions: 0 })}|${targetPage}|${perPage}`;
@@ -2742,7 +2828,7 @@
       // it (or a filter is already active) -- a 3-entry list doesn't get
       // a full toolbar.
       if (!barShown && filters.length && (result.total > showFilterBarFrom || active)) {
-        (barTarget || barSlot).appendChild(buildPagedFilterBar(state, filters, () => load(1)));
+        mountBar();
         barShown = true;
       }
       if (onTotal) onTotal(result.total, active);
@@ -3031,7 +3117,7 @@
     getRoute, onNavigate, initNavigationWatcher,
     el, waitForElement, entityIcon, buildPageHeader,
     watchKind, keepResult, recallResult, forgetResult, keptNote, searchStatusLabel, setBusy, openModal, sceneSubtitle, iconButton, busyIcon, ageWords, ageWarning, confirmInline, buildManagedList, buildSearchActions, whenNoOpenPanel, buildManualSearch, getSearchCapabilities,
-    rememberOpen, statusesFor, buildShowDismissedToggle, icon, mismatchWarning, buildPagedList, buildPager, releaseTitleNode, notify, dismissedNotice, releaseDismissedNotice, dismissRelease, buildWishlistDismiss, buildFilmDismissButtons, notifyHandoff, buildAddOnlyButton,
+    rememberOpen, statusesFor, buildFilterShell, iconToggle, icon, mismatchWarning, buildPagedList, buildPager, releaseTitleNode, notify, dismissedNotice, releaseDismissedNotice, dismissRelease, buildWishlistDismiss, buildFilmDismissButtons, notifyHandoff, buildAddOnlyButton,
     sceneUrl, notifyReadd, loadMetadataProviderUrls, loadProviders, resetProviders, providerInfo, providerLabel, providerKeys, providerOn, providersAllOn, providersSelected, isLateAdditionNew, buildLateAdditionBadge,
     buildFilteredPagedList, markRowBusy, buildBulkDismissBar, buildSelect, buildSafetyPanel, ignoreRenamers, pairingOptionsFor, castOptionsFor, buildPairingBadge, localPageFetcher, releaseQueryArgs, filterLocally, isFilterActive,
     describeProgress, applyProgress, attachLive, buildLiveHint,

@@ -2444,3 +2444,27 @@ a.srw-btn { text-decoration: none; display: inline-block; text-align: center; }
 .srw-show-dismissed { display: inline-flex; align-items: center; gap: 0.4rem; margin: 0 0 0.5rem; cursor: pointer; }
 .srw-dismissed-badge { display: inline-block; font-size: 0.86rem; padding: 0.05rem 0.4rem; border-radius: 0.6rem; border: 1px solid rgba(220, 53, 69, 0.6); color: rgba(220, 53, 69, 0.95); white-space: nowrap; }
 .srw-release-item.srw-release-dismissed { opacity: 0.75; }
+
+/* The filter bar (v0.253.6): row 1 (search, two icon switches, funnel, presets, clear), a panel with groups, chips of the active filters */
+.srw-filter-bar.srw-fb { display: flex; flex-direction: column; align-items: stretch; gap: 6px; justify-content: flex-start; }
+.srw-fb-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 7px; }
+.srw-fb-toggle.srw-btn-on, .srw-fb-funnel.srw-btn-on { background: #2b6cb0 !important; border-color: #2b6cb0 !important; color: #fff !important; }
+.srw-fb-funnel { position: relative; }
+.srw-fb-count { display: inline-block; margin-left: 0.3rem; min-width: 1.1rem; padding: 0 0.3rem; border-radius: 0.6rem; background: #2b6cb0; color: #fff; font-size: 0.78rem; line-height: 1.15rem; text-align: center; }
+.srw-fb-funnel.srw-btn-on .srw-fb-count { background: rgba(255, 255, 255, 0.25); }
+.srw-fb-panel { display: flex; flex-wrap: wrap; gap: 6px 22px; justify-content: center; padding: 8px 4px 2px; border-top: 1px solid rgba(128, 128, 128, 0.3); }
+.srw-fb-panel[hidden], .srw-fb-chips[hidden] { display: none; }
+.srw-fb-group { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; }
+.srw-fb-group-label { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em; opacity: 0.65; }
+.srw-fb-group-body { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 7px; }
+.srw-fb-chips { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
+.srw-fb-chip { display: inline-flex; align-items: center; gap: 0.3rem; padding: 0.05rem 0.2rem 0.05rem 0.55rem; border-radius: 0.8rem; border: 1px solid rgba(43, 108, 176, 0.8); font-size: 0.88rem; }
+.srw-fb-chip-x { background: none; border: 0; color: inherit; padding: 0 0.35rem; cursor: pointer; opacity: 0.8; }
+.srw-fb-chip-x:hover { opacity: 1; }
+.srw-sort-row .srw-filter-bar.srw-fb { flex-direction: row; flex-wrap: wrap; align-items: center; }
+
+/* A Calendar day with dismissed releases: a small badge next to the day number (v0.253.6) */
+.srw-cal-dayhead { display: flex; align-items: center; justify-content: space-between; gap: 0.3rem; }
+.srw-cal-dismissed-badge { display: inline-flex; align-items: center; gap: 0.2rem; padding: 0 0.4rem; border-radius: 0.6rem; border: 1px solid rgba(220, 53, 69, 0.6); background: transparent; color: rgba(220, 53, 69, 0.95); font-size: 0.78rem; line-height: 1.2rem; cursor: pointer; }
+.srw-cal-dismissed-badge:hover { background: rgba(220, 53, 69, 0.15); }
+.srw-cal-dismissed-badge .srw-icon { width: 0.8em; height: 0.8em; }

@@ -6,6 +6,11 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.253.6
+- **One filter bar for every list.** Every list that filters by more than a search text now has the same two-tier bar: search, two small icon switches (also search the description / the tags), a funnel that opens the other filters in groups (Presets / What / When / Source / Also show), a clear button, and the active filters as chips under the bar. Lists with only a search field are unchanged.
+- **"Show dismissed"** (group "Also show") on the Studio / Performer New releases list and on Releases > New releases > List: dismissed releases are marked and have Restore.
+- **Calendar: a badge on every day with dismissed releases.** A click opens the List view for that day with "Show dismissed" on and the calendar's own filter. Plugin only.
+
 ## 0.253.5
 - **"Show dismissed" on the Studio / Performer page.** A release you dismissed disappeared from "New releases" and looked as if it had never been loaded. A tick box "Show dismissed" above the list (always there, also when the list is empty) adds the dismissed releases: marked "Dismissed", dimmed, with a Restore button instead of Add / Dismiss; they are left out of the bulk Dismiss. The Releases page already had its Dismissed tab. Plugin only.
 
