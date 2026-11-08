@@ -6,6 +6,9 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.253.13
+- **"Add/Search all" is part of the selection bar** (Studio / Performer > Missing from Catalog): with nothing selected "Add/Search all 12", with a selection "Add/Search n" (the selected scenes that can be added), next to Dismiss. Plugin only.
+
 ## 0.253.12
 - **The selection bar, as in a mail list.** No Dismiss buttons while nothing is selected. A tick box (empty / some / whole page) with an arrow; the arrow opens *Select this page / Select all N matching / Clear selection*. With a selection the same row shows "n selected", **Dismiss n** (asks first, one Undo) and a clear x. The Releases > New releases List has the same bar with a tick box per row. The old bar comes back with `localStorage.setItem('srw:bulk-bar', 'classic')` (then reload).
 - The source chips of the filter bar are gone again (a "Source" chip shows only while a source is switched off).
