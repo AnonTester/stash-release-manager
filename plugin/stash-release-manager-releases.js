@@ -837,10 +837,9 @@
       if (listTypeFilter !== 'both') out.push({ label: `Type: ${listTypeFilter === 'studio' ? 'Studios' : 'Performer'}`, clear: undo(() => { listTypeFilter = 'both'; }) });
       if (listVrFilter !== 'all') out.push({ label: listVrFilter === 'vr' ? 'VR' : 'Non-VR', clear: undo(() => { listVrFilter = 'all'; }) });
       if (listDateFrom || listDateUntil) out.push({ label: `${listDateFrom || '…'} – ${listDateUntil || '…'}`, clear: undo(() => { listDateFrom = ''; listDateUntil = ''; }) });
-      {
-        const on = window.SRW.providerKeys().filter((k) => window.SRW.providerOn(listProviderFilter, k));
-        const all = window.SRW.providersAllOn(listProviderFilter);
-        on.forEach((k) => out.push({ label: window.SRW.providerLabel(k), quiet: all, clear: on.length > 1 ? undo(() => { listProviderFilter[k] = false; }) : () => {} }));
+      if (!window.SRW.providersAllOn(listProviderFilter)) {
+        out.push({ label: `Source: ${window.SRW.providerKeys().filter((k) => window.SRW.providerOn(listProviderFilter, k)).map(window.SRW.providerLabel).join(', ') || 'none'}`,
+          clear: undo(() => { window.SRW.providerKeys().forEach((k) => { listProviderFilter[k] = true; }); }) });
       }
       if (listShowDismissed) out.push({ label: 'Dismissed shown', clear: undo(() => { listShowDismissed = false; }) });
       return out;
@@ -908,41 +907,58 @@
     const bulkSlot = el('div');
     const newListWrap = el('div');
     let requestSeq = 0;
+    // The selection bar (v0.253.12, as on every other list): tick boxes per row, "Dismiss n", ONE Undo. The instance lives as long as this view, so the
+    // Undo note survives the re-reading of the list after a Dismiss.
+    let shownRows = [];
+    let shownTotal = 0;
+    let lastResponse = null;
+    const bulkBar = window.SRW.buildBulkDismissBar({
+      getPage: () => shownRows.filter((r) => r.status !== 'dismissed'),
+      getTotal: () => shownTotal,
+      filterActive: () => true,
+      loadAll: async () => {
+        const all = await window.SRW.runOp('releases_query', { ...listQueryArgs(), statuses: ['new'], ids_only: true });
+        return all.error ? all : all.scenes;
+      },
+      onDone: async () => { await loadPage(listPage); sectionsChanged(); },
+      redraw: () => { if (lastResponse) drawPage(lastResponse, listPage); }, // the boxes show the selection; no request
+    });
     async function loadPage(page) {
       const seq = ++requestSeq;
       const args = listQueryArgs();
       const response = await window.SRW.runOp('releases_query', { ...args, page, per_page: perPage });
       if (seq !== requestSeq) return; // a newer filter change is already on its way
-      newListWrap.innerHTML = '';
-      bulkSlot.innerHTML = '';
       if (response.error) {
+        newListWrap.innerHTML = '';
         newListWrap.appendChild(el('p', { textContent: `Error: ${response.error}` }));
         return;
       }
       const totalPages = Math.max(1, Math.ceil(response.total / perPage));
       if (page > totalPages) { listPage = totalPages; loadPage(totalPages); return; }
       listPage = page;
+      lastResponse = response;
+      drawPage(response, page);
+    }
+    function drawPage(response, page) {
+      const args = listQueryArgs();
+      const totalPages = Math.max(1, Math.ceil(response.total / perPage));
+      newListWrap.innerHTML = '';
+      bulkSlot.innerHTML = '';
+      shownRows = response.rows;
+      shownTotal = response.total;
+      bulkBar.update();
       const filterActive = Boolean(args.q || args.entity_type || args.vr || args.date_from || args.date_until
         || !window.SRW.providersAllOn(listProviderFilter));
-      // With the dismissed ones shown the counts would include them: no bulk Dismiss then (untick "Show dismissed" for it).
-      const bulkNode = buildBulkDismissSlot([], filterActive && !listShowDismissed, container, {
-        count: response.total,
-        pageScenes: response.rows.filter((r) => r.status !== 'dismissed').map((r) => ({ provider: r.provider, scene_stashdb_id: r.scene_stashdb_id })),
-        loadScenes: async () => {
-          const all = await window.SRW.runOp('releases_query', { ...args, statuses: ['new'], ids_only: true });
-          return all.error ? all : all.scenes;
-        },
-      });
-      // The bulk Dismiss bar left and the page selector in the middle, one row under the filter bar (v0.253.10; the same as every other list).
+      // The selection bar left and the page selector in the middle, one row under the filter bar (the same as every other list).
       if (!response.rows.length) {
-        newListWrap.appendChild(el('div', { className: 'srw-list-toolbar' }, [bulkNode, el('span')]));
+        newListWrap.appendChild(el('div', { className: 'srw-list-toolbar' }, [bulkBar.node, el('span')]));
         newListWrap.appendChild(el('p', {
           textContent: filterActive ? 'No releases match the current filter.' : 'No new releases.',
         }));
         return;
       }
-      newListWrap.appendChild(el('div', { className: 'srw-list-toolbar' }, [bulkNode, totalPages > 1 ? buildServerPager(page, totalPages, response.total, loadPage, perPage) : el('span')]));
-      newListWrap.appendChild(buildNewReleasesByDate(response.rows, container));
+      newListWrap.appendChild(el('div', { className: 'srw-list-toolbar' }, [bulkBar.node, totalPages > 1 ? buildServerPager(page, totalPages, response.total, loadPage, perPage) : el('span')]));
+      newListWrap.appendChild(buildNewReleasesByDate(response.rows, container, (r) => bulkBar.checkbox(r)));
       if (totalPages > 1) newListWrap.appendChild(buildServerPager(page, totalPages, response.total, loadPage, perPage));
       // Fire-and-forget Whisparr/library badge pass, capped to the newest
       // 50 rows of this page (see annotateWhisparrStatus()).
@@ -964,11 +980,11 @@
 
   // One flat list per page, newest first (v0.102.1) -- the Year > Month > Day folding is gone: the list pages server-side and
   // the filter bar's date range narrows it. Scene merge first, so a scene found via several watched entities is one row.
-  function buildNewReleasesByDate(releases, container) {
+  function buildNewReleasesByDate(releases, container, selectBox) {
     const merged = groupByScene(releases);
     const day = (r) => r.scene_date || r.scene_created.slice(0, 10);
     merged.sort((a, b) => day(b).localeCompare(day(a)));
-    return buildDayReleaseList(merged, container, true);
+    return buildDayReleaseList(merged, container, true, selectBox);
   }
 
   // Centralized in core.js (2026-09-21) -- see its own comment.
@@ -980,12 +996,14 @@
   const arrangeReleaseRow = window.SRW.arrangeReleaseRow;
   const rowMeta = window.SRW.rowMeta;
 
-  function buildDayReleaseList(dayReleases, container, showDate = false) {
+  function buildDayReleaseList(dayReleases, container, showDate = false, selectBox = null) {
     const { el } = window.SRW;
     const ul = el('ul', { className: 'srw-release-list' });
     dayReleases.forEach((r) => {
       const isTpdb = r.provider !== 'stashdb'; // any provider but StashDB: handled by this sidecar without Whisparr
       const items = [
+        // the tick box of the selection bar (first column); a dismissed row gets an empty cell so the columns stay aligned
+        selectBox ? (r.status === 'dismissed' ? el('span', { className: 'srw-row-select' }) : selectBox(r)) : null,
         buildReleaseThumb(r),
         buildEntityIcons(r.entity_types),
         buildLocalEntityLink(r),
@@ -1731,10 +1749,9 @@
       const out = [];
       if (S.type !== 'both') out.push({ label: `Type: ${S.type === 'studio' ? 'Studios' : 'Performer'}`, clear: undo(() => { S.type = 'both'; }) });
       if (S.vr !== 'all') out.push({ label: S.vr === 'vr' ? 'VR' : 'Non-VR', clear: undo(() => { S.vr = 'all'; }) });
-      {
-        const on = keys.filter((k) => window.SRW.providerOn(S.providers, k));
-        const all = on.length === keys.length;
-        on.forEach((k) => out.push({ label: window.SRW.providerLabel(k), quiet: all, clear: on.length > 1 ? undo(() => { S.providers[k] = false; }) : () => {} }));
+      if (!keys.every((k) => window.SRW.providerOn(S.providers, k))) {
+        out.push({ label: `Source: ${keys.filter((k) => window.SRW.providerOn(S.providers, k)).map(window.SRW.providerLabel).join(', ') || 'none'}`,
+          clear: undo(() => { keys.forEach((k) => { S.providers[k] = true; }); }) });
       }
       return out;
     };

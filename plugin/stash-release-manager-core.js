@@ -11,7 +11,7 @@
   // rule and the bug it caused when this drifted). Change this if you
   // install under a different folder name.
   // Must equal `version:` in stash-release-manager.yml (scripts/test_plugin_version.py checks it).
-  const PLUGIN_VERSION = '0.253.11';
+  const PLUGIN_VERSION = '0.253.12';
   const PLUGIN_ID = 'stash-release-manager';
   const PLUGIN_NAME = 'StashReleaseManager';
 
@@ -867,7 +867,7 @@
       probe.remove();
       const rgb = (c) => (c.match(/[\d.]+/g) || []).map(Number);
       // The measured `.form-control` came out white with dark text on this Stash (its theme styles the fields of its own pages only), next to dark
-      // buttons: the fields follow the secondary-button palette instead (v0.253.11) -- the same colors in every list, filter bar, form and dialog.
+      // buttons: the fields follow the secondary-button palette instead (v0.253.12) -- the same colors in every list, filter bar, form and dialog.
       if (btn.bg && btn.fg && rgb(btn.bg).length >= 3 && !(rgb(btn.bg).length === 4 && rgb(btn.bg)[3] === 0)) { bg = btn.bg; fg = btn.fg; border = btn.border; }
       if (!bg || bg === 'transparent' || (rgb(bg).length === 4 && rgb(bg)[3] === 0)) bg = getComputedStyle(document.body).backgroundColor;
       const [r, g, b] = rgb(bg);
@@ -2396,7 +2396,7 @@
       || !providersAllOn(f.providers) || f.late !== 'all' || f.upgrades !== 'all' || Boolean(f.pairing) || Boolean(f.cast.trim()));
   }
 
-  // The statuses a list asks for: its own, plus 'dismissed' while the filter "Show dismissed" is ticked (v0.253.11).
+  // The statuses a list asks for: its own, plus 'dismissed' while the filter "Show dismissed" is ticked (v0.253.12).
   function statusesFor(f, base) {
     return f && f.showDismissed ? [...base, 'dismissed'] : base;
   }
@@ -2468,7 +2468,7 @@
     return sel;
   }
 
-  // ==================== The filter bar (v0.253.11) ====================
+  // ==================== The filter bar (v0.253.12) ====================
   //
   // One look for every list that filters by more than a search text. Row 1 is always the same and short: [search] [description] [tags] [Filters (n)]
   // [presets] [clear]; the two small icon switches widen the search to the scene's description / tags, the funnel opens a panel with the other filters
@@ -2509,9 +2509,9 @@
       funnel.classList.toggle('srw-btn-on', !panel.hidden);
       drawArrow();
     }
-    // An eraser, not another x: the chips carry the x of their own (v0.253.11).
+    // An eraser, not another x: the chips carry the x of their own (v0.253.12).
     const clearBtn = onClear ? iconButton('button', 'faEraser', 'Clear all filters', { className: 'srw-btn srw-fb-clear', title: 'Clear all filters', onClick: onClear }) : null;
-    // The chips stand in row 1, right behind the funnel (v0.253.11): the active filters are read where the search is.
+    // The chips stand in row 1, right behind the funnel (v0.253.12): the active filters are read where the search is.
     const row = el('div', { className: 'srw-fb-row' }, [search, ...toggles, funnel, chipsBox, presets, clearBtn]);
     function refresh() {
       const shown = describe();
@@ -2647,11 +2647,8 @@
       if ((state.dateFrom || state.dateUntil) && filters.includes('dates')) {
         add(`${state.dateFrom || '…'} – ${state.dateUntil || '…'}`, () => { state.dateFrom = ''; state.dateUntil = ''; });
       }
-      if (filters.includes('providers')) {
-        // One chip per selected source, always (v0.253.11): which sources the list shows is read here; x switches that source off (the last one stays).
-        const on = providerKeys().filter((k) => providerOn(state.providers, k));
-        const all = providersAllOn(state.providers);
-        on.forEach((k) => out.push({ label: providerLabel(k), quiet: all, clear: () => { if (on.length > 1) { state.providers[k] = false; rebuild(); } } }));
+      if (!providersAllOn(state.providers) && filters.includes('providers')) {
+        add(`Source: ${providerKeys().filter((k) => providerOn(state.providers, k)).map(providerLabel).join(', ') || 'none'}`, () => { providerKeys().forEach((k) => { state.providers[k] = true; }); });
       }
       if (state.showDismissed && filters.includes('dismissed')) add('Dismissed shown', () => { state.showDismissed = false; });
       return out;
@@ -2692,7 +2689,7 @@
   // both ask first. ONE Undo puts every row back to the status it had (the sidecar answers with the old rows). Returns { node, update() }: call update()
   // whenever the list was drawn.
   // Other kinds of rows (the movies list) bring their own `keyOf` / `pick` / `dismissChunk(items) -> {previous} | {error}` / `undo(rows)`.
-  function buildBulkDismissBar({
+  function buildBulkDismissBarClassic({
     getPage, getTotal, loadAll, filterActive, onDone, noun = 'releases',
     keyOf = (r) => `${r.provider}\u0000${r.scene_stashdb_id}`,
     pick = (r) => ({ provider: r.provider, scene_stashdb_id: r.scene_stashdb_id }),
@@ -2796,6 +2793,134 @@
     return { node, update, checkbox };
   }
 
+  // ---- the selection bar, menu style (v0.253.12) ----
+  // The bar of every list used to show up to seven things (a tick box, "Dismiss n on this page", "Dismiss all N matching", "Select all N matching",
+  // "Dismiss n selected", "Clear selection ...), also with nothing selected. Now, as in a mail list:
+  //   nothing selected:  [tick box] [arrow]          the tick box selects / unselects the page, the arrow opens: Select this page / Select all N matching / Clear
+  //   something selected: [tick box] [arrow] n selected . Select all N | Dismiss n | x
+  // ("Select all N" appears in the counter while the whole page is selected and more match). Dismiss asks first and has ONE Undo, as before. Same
+  // options, same results as buildBulkDismissBarClassic(); the way back is `localStorage.setItem('srw:bulk-bar', 'classic')` (then reload) -- or revert
+  // the commit of this version. Lists that bring their own selection (selectUi: false) keep the classic bar.
+  function bulkBarStyle() {
+    try { return window.localStorage.getItem('srw:bulk-bar') === 'classic' ? 'classic' : 'menu'; } catch (e) { return 'menu'; }
+  }
+
+  function buildBulkDismissBar(opts) {
+    if (opts.selectUi === false || bulkBarStyle() === 'classic') return buildBulkDismissBarClassic(opts);
+    return buildBulkDismissBarMenu(opts);
+  }
+
+  function buildBulkDismissBarMenu({
+    getPage, getTotal, loadAll, onDone, noun = 'releases',
+    keyOf = (r) => `${r.provider}\u0000${r.scene_stashdb_id}`,
+    pick = (r) => ({ provider: r.provider, scene_stashdb_id: r.scene_stashdb_id }),
+    dismissChunk = (chunk) => runOp('releases_bulk_dismiss', { scenes: chunk }),
+    undo = (rows) => runOp('releases_restore', { rows }),
+    redraw = () => {}, selection = null,
+  }) {
+    const node = el('div', { className: 'srw-bulk-dismiss srw-bulk-menu-bar' });
+    let last = null; // { rows, count } -- the Undo
+    const chosen = new Map();
+    const sel = selection || {
+      has: (k) => chosen.has(k), add: (k, item) => chosen.set(k, item), delete: (k) => chosen.delete(k), clear: () => chosen.clear(),
+      items: () => [...chosen.values()], get size() { return chosen.size; },
+    };
+    const unique = (list) => {
+      const seen = new Set();
+      return list.filter((r) => { const k = keyOf(r); if (seen.has(k)) return false; seen.add(k); return true; });
+    };
+    const bare = (list) => unique(list).map(pick);
+    async function dismiss(scenes) {
+      const rows = [];
+      for (let i = 0; i < scenes.length; i += 300) {
+        const res = await dismissChunk(scenes.slice(i, i + 300));
+        if (res.error) { notify('Bulk dismiss', `Bulk dismiss failed: ${res.error}`, 'error'); break; }
+        rows.push(...(res.previous || []));
+      }
+      if (rows.length) last = { rows, count: new Set(rows.map(keyOf)).size };
+      scenes.forEach((x) => sel.delete(keyOf(x)));
+      // `all` = more than the page was dismissed: the caller reads its list again
+      await onDone(scenes, scenes.length > bare(getPage()).length);
+      update();
+    }
+    function checkbox(item) { // the tick box of one row; the caller puts it first in the row
+      const key = keyOf(item);
+      const cb = el('input', { type: 'checkbox', className: 'srw-row-select', title: 'Select this row' });
+      cb.checked = sel.has(key);
+      cb.addEventListener('change', () => { if (cb.checked) sel.add(key, pick(item)); else sel.delete(key); update(); });
+      return cb;
+    }
+    const selectPage = (on) => { bare(getPage()).forEach((x) => (on ? sel.add(keyOf(x), x) : sel.delete(keyOf(x)))); redraw(); update(); };
+    const clearAll = () => { sel.clear(); redraw(); update(); };
+    async function selectAllMatching() {
+      const all = await loadAll();
+      if (!Array.isArray(all)) { notify('Select', `Could not load the matching rows: ${(all && all.error) || 'unknown'}`, 'error'); return; }
+      bare(all).forEach((x) => sel.add(keyOf(x), x));
+      redraw(); update();
+    }
+    function update() {
+      node.innerHTML = '';
+      if (last) {
+        node.appendChild(el('span', { className: 'srw-bulk-dismiss-note' }, [
+          el('span', { textContent: `Dismissed ${last.count}.` }),
+          el('button', { className: 'srw-btn srw-btn-sm', textContent: 'Undo', onClick: async (e) => {
+            const btn = e.currentTarget; btn.disabled = true;
+            const res = await undo(last.rows);
+            if (res.error) { notify('Undo', `Undo failed: ${res.error}`, 'error'); btn.disabled = false; return; }
+            last = null;
+            await onDone([], true);
+            update();
+          } }),
+          el('button', { className: 'srw-btn srw-btn-sm', textContent: '×', title: 'Hide', onClick: () => { last = null; update(); } }),
+        ]));
+      }
+      const page = bare(getPage());
+      const total = getTotal();
+      const n = sel.size;
+      if (!page.length && !n) return;
+      const onPage = page.filter((x) => sel.has(keyOf(x))).length;
+      const box = el('input', { type: 'checkbox', className: 'srw-bulk-tick', title: 'Select / unselect every row on this page' });
+      box.checked = page.length > 0 && onPage === page.length;
+      box.indeterminate = onPage > 0 && onPage < page.length;
+      box.addEventListener('change', () => selectPage(box.checked));
+      // the arrow: a small menu with the same choices
+      const menu = el('div', { className: 'srw-bulk-menu', hidden: true });
+      const item = (label, fn, disabled = false) => {
+        const b = el('button', { type: 'button', className: 'srw-bulk-menu-item', textContent: label, onClick: () => { menu.hidden = true; fn(); } });
+        b.disabled = disabled;
+        return b;
+      };
+      menu.append(
+        item('Select this page', () => selectPage(true), !page.length),
+        item(total > page.length ? `Select all ${total} matching` : 'Select all matching', selectAllMatching, !(total > n)),
+        item('Clear selection', clearAll, !n),
+      );
+      const arrow = iconButton('button', 'faChevronDown', 'Selection options', { className: 'srw-btn srw-btn-sm srw-bulk-arrow', title: 'Select this page / Select all matching / Clear selection' });
+      arrow.addEventListener('click', (e) => {
+        e.stopPropagation();
+        menu.hidden = !menu.hidden;
+        if (!menu.hidden) {
+          const close = () => { menu.hidden = true; document.removeEventListener('click', close); };
+          setTimeout(() => document.addEventListener('click', close), 0);
+        }
+      });
+      node.appendChild(el('span', { className: 'srw-bulk-menu-wrap' }, [box, arrow, menu]));
+      if (n > 0) {
+        const count = el('span', { className: 'srw-bulk-count' }, [`${n} selected`]);
+        if (total > n && onPage === page.length) {
+          count.append(' · ', el('a', { href: '#', className: 'srw-bulk-all', textContent: `Select all ${total}`, onClick: (e) => { e.preventDefault(); selectAllMatching(); } }));
+        }
+        node.appendChild(count);
+        const btn = el('button', { className: 'srw-btn srw-btn-sm srw-btn-danger', textContent: `Dismiss ${n}` });
+        btn.addEventListener('click', () => confirmInline(btn, `Dismiss the ${n} selected ${noun}?`, () => dismiss(sel.items().map(pick)), { danger: true }));
+        node.appendChild(btn);
+        node.appendChild(iconButton('button', 'faXmark', 'Clear selection', { className: 'srw-btn srw-btn-sm', title: 'Clear the selection', onClick: clearAll }));
+      }
+    }
+    update();
+    return { node, update, checkbox };
+  }
+
   function buildFilteredPagedList({
     filters = [], fetchPage, renderItems, perPage = 40,
     emptyText = 'Nothing here.', filteredEmptyText = 'Nothing matches the current filter.',
@@ -2846,7 +2971,7 @@
         barShown = true;
       }
       if (onTotal) onTotal(result.total, active);
-      // One row under the filter bar (v0.253.11): the list's "select this page / Dismiss" bar on the left, the page selector in the middle. The bar is
+      // One row under the filter bar (v0.253.12): the list's "select this page / Dismiss" bar on the left, the page selector in the middle. The bar is
       // the one the caller put right before the list (or `bulkBar`); it is taken into this row, so every list gets the same place. It stays when the
       // list is empty (its Undo note is in it).
       const before = node.previousElementSibling;

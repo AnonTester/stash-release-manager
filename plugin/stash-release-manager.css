@@ -2498,3 +2498,15 @@ a.srw-btn { text-decoration: none; display: inline-block; text-align: center; }
 
 /* A chip that only tells (the sources while all are on): not highlighted like an active filter */
 .srw-fb-chip.srw-fb-chip-quiet { border-color: rgba(128, 128, 128, 0.55); opacity: 0.85; }
+
+/* The selection bar, menu style (v0.253.12): tick box + arrow (a small menu), the counter, Dismiss n, a clear x */
+.srw-bulk-menu-bar { gap: 0.6rem; }
+.srw-bulk-menu-wrap { position: relative; display: inline-flex; align-items: center; gap: 0.2rem; }
+.srw-bulk-menu-wrap .srw-bulk-tick { margin: 0 0.15rem; }
+.srw-bulk-menu { position: absolute; top: 100%; left: 0; z-index: 30; display: flex; flex-direction: column; min-width: 13rem; margin-top: 0.2rem; padding: 0.25rem;
+  background: var(--srw-field-bg, #394b59); color: var(--srw-field-fg, #fff); border: 1px solid var(--srw-field-border, rgb(85, 85, 85)); border-radius: 4px; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4); }
+.srw-bulk-menu[hidden] { display: none; }
+.srw-bulk-menu-item { text-align: left; background: none; border: 0; color: inherit; padding: 0.3rem 0.6rem; border-radius: 3px; cursor: pointer; white-space: nowrap; }
+.srw-bulk-menu-item:hover:not(:disabled) { background: rgba(255, 255, 255, 0.12); }
+.srw-bulk-menu-item:disabled { opacity: 0.45; cursor: default; }
+.srw-bulk-menu-bar .srw-bulk-count { white-space: nowrap; }
