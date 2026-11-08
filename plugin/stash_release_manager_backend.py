@@ -196,6 +196,8 @@ def main():
         result = _post(sidecar_url, "/films/groups/assign-undo", {"applied": args.get("applied") or []}, timeout=300)
     elif mode == "films_group_name_undo":
         result = _post(sidecar_url, "/films/groups/name-undo", {"applied": args.get("applied") or []}, timeout=180)
+    elif mode == "films_seed_cover":
+        result = _get(sidecar_url, f"/films/{args.get('id')}/seed-cover-data", timeout=30)
     elif mode == "films_imported":
         result = _get(sidecar_url, "/films/imported", timeout=30)
     elif mode == "releases_local_scenes":

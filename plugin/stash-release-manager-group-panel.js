@@ -333,7 +333,7 @@
         el('ul', { className: 'srw-release-list' }, items.map((i) => {
           const [label, cls] = STATE[i.state] || [i.state, ''];
           return el('li', { className: 'srw-release-item srw-film-row' }, [
-            i.image_url ? el('img', { className: 'srw-film-thumb srw-film-thumb-sm', src: i.image_url, loading: 'lazy', alt: '' }) : null,
+            i.image_url ? el('img', { className: 'srw-film-thumb srw-film-thumb-sm', src: window.SRW.imageSrc(i.image_url), loading: 'lazy', alt: '' }) : null,
             el('div', { className: 'srw-row-info' }, [
               el('div', {}, [el('span', { className: 'srw-release-title', textContent: i.title }),
                 el('span', { className: `srw-film-class ${cls}`, textContent: label })]),

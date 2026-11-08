@@ -379,7 +379,7 @@
       const cls = `srw-search-card-image${landscape ? ' srw-search-card-image-scene' : ''}${contain ? ' srw-search-card-image-contain' : ''}`;
       const box = () => el('div', { className: `${cls} srw-search-card-noimage` });
       if (!url) return box();
-      const img = el('img', { src: url, className: cls, alt: '', loading: 'lazy' });
+      const img = el('img', { src: window.SRW.imageSrc(url), className: cls, alt: '', loading: 'lazy' });
       img.addEventListener('error', () => img.replaceWith(box()));
       return img;
     }

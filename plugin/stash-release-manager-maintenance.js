@@ -2988,7 +2988,7 @@
     // One result = cover, title, "Preview" (the page itself in a new tab: that is where it reads well) and "Create group" (Stash's scraper reads
     // the page and the group is created with that data).
     const resultRow = (url, title, image, type) => el('div', { className: 'srw-manual-search-result' }, [
-      image ? el('img', { className: 'srw-film-thumb srw-film-thumb-sm', src: image, alt: '', loading: 'lazy' }) : null,
+      image ? el('img', { className: 'srw-film-thumb srw-film-thumb-sm', src: window.SRW.imageSrc(image), alt: '', loading: 'lazy' }) : null,
       el('span', { className: 'srw-release-title', textContent: title || url }),
       type ? el('span', { className: 'srw-review-candidate-meta', textContent: type }) : null,
       el('a', { className: 'srw-btn srw-btn-sm', href: url, target: '_blank', rel: 'noopener noreferrer', textContent: 'Preview', title: 'Open the page in a new tab' }),

@@ -11,7 +11,7 @@
   // rule and the bug it caused when this drifted). Change this if you
   // install under a different folder name.
   // Must equal `version:` in stash-release-manager.yml (scripts/test_plugin_version.py checks it).
-  const PLUGIN_VERSION = '0.255.0';
+  const PLUGIN_VERSION = '0.255.1';
   const PLUGIN_ID = 'stash-release-manager';
   const PLUGIN_NAME = 'StashReleaseManager';
 
@@ -210,6 +210,19 @@
     } catch (e) { return url; }
   }
 
+  // The address to load a picture from (v0.255.1), whichever way the page was opened. Stash's own picture links lose the host Stash knows itself by
+  // (stashUrl); a provider's http:// address is turned into https:// on an https page (the browser refuses or silently upgrades such mixed
+  // content, and the provider's CDNs answer on https); data: / blob: / same-site paths stay as they are. Pictures that come from the sidecar are
+  // data: URLs (covers) and never need its address.
+  function imageSrc(url) {
+    if (typeof url !== 'string' || !url) return url;
+    if (/^(data|blob):/i.test(url) || url.startsWith('/')) return url;
+    const own = stashUrl(url);
+    if (own !== url) return own;
+    if (window.location.protocol === 'https:' && /^http:\/\//i.test(url)) return url.replace(/^http:/i, 'https:');
+    return url;
+  }
+
   function sceneUrl(provider, sceneStashdbId) {
     if (provider === 'theporndb') return `https://theporndb.net/scenes/${sceneStashdbId}`;
     if (provider === 'stashdb') return `https://stashdb.org/scenes/${sceneStashdbId}`;
@@ -304,7 +317,7 @@
       const c = covers[`${e.provider}:${e.scene}`];
       if (c && c.stash) { e.link.href = `/scenes/${c.stash}`; e.img.src = `/scene/${c.stash}/screenshot`; return; }
       if (c && c.data) { e.img.src = c.data; return; }
-      if (e.fallback) { e.img.src = e.fallback; return; }
+      if (e.fallback) { e.img.src = imageSrc(e.fallback); return; }
       e.link.remove();
     });
   }
@@ -321,7 +334,7 @@
     // A cover that is blocked or gone leaves no broken-image icon behind.
     img.addEventListener('error', () => link.remove());
     if (scene) queueCover({ link, img, provider: r.provider || 'stashdb', scene, fallback: r.image_url || '' });
-    else img.src = r.image_url;
+    else img.src = imageSrc(r.image_url);
     return link;
   }
 
@@ -3388,7 +3401,7 @@
   window.SRW = {
     PLUGIN_ID, PLUGIN_NAME,
     getContentScope, resetContentScope, scopeAllows,
-    getSettings, runOp, sidecarWsUrl, stashUrl, copyText,
+    getSettings, runOp, sidecarWsUrl, stashUrl, imageSrc, copyText,
     getRoute, onNavigate, initNavigationWatcher,
     el, waitForElement, entityIcon, buildPageHeader,
     watchKind, keepResult, recallResult, forgetResult, keptNote, searchStatusLabel, setBusy, openModal, sceneSubtitle, iconButton, busyIcon, ageWords, ageWarning, confirmInline, buildManagedList, buildSearchActions, whenNoOpenPanel, buildManualSearch, getSearchCapabilities,

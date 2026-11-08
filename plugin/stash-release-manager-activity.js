@@ -818,7 +818,7 @@
   function movieThumb(f) {
     if (!f.image_url) return null;
     const { el } = window.SRW;
-    const img = el('img', { className: 'srw-release-thumb srw-movie-cover', src: f.image_url, alt: '', loading: 'lazy' });
+    const img = el('img', { className: 'srw-release-thumb srw-movie-cover', src: window.SRW.imageSrc(f.image_url), alt: '', loading: 'lazy' });
     // The cover opens the movie's Group in Stash; a movie without a Group (nothing was grouped yet) has nothing to open and says so (v0.243.16).
     const wrap = f.stash_group_id
       ? el('a', { className: 'srw-release-thumb-link', href: `/groups/${f.stash_group_id}`, target: '_blank', rel: 'noopener noreferrer', title: 'Open the group in Stash (new tab)' }, [img])
