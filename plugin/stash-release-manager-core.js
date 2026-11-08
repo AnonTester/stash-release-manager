@@ -11,7 +11,7 @@
   // rule and the bug it caused when this drifted). Change this if you
   // install under a different folder name.
   // Must equal `version:` in stash-release-manager.yml (scripts/test_plugin_version.py checks it).
-  const PLUGIN_VERSION = '0.253.13';
+  const PLUGIN_VERSION = '0.253.14';
   const PLUGIN_ID = 'stash-release-manager';
   const PLUGIN_NAME = 'StashReleaseManager';
 
@@ -867,7 +867,7 @@
       probe.remove();
       const rgb = (c) => (c.match(/[\d.]+/g) || []).map(Number);
       // The measured `.form-control` came out white with dark text on this Stash (its theme styles the fields of its own pages only), next to dark
-      // buttons: the fields follow the secondary-button palette instead (v0.253.13) -- the same colors in every list, filter bar, form and dialog.
+      // buttons: the fields follow the secondary-button palette instead (v0.253.14) -- the same colors in every list, filter bar, form and dialog.
       if (btn.bg && btn.fg && rgb(btn.bg).length >= 3 && !(rgb(btn.bg).length === 4 && rgb(btn.bg)[3] === 0)) { bg = btn.bg; fg = btn.fg; border = btn.border; }
       if (!bg || bg === 'transparent' || (rgb(bg).length === 4 && rgb(bg)[3] === 0)) bg = getComputedStyle(document.body).backgroundColor;
       const [r, g, b] = rgb(bg);
@@ -2396,7 +2396,7 @@
       || !providersAllOn(f.providers) || f.late !== 'all' || f.upgrades !== 'all' || Boolean(f.pairing) || Boolean(f.cast.trim()));
   }
 
-  // The statuses a list asks for: its own, plus 'dismissed' while the filter "Show dismissed" is ticked (v0.253.13).
+  // The statuses a list asks for: its own, plus 'dismissed' while the filter "Show dismissed" is ticked (v0.253.14).
   function statusesFor(f, base) {
     return f && f.showDismissed ? [...base, 'dismissed'] : base;
   }
@@ -2468,7 +2468,7 @@
     return sel;
   }
 
-  // ==================== The filter bar (v0.253.13) ====================
+  // ==================== The filter bar (v0.253.14) ====================
   //
   // One look for every list that filters by more than a search text. Row 1 is always the same and short: [search] [description] [tags] [Filters (n)]
   // [presets] [clear]; the two small icon switches widen the search to the scene's description / tags, the funnel opens a panel with the other filters
@@ -2509,9 +2509,9 @@
       funnel.classList.toggle('srw-btn-on', !panel.hidden);
       drawArrow();
     }
-    // An eraser, not another x: the chips carry the x of their own (v0.253.13).
+    // An eraser, not another x: the chips carry the x of their own (v0.253.14).
     const clearBtn = onClear ? iconButton('button', 'faEraser', 'Clear all filters', { className: 'srw-btn srw-fb-clear', title: 'Clear all filters', onClick: onClear }) : null;
-    // The chips stand in row 1, right behind the funnel (v0.253.13): the active filters are read where the search is.
+    // The chips stand in row 1, right behind the funnel (v0.253.14): the active filters are read where the search is.
     const row = el('div', { className: 'srw-fb-row' }, [search, ...toggles, funnel, chipsBox, presets, clearBtn]);
     function refresh() {
       const shown = describe();
@@ -2793,7 +2793,7 @@
     return { node, update, checkbox };
   }
 
-  // ---- the selection bar, menu style (v0.253.13) ----
+  // ---- the selection bar, menu style (v0.253.14) ----
   // The bar of every list used to show up to seven things (a tick box, "Dismiss n on this page", "Dismiss all N matching", "Select all N matching",
   // "Dismiss n selected", "Clear selection ...), also with nothing selected. Now, as in a mail list:
   //   nothing selected:  [tick box] [arrow]          the tick box selects / unselects the page, the arrow opens: Select this page / Select all N matching / Clear
@@ -2805,9 +2805,10 @@
     try { return window.localStorage.getItem('srw:bulk-bar') === 'classic' ? 'classic' : 'menu'; } catch (e) { return 'menu'; }
   }
 
-  // `extraAction` (v0.253.13): one more thing the list does with its rows, shown IN the bar so it reads as part of the selection (the Missing from Catalog
+  // `extraAction` (v0.253.14): one more thing the list does with its rows, shown IN the bar so it reads as part of the selection (the Missing from Catalog
   // list's "Add/Search"): { pool() -> every row it can act on, keyOf-compatible with the list's rows; label(n, ofSelection) -> text; title; run(rows, button) }.
-  // With a selection it acts on the selected rows of the pool, without one on the whole pool.
+  // With a selection it acts on the selected rows of the pool (the bar shows the button only then); `menuLabel(n)` -> an entry of the arrow menu that selects the
+  // whole pool. The classic bar has no menu: it shows the button for the whole pool.
   function bulkExtraButton(extra, selected, keyOf) {
     if (!extra) return null;
     const pool = extra.pool() || [];
@@ -2914,8 +2915,13 @@
       menu.append(
         item('Select this page', () => selectPage(true), !page.length),
         item(total > page.length ? `Select all ${total} matching` : 'Select all matching', selectAllMatching, !(total > n)),
-        item('Clear selection', clearAll, !n),
       );
+      if (extraAction && extraAction.menuLabel) {
+        const pool = extraAction.pool() || [];
+        const fresh = pool.filter((r) => !sel.has(keyOf(r)));
+        menu.append(item(extraAction.menuLabel(pool.length), () => { pool.forEach((r) => sel.add(keyOf(r), pick(r))); redraw(); update(); }, !fresh.length));
+      }
+      menu.append(item('Clear selection', clearAll, !n));
       const arrow = iconButton('button', 'faChevronDown', 'Selection options', { className: 'srw-btn srw-btn-sm srw-bulk-arrow', title: 'Select this page / Select all matching / Clear selection' });
       arrow.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -2926,8 +2932,8 @@
         }
       });
       node.appendChild(el('span', { className: 'srw-bulk-menu-wrap' }, [box, arrow, menu]));
-      const extraBtn = bulkExtraButton(extraAction, n > 0 ? sel : null, keyOf);
-      if (n === 0 && extraBtn) node.appendChild(extraBtn);
+      // The extra action shows only WITH a selection (like Dismiss); "everything that can be added" is a choice of the arrow menu (it selects them).
+      const extraBtn = n > 0 ? bulkExtraButton(extraAction, sel, keyOf) : null;
       if (n > 0) {
         const count = el('span', { className: 'srw-bulk-count' }, [`${n} selected`]);
         if (total > n && onPage === page.length) {
@@ -2995,7 +3001,7 @@
         barShown = true;
       }
       if (onTotal) onTotal(result.total, active);
-      // One row under the filter bar (v0.253.13): the list's "select this page / Dismiss" bar on the left, the page selector in the middle. The bar is
+      // One row under the filter bar (v0.253.14): the list's "select this page / Dismiss" bar on the left, the page selector in the middle. The bar is
       // the one the caller put right before the list (or `bulkBar`); it is taken into this row, so every list gets the same place. It stays when the
       // list is empty (its Undo note is in it).
       const before = node.previousElementSibling;

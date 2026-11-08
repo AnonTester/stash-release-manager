@@ -6,6 +6,9 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.253.14
+- **No "Add/Search" without a selection** (Missing from Catalog), just like Dismiss: the button shows only while something is selected; "everything that can be added" is **Select all N that can be added** in the arrow menu. Plugin only.
+
 ## 0.253.13
 - **"Add/Search all" is part of the selection bar** (Studio / Performer > Missing from Catalog): with nothing selected "Add/Search all 12", with a selection "Add/Search n" (the selected scenes that can be added), next to Dismiss. Plugin only.
 

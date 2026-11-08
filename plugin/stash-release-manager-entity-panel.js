@@ -1131,6 +1131,7 @@
       const extraAction = {
         pool: () => eligibleForBulk,
         label: (n, ofSelection) => (ofSelection ? `Add/Search ${n}` : `Add/Search all ${n}`),
+        menuLabel: (n) => `Select all ${n} that can be added`,
         title: 'Put the scenes on the wishlist and search for them (scenes already tracked are searched again). They are sent one at a time.',
         run: (rows, btn) => runBulkHandoff(rows, btn, bulkRefresh),
       };
