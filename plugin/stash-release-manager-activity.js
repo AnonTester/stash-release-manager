@@ -998,7 +998,7 @@
         () => window.SRW.runOp('releases_review_candidate_reject', { provider: r.provider, scene_stashdb_id: r.scene_stashdb_id }),
         c.title, null,
         () => window.SRW.runOp('releases_review_candidate_restore', { provider: r.provider, scene_stashdb_id: r.scene_stashdb_id }),
-      ), reviewThumb(r.image_url, sceneUrl(r.provider, r.scene_stashdb_id))));
+      ), window.SRW.buildReleaseThumb(r)));
     });
     filmsReview.forEach((f) => { // movies: the automatic movie search found a plausible release (Reject = never this release for this movie)
       const c = f.review_candidate || {};

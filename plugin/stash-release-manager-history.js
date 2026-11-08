@@ -154,9 +154,9 @@
     // Movies of the Movies wishlist that were imported (v0.128.2) sit in the same list, newest first.
     const films = await window.SRW.runOp('films_imported').catch(() => ({ rows: [] }));
     const section = await window.SRW_Activity.buildSection('Imported', window.SRW.groupByScene(response.rows), {
-      emptyText: 'Nothing imported yet.', sortBy: 'imported_at', collapsed: true, showThumb: false,
+      emptyText: 'Nothing imported yet.', sortBy: 'imported_at', collapsed: true,
       rememberKey: 'history:Imported', openScene: true,
-      movieRows: window.SRW_Activity.movieRows((films && films.rows) || [], new Map(), slot, { thumb: false }), // text only, like the scenes here
+      movieRows: window.SRW_Activity.movieRows((films && films.rows) || [], new Map(), slot, { thumb: true }),
     });
     section.open = true;
     section.classList.add('srw-panel-flat');

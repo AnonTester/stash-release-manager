@@ -6,6 +6,11 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.254.0
+- **Every scene row has a cover again** (Releases > On Wishlist / Imported / Dismissed / Added late, the Calendar, the Studio and Performer panels, Activity > Downloading & importing / Imported / Wishlist). Until now a cover was only drawn while the release row still held the stash-box's image address, and that address was deleted as soon as the scene was in Stash (to keep the database small): upgrades, backlog additions and everything imported showed no cover. Pages are paged now, so the cover loads that this was meant to avoid are no longer a problem.
+- **Where the cover comes from:** a scene that is in Stash shows Stash's own cover. Any other scene shows its stash-box cover (StashDB, ThePornDB, an added stash-box), which the sidecar fetches once, cuts to a small JPEG (320 px wide, about 10-20 KB) and keeps under `/data/covers`; the browser gets it through the plugin's normal calls, so it works on an https Stash page too. As soon as the scene is in Stash the cached copy is deleted; copies of scenes without a release row are swept daily. A scene whose stash-box has no image (or blocks it) is asked about again after a day, not on every view.
+- New `POST /releases/covers`; plugin backend mode `releases_covers`.
+
 ## 0.253.19
 - **A torrent in qBittorrent's error state now says why** (Activity > Downloading & importing, and the History line). qBittorrent only gives the reason in its log, so the monitor reads it from there: "qBittorrent cannot write to <folder> (permission denied) -- give the qBittorrent user write access to that folder, then resume the torrent"; likewise for a full disk, a read-only folder or any other file error. Before, every case read "qBittorrent reports an error for this torrent". When the log has nothing (qBittorrent was restarted), the note points at Tools > Log. Sidecar only.
 

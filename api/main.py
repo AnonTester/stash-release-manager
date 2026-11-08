@@ -103,7 +103,7 @@ import scene_compare
 import scene_alias
 from routers.encode_worker import router as encode_worker_router, init_encode_worker_router
 from routers.convert_api import router as convert_router, init_convert_router, resume as convert_resume
-from routers.releases import router as releases_router, init_releases_router, download_progress as compute_download_progress
+from routers.releases import router as releases_router, init_releases_router, download_progress as compute_download_progress, sweep_scene_covers
 from routers.scan import router as scan_router, init_scan_router, set_progress as set_scan_progress
 from routers.settings import (
     router as settings_router, init_settings_router, DEFAULTS, get_setting_value,
@@ -2190,6 +2190,12 @@ async def _history_prune_loop():
                 logger.info("history: pruned %d entr(y/ies) older than %d day(s)", removed, days)
         except Exception:
             logger.exception("history prune failed")
+        try:
+            gone = await asyncio.to_thread(sweep_scene_covers)
+            if gone:
+                logger.info("scene covers: %d cached file(s) of scenes without a release removed", gone)
+        except Exception:
+            logger.exception("scene cover sweep failed")
         await asyncio.sleep(24 * 3600)
 
 

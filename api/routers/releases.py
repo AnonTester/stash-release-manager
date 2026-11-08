@@ -694,6 +694,30 @@ class LocalScenesRequest(BaseModel):
     scenes: list[dict]
 
 
+_covers = None
+
+
+def _scene_covers():
+    global _covers
+    if _covers is None:
+        import scene_covers
+        _covers = scene_covers.SceneCovers(_db, os.path.dirname(str(_db.path)), _get_stash_client, _get_provider_client)
+    return _covers
+
+
+def sweep_scene_covers():
+    """Daily housekeeping (main.py): drops cached covers of scenes without a release row; returns the number of files removed."""
+    return _scene_covers().sweep()
+
+
+@router.post("/covers")
+def scene_covers_for(body: dict):
+    """The cover of each scene in a list page: {"provider:id": {"stash": local scene id} | {"data": data URL} | {"pending": true} | null}.
+    In Stash -> Stash's own cover (the cached copy is deleted); otherwise the stash-box cover, fetched once and cached (scene_covers.py)."""
+    scenes = [(x.get("provider") or "stashdb", x.get("scene_stashdb_id")) for x in (body.get("scenes") or [])[:200] if x.get("scene_stashdb_id")]
+    return {"covers": _scene_covers().covers_for(scenes)}
+
+
 @router.post("/local-scenes")
 def local_scenes(body: LocalScenesRequest):
     """{"provider:scene id": local Stash scene id} for the scenes that are in the library (the "Open scene" buttons of one page of a list)."""

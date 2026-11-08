@@ -11,7 +11,7 @@
   // rule and the bug it caused when this drifted). Change this if you
   // install under a different folder name.
   // Must equal `version:` in stash-release-manager.yml (scripts/test_plugin_version.py checks it).
-  const PLUGIN_VERSION = '0.253.19';
+  const PLUGIN_VERSION = '0.254.0';
   const PLUGIN_ID = 'stash-release-manager';
   const PLUGIN_NAME = 'StashReleaseManager';
 
@@ -275,21 +275,53 @@
     }, [icon, el('span', { className: 'srw-local-entity-name', textContent: name })]);
   }
 
-  // The scene's own preview image, linking to the same scene page the
-  // title does. `image_url` is only ever set for a release not yet
-  // confirmed in-library (see routers/releases.py's library_status()
-  // docstring on why it's cleared once satisfied), so this naturally
-  // stops showing once a scene's already imported.
+  // The scene's cover, linking to the same scene page the title does (v0.254.0). Every scene row gets one: a scene that is in Stash shows
+  // Stash's own cover (/scene/<id>/screenshot), any other the stash-box cover that the sidecar fetched once and keeps (a data: URL; see
+  // api/scene_covers.py). The thumbs of one render are asked for together, one request per batch, at the next tick.
+  const coverQueue = [];
+  let coverTimer = null;
+  function queueCover(entry) {
+    coverQueue.push(entry);
+    if (!coverTimer) coverTimer = setTimeout(flushCovers, 0);
+  }
+  async function flushCovers() {
+    coverTimer = null;
+    const entries = coverQueue.splice(0, coverQueue.length);
+    if (!entries.length) return;
+    const unique = new Map(entries.map((e) => [`${e.provider}:${e.scene}`, { provider: e.provider, scene_stashdb_id: e.scene }]));
+    let covers = {};
+    for (let round = 0; round < 6; round++) {
+      const ask = [...unique.entries()].filter(([k]) => !covers[k] || covers[k].pending).map(([, v]) => v);
+      if (!ask.length) break;
+      try {
+        const res = await runOp('releases_covers', { scenes: ask });
+        if (res && res.error) break;
+        covers = { ...covers, ...((res && res.covers) || {}) };
+      } catch (e) { break; }
+      if (!Object.values(covers).some((c) => c && c.pending)) break;
+    }
+    entries.forEach((e) => {
+      const c = covers[`${e.provider}:${e.scene}`];
+      if (c && c.stash) { e.link.href = `/scenes/${c.stash}`; e.img.src = `/scene/${c.stash}/screenshot`; return; }
+      if (c && c.data) { e.img.src = c.data; return; }
+      if (e.fallback) { e.img.src = e.fallback; return; }
+      e.link.remove();
+    });
+  }
+
   function buildReleaseThumb(r) {
-    if (!r.image_url) return null;
-    const img = el('img', { className: 'srw-release-thumb', src: r.image_url, alt: '', loading: 'lazy' });
+    const scene = r.scene_stashdb_id;
+    if (!scene && !r.image_url) return null;
+    const img = el('img', { className: 'srw-release-thumb', alt: '', loading: 'lazy' });
     const link = el('a', {
       className: 'srw-release-thumb-link',
-      href: sceneUrl(r.provider, r.scene_stashdb_id),
+      href: sceneUrl(r.provider, scene),
       target: '_blank', rel: 'noopener noreferrer',
     }, [img]);
-    // A hotlinked image that is blocked or gone (some source-site CDNs) leaves no broken-image icon behind.
+    // A cover that is blocked or gone leaves no broken-image icon behind.
     img.addEventListener('error', () => link.remove());
+    if (scene) queueCover({ link, img, provider: r.provider || 'stashdb', scene, fallback: r.image_url || '' });
+    else img.src = r.image_url;
     return link;
   }
 
