@@ -6,6 +6,11 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.255.0
+- **Settings > Connections is one page again, with the overview as the page.** The four sub-tabs are gone. The overview (Stash, the stash-boxes, the download clients, Prowlarr, Whisparr: what each points to and whether it answers) is the main page; **Edit / Set up** and the **Add** buttons open the connection's settings in a window (Stash, StashDB, ThePornDB, an added stash-box, a download client with its folder pair and Check, Prowlarr, Whisparr), Remove is in that window too. Closing the window refreshes the overview.
+- Under the overview, **More settings**: Update keys from Stash (and the import of the other stash-boxes, only when there is something to import), the **torrent option "after seeding"** (one global setting for all torrent clients, shown only while a qBittorrent client exists), the SABnzbd history lookup (only with a SABnzbd client) and what is set for Whisparr (quality profiles, safety sweep, blocklist sync, import status; greyed out under "No Whisparr").
+- Plugin only; the setup guide is unchanged.
+
 ## 0.254.1
 - **The same grid layout on every Settings tab** (General, Search & Quality, Import & Naming, Jobs, and the setup guide): label in one column, the field in the next, its Save button and "saved" text right behind it, the hint of a setting under the field. Number, date and drop-down fields are only as wide as they need, paths and the naming formats are wide (the Movie File Format field was cut off), checkbox settings keep their Save next to them; on a narrow screen label and field stack. Sections have the same spacing everywhere. Plugin only.
 - The Movie search settings had one long label holding two fields ("New movies (released within the last [60] days ... after (days): [1]"); they are two rows now.

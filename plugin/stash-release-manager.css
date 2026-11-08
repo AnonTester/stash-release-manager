@@ -2413,9 +2413,6 @@ a.srw-btn { text-decoration: none; display: inline-block; text-align: center; }
 .srw-conn-dot[data-state="error"] { background: #e05c5c; }
 .srw-dc-card { margin: 0.5rem 0 1rem; padding: 0.5rem 0.75rem; border: 1px solid rgba(128, 128, 128, 0.25); border-radius: 4px; }
 .srw-adder { margin-top: 0.75rem; }
-[data-conn-key] { scroll-margin-top: 5rem; }
-.srw-conn-flash { animation: srw-conn-flash 2.5s ease-out; }
-@keyframes srw-conn-flash { from { box-shadow: 0 0 0 3px var(--primary, #137cbd); } to { box-shadow: 0 0 0 3px transparent; } }
 
 /* Forms of the connections (Settings > Connections, setup guide): label in one column, field in the next, number fields only as wide as a number
    (v0.253.2). A label with a checkbox or colour picker keeps its inline look; on a narrow screen label and field stack. */
@@ -2476,6 +2473,11 @@ a.srw-btn { text-decoration: none; display: inline-block; text-align: center; }
   .srw-form-grid .srw-setting-row + .srw-setting-hint, .srw-form-grid .srw-setting-row + .srw-hint { margin-left: 0; }
   .srw-form-grid .srw-setting-row-check + .srw-setting-hint, .srw-form-grid .srw-setting-row-check + .srw-hint { margin-left: 1.6rem; }
 }
+
+.srw-conn-more-title { margin: 2rem 0 0.25rem; font-size: 1.25rem; }
+.srw-form-grid .srw-settings-section > .srw-subsection-heading:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
+.srw-conn-modal .srw-settings-section { border: 0; padding: 0; margin: 0; }
+.srw-conn-modal .srw-settings-section > h4:first-child { display: none; }
 
 /* Show dismissed (v0.253.5): the tick box above a list, and a dismissed row */
 .srw-show-dismissed { display: inline-flex; align-items: center; gap: 0.4rem; margin: 0 0 0.5rem; cursor: pointer; }
