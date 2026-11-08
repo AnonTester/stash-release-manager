@@ -11,7 +11,7 @@
   // rule and the bug it caused when this drifted). Change this if you
   // install under a different folder name.
   // Must equal `version:` in stash-release-manager.yml (scripts/test_plugin_version.py checks it).
-  const PLUGIN_VERSION = '0.253.8';
+  const PLUGIN_VERSION = '0.253.9';
   const PLUGIN_ID = 'stash-release-manager';
   const PLUGIN_NAME = 'StashReleaseManager';
 
@@ -867,7 +867,7 @@
       probe.remove();
       const rgb = (c) => (c.match(/[\d.]+/g) || []).map(Number);
       // The measured `.form-control` came out white with dark text on this Stash (its theme styles the fields of its own pages only), next to dark
-      // buttons: the fields follow the secondary-button palette instead (v0.253.8) -- the same colors in every list, filter bar, form and dialog.
+      // buttons: the fields follow the secondary-button palette instead (v0.253.9) -- the same colors in every list, filter bar, form and dialog.
       if (btn.bg && btn.fg && rgb(btn.bg).length >= 3 && !(rgb(btn.bg).length === 4 && rgb(btn.bg)[3] === 0)) { bg = btn.bg; fg = btn.fg; border = btn.border; }
       if (!bg || bg === 'transparent' || (rgb(bg).length === 4 && rgb(bg)[3] === 0)) bg = getComputedStyle(document.body).backgroundColor;
       const [r, g, b] = rgb(bg);
@@ -2396,7 +2396,7 @@
       || !providersAllOn(f.providers) || f.late !== 'all' || f.upgrades !== 'all' || Boolean(f.pairing) || Boolean(f.cast.trim()));
   }
 
-  // The statuses a list asks for: its own, plus 'dismissed' while the filter "Show dismissed" is ticked (v0.253.8).
+  // The statuses a list asks for: its own, plus 'dismissed' while the filter "Show dismissed" is ticked (v0.253.9).
   function statusesFor(f, base) {
     return f && f.showDismissed ? [...base, 'dismissed'] : base;
   }
@@ -2468,7 +2468,7 @@
     return sel;
   }
 
-  // ==================== The filter bar (v0.253.8) ====================
+  // ==================== The filter bar (v0.253.9) ====================
   //
   // One look for every list that filters by more than a search text. Row 1 is always the same and short: [search] [description] [tags] [Filters (n)]
   // [presets] [clear]; the two small icon switches widen the search to the scene's description / tags, the funnel opens a panel with the other filters

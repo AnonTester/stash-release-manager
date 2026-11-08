@@ -2271,7 +2271,11 @@ a.srw-btn { text-decoration: none; display: inline-block; text-align: center; }
 #srw-plugin-root .srw-filter-select, .srw-modal .srw-filter-select,
 #srw-plugin-root input:is([type=text], [type=search], [type=number], [type=password], [type=date], [type=url], [type=email], :not([type])),
 .srw-modal input:is([type=text], [type=search], [type=number], [type=password], [type=date], [type=url], [type=email], :not([type])),
-#srw-plugin-root textarea, .srw-modal textarea {
+#srw-plugin-root textarea, .srw-modal textarea,
+#srw-releases-pane select, #srw-entity-panel select,
+#srw-releases-pane input:is([type=text], [type=search], [type=number], [type=date], [type=url], :not([type])),
+#srw-entity-panel input:is([type=text], [type=search], [type=number], [type=date], [type=url], :not([type])),
+#srw-releases-pane textarea, #srw-entity-panel textarea {
   background-color: var(--srw-field-bg, #1e1e1e);
   color: var(--srw-field-fg, #e0e0e0);
   border: 1px solid var(--srw-field-border, rgba(128, 128, 128, 0.4));
