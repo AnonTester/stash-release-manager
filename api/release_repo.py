@@ -350,15 +350,20 @@ def query_releases(db, statuses=("new",), q="", search_description=False, entity
     scenes_sql = f"""SELECT release.provider, release.scene_stashdb_id,
                             MAX({_DAY_EXPR}) AS day, MAX(release.scene_created) AS created,
                             MAX(COALESCE(release.handoff_at, '')) AS handoff,
-                            MAX(COALESCE(release.imported_at, '')) AS imported
+                            MAX(COALESCE(release.imported_at, '')) AS imported,
+                            MIN(release.entity_type || '|' || release.entity_stashdb_id) AS ent
                      FROM release WHERE {where_sql}
                      GROUP BY release.provider, release.scene_stashdb_id"""
     with db.connect() as conn:
         total = conn.execute(f"SELECT COUNT(*) AS n FROM ({scenes_sql})", params).fetchone()["n"]
         if ids_only:
             rows = conn.execute(scenes_sql, params).fetchall()
-            return {"total": total, "scenes": [{"provider": r["provider"], "scene_stashdb_id": r["scene_stashdb_id"]}
-                                               for r in rows]}
+            # + one watched entity of each scene (v0.253.15): "Add" / "Add + search" of a selection needs it for the hand-off
+            out = []
+            for r in rows:
+                etype, _, eid = (r["ent"] or "").partition("|")
+                out.append({"provider": r["provider"], "scene_stashdb_id": r["scene_stashdb_id"], "entity_type": etype, "entity_stashdb_id": eid})
+            return {"total": total, "scenes": out}
         order_sql = {"handoff": "handoff DESC, day DESC", "imported": "imported DESC, day DESC"}.get(
             order, "day DESC, created DESC")
         page_sql = scenes_sql + f" ORDER BY {order_sql}"

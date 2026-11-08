@@ -732,7 +732,7 @@
     const count = opts ? opts.count : targets.length;
     if (filterActive && count) {
       const btn = el('button', {
-        className: 'srw-btn srw-btn-sm srw-btn-danger',
+        className: 'btn btn-outline-danger srw-btn-fit srw-btn-dismiss',
         textContent: opts ? `Dismiss all ${count} matching` : `Dismiss ${count} shown`,
       });
       // One shared click handler for both buttons: `getScenes` yields what
@@ -755,7 +755,7 @@
       });
       if (opts && opts.pageScenes && opts.pageScenes.length) {
         const pageBtn = el('button', {
-          className: 'srw-btn srw-btn-sm srw-btn-danger',
+          className: 'btn btn-outline-danger srw-btn-fit srw-btn-dismiss',
           textContent: `Dismiss ${opts.pageScenes.length} on this page`,
         });
         wire(pageBtn, opts.pageScenes.length, 'the', async () => opts.pageScenes);
@@ -913,6 +913,7 @@
     let shownTotal = 0;
     let lastResponse = null;
     const bulkBar = window.SRW.buildBulkDismissBar({
+      extraActions: window.SRW.bulkAddActions(async () => { await loadPage(listPage); sectionsChanged(); }), // Add / Add + search of a selection, as the buttons of a row
       getPage: () => shownRows.filter((r) => r.status !== 'dismissed'),
       getTotal: () => shownTotal,
       filterActive: () => true,
@@ -1079,7 +1080,7 @@
         }));
       }
       items.push(el('button', {
-        className: 'srw-btn',
+        className: 'btn btn-outline-danger srw-btn-fit srw-btn-dismiss',
         textContent: 'Dismiss',
         onClick: async () => {
           const res = await window.SRW.dismissRelease(r);
@@ -1220,6 +1221,7 @@
     let shownTotal = 0;
     let view = null;
     const bar = (status === 'sent_to_whisparr' || isLate) ? window.SRW.buildBulkDismissBar({
+      ...(isLate ? { extraActions: window.SRW.bulkAddActions(async () => { await view.reload(); reloadLiveSections(); }) } : {}), // the Added-late rows have Add / Add + search; a wishlist row has other buttons
       getPage: () => shownRows.filter(dismissible), getTotal: () => shownTotal, filterActive: () => shownFiltered,
       loadAll: async () => {
         const all = await window.SRW.runOp('releases_query', {
@@ -1311,7 +1313,7 @@
             }),
         }));
         li.push(el('button', {
-          className: 'srw-btn', textContent: 'Dismiss',
+          className: 'btn btn-outline-danger srw-btn-fit srw-btn-dismiss', textContent: 'Dismiss',
           onClick: async (e) => {
             const unmark = window.SRW.markRowBusy(e.currentTarget, 'Dismissing…');
             const res = await window.SRW.dismissRelease(r);

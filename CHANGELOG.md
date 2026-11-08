@@ -6,6 +6,11 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.253.15
+- **A selection can do in bulk what one row does alone:** on the lists whose rows have Add / Add + search / Dismiss, the bar offers **Add n**, **Add + search n** and **Dismiss n** for a selection (nothing with an empty selection); scenes are sent one after the other with the same question first.
+- **One Dismiss button:** the bar's Dismiss, the classic bar, the Calendar's "Dismiss N shown" and the movies use the row's outline-red Dismiss.
+- Sidecar: "Select all N matching" now carries one watched entity per scene (needed to add scenes that are not on the page).
+
 ## 0.253.14
 - **No "Add/Search" without a selection** (Missing from Catalog), just like Dismiss: the button shows only while something is selected; "everything that can be added" is **Select all N that can be added** in the arrow menu. Plugin only.
 

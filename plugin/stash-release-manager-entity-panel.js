@@ -99,6 +99,7 @@
     let shownTotal = 0;
     let shownFiltered = false;
     const bar = window.SRW.buildBulkDismissBar({
+      extraActions: window.SRW.bulkAddActions(() => view.reload()), // Add / Add + search of a selection, as the buttons of a row
       getPage: () => shownRows.filter((x) => x.status !== 'dismissed'), getTotal: () => (view && view.state.showDismissed ? shownRows.filter((x) => x.status !== 'dismissed').length : shownTotal), filterActive: () => shownFiltered,
       loadAll: async () => {
         const all = await window.SRW.runOp('releases_query', { ...window.SRW.releaseQueryArgs(view.state), statuses: ['new'], entities, ids_only: true });
@@ -425,44 +426,6 @@
   // by the caller (see refreshBacklogResults()) to StashDB-only,
   // not-mismatched, not-already-downloaded releases -- this function
   // doesn't re-check any of that itself.
-  function runBulkHandoff(eligible, btn, onDone) {
-    window.SRW.confirmInline(btn,
-      `Add/search ${eligible.length} scene(s)? Each one not already tracked yet gets added to your `
-      + `wishlist and searched; each one already tracked (with no file yet) gets a fresh search instead. `
-      + `This can take a while for a lot of scenes, since they're sent one at a time.`,
-      async () => {
-        // confirmInline hides `btn` on Yes (its own default, meant for
-        // a plain one-shot action) -- undone immediately here since
-        // this button IS the progress indicator for the loop below
-        // (its own textContent), unlike every other confirmInline call
-        // site in this plugin.
-        btn.style.display = '';
-        btn.disabled = true;
-        let succeeded = 0;
-        const failures = [];
-        for (let i = 0; i < eligible.length; i++) {
-          const r = eligible[i];
-          btn.textContent = `Sending... (${i + 1}/${eligible.length})`;
-          try {
-            const result = await window.SRW.runOp('releases_handoff', {
-              provider: r.provider, entity_type: r.entity_type,
-              entity_stashdb_id: r.entity_stashdb_id, scene_stashdb_id: r.scene_stashdb_id,
-            });
-            if (result.error) failures.push(`${r.title || r.scene_stashdb_id}: ${result.error}`);
-            else succeeded += 1;
-          } catch (e) {
-            failures.push(`${r.title || r.scene_stashdb_id}: ${e.message}`);
-          }
-        }
-        if (succeeded) window.SRW.notify(`Added ${succeeded} scene(s) to the wishlist`, '', 'success');
-        if (failures.length) {
-          window.SRW.notify(`${failures.length} of ${eligible.length} scene(s) failed`, failures.join('\n'), 'error');
-        }
-        await onDone();
-      },
-    );
-  }
-
   // 2026-09-13: user found a backlog scene ("Mean Girls", Academy POV
   // 2018) that was already in their Stash library -- nothing in the UI
   // said so, inviting a pointless duplicate hand-off. One batched
@@ -1126,15 +1089,10 @@
         const info = statusById[r.scene_stashdb_id];
         return !(info && (info.whisparr_file_mismatch || info.whisparr_has_file));
       });
-      // "Add/Search" lives in the selection bar below (v0.253.13): with a selection it adds / searches the selected scenes that can be, without one all of them.
+      // Add / Add + search of a selection are in the selection bar below (v0.253.15), like the buttons of one row; the arrow menu selects everything that can be added.
       const bulkRefresh = () => refreshBacklogResults(resultsArea, provider, entityType, stashId, entityName);
-      const extraAction = {
-        pool: () => eligibleForBulk,
-        label: (n, ofSelection) => (ofSelection ? `Add/Search ${n}` : `Add/Search all ${n}`),
-        menuLabel: (n) => `Select all ${n} that can be added`,
-        title: 'Put the scenes on the wishlist and search for them (scenes already tracked are searched again). They are sent one at a time.',
-        run: (rows, btn) => runBulkHandoff(rows, btn, bulkRefresh),
-      };
+      const extraActions = window.SRW.bulkAddActions(bulkRefresh);
+      const extraSelect = { label: (n) => `Select all ${n} that can be added`, pool: () => eligibleForBulk };
       // "Dismiss N on this page" / "Dismiss all N matching" (v0.250.2) and a Dismiss per row that takes the row out of the list in the browser (no
       // new read of the whole backlog). A scene that is downloading is not offered.
       let view = null;
@@ -1171,7 +1129,7 @@
         view.reload(); // the list is in the browser: no request
       };
       const backlogBar = window.SRW.buildBulkDismissBar({
-        extraAction,
+        extraActions, extraSelect,
         getPage: () => shownRows.filter(dismissible),
         getTotal: () => (view ? window.SRW.filterLocally(missing, view.state, fields).filter(dismissible).length : 0),
         filterActive: () => Boolean(view && window.SRW.isFilterActive(view.state)),

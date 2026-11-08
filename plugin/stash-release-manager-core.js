@@ -11,7 +11,7 @@
   // rule and the bug it caused when this drifted). Change this if you
   // install under a different folder name.
   // Must equal `version:` in stash-release-manager.yml (scripts/test_plugin_version.py checks it).
-  const PLUGIN_VERSION = '0.253.14';
+  const PLUGIN_VERSION = '0.253.15';
   const PLUGIN_ID = 'stash-release-manager';
   const PLUGIN_NAME = 'StashReleaseManager';
 
@@ -867,7 +867,7 @@
       probe.remove();
       const rgb = (c) => (c.match(/[\d.]+/g) || []).map(Number);
       // The measured `.form-control` came out white with dark text on this Stash (its theme styles the fields of its own pages only), next to dark
-      // buttons: the fields follow the secondary-button palette instead (v0.253.14) -- the same colors in every list, filter bar, form and dialog.
+      // buttons: the fields follow the secondary-button palette instead (v0.253.15) -- the same colors in every list, filter bar, form and dialog.
       if (btn.bg && btn.fg && rgb(btn.bg).length >= 3 && !(rgb(btn.bg).length === 4 && rgb(btn.bg)[3] === 0)) { bg = btn.bg; fg = btn.fg; border = btn.border; }
       if (!bg || bg === 'transparent' || (rgb(bg).length === 4 && rgb(bg)[3] === 0)) bg = getComputedStyle(document.body).backgroundColor;
       const [r, g, b] = rgb(bg);
@@ -2396,7 +2396,7 @@
       || !providersAllOn(f.providers) || f.late !== 'all' || f.upgrades !== 'all' || Boolean(f.pairing) || Boolean(f.cast.trim()));
   }
 
-  // The statuses a list asks for: its own, plus 'dismissed' while the filter "Show dismissed" is ticked (v0.253.14).
+  // The statuses a list asks for: its own, plus 'dismissed' while the filter "Show dismissed" is ticked (v0.253.15).
   function statusesFor(f, base) {
     return f && f.showDismissed ? [...base, 'dismissed'] : base;
   }
@@ -2468,7 +2468,7 @@
     return sel;
   }
 
-  // ==================== The filter bar (v0.253.14) ====================
+  // ==================== The filter bar (v0.253.15) ====================
   //
   // One look for every list that filters by more than a search text. Row 1 is always the same and short: [search] [description] [tags] [Filters (n)]
   // [presets] [clear]; the two small icon switches widen the search to the scene's description / tags, the funnel opens a panel with the other filters
@@ -2509,9 +2509,9 @@
       funnel.classList.toggle('srw-btn-on', !panel.hidden);
       drawArrow();
     }
-    // An eraser, not another x: the chips carry the x of their own (v0.253.14).
+    // An eraser, not another x: the chips carry the x of their own (v0.253.15).
     const clearBtn = onClear ? iconButton('button', 'faEraser', 'Clear all filters', { className: 'srw-btn srw-fb-clear', title: 'Clear all filters', onClick: onClear }) : null;
-    // The chips stand in row 1, right behind the funnel (v0.253.14): the active filters are read where the search is.
+    // The chips stand in row 1, right behind the funnel (v0.253.15): the active filters are read where the search is.
     const row = el('div', { className: 'srw-fb-row' }, [search, ...toggles, funnel, chipsBox, presets, clearBtn]);
     function refresh() {
       const shown = describe();
@@ -2692,7 +2692,7 @@
   function buildBulkDismissBarClassic({
     getPage, getTotal, loadAll, filterActive, onDone, noun = 'releases',
     keyOf = (r) => `${r.provider}\u0000${r.scene_stashdb_id}`,
-    pick = (r) => ({ provider: r.provider, scene_stashdb_id: r.scene_stashdb_id }),
+    pick = (r) => ({ provider: r.provider, scene_stashdb_id: r.scene_stashdb_id, entity_type: r.entity_type, entity_stashdb_id: r.entity_stashdb_id }),
     dismissChunk = (chunk) => runOp('releases_bulk_dismiss', { scenes: chunk }),
     undo = (rows) => runOp('releases_restore', { rows }),
     // A tick box in front of every row (v0.250.4): filter, tick what you want (or "select this page" / "Select all N matching") and take single rows OUT
@@ -2768,19 +2768,19 @@
             redraw(); update();
           } }));
         }
-        const btn = el('button', { className: 'srw-btn srw-btn-sm srw-btn-danger', textContent: `Dismiss ${n} selected` });
+        const btn = el('button', { className: 'btn btn-outline-danger srw-btn-fit srw-btn-dismiss', textContent: `Dismiss ${n} selected` });
         btn.addEventListener('click', () => confirmInline(btn, `Dismiss the ${n} selected ${noun}?`, () => dismiss(sel.items().map(pick), false), { danger: true }));
         node.appendChild(btn);
         node.appendChild(el('button', { className: 'srw-btn srw-btn-sm', textContent: 'Clear selection', onClick: () => { sel.clear(); redraw(); update(); } }));
         return;
       }
       if (page.length) {
-        const btn = el('button', { className: 'srw-btn srw-btn-sm srw-btn-danger', textContent: `Dismiss ${page.length} on this page` });
+        const btn = el('button', { className: 'btn btn-outline-danger srw-btn-fit srw-btn-dismiss', textContent: `Dismiss ${page.length} on this page` });
         btn.addEventListener('click', () => confirmInline(btn, `Dismiss the ${page.length} ${noun} on this page?`, () => dismiss(page, false), { danger: true }));
         node.appendChild(btn);
       }
       if (total > page.length && filterActive()) { // (total first: at construction nothing is loaded and the caller's list may not exist yet)
-        const btn = el('button', { className: 'srw-btn srw-btn-sm srw-btn-danger', textContent: `Dismiss all ${total} matching` });
+        const btn = el('button', { className: 'btn btn-outline-danger srw-btn-fit srw-btn-dismiss', textContent: `Dismiss all ${total} matching` });
         btn.addEventListener('click', () => confirmInline(btn, `Dismiss all ${total} ${noun} matching the current filter?`, async () => {
           const all = await loadAll();
           if (!Array.isArray(all)) { notify('Bulk dismiss', `Bulk dismiss failed: ${(all && all.error) || 'could not load the matching releases'}`, 'error'); return; }
@@ -2793,7 +2793,7 @@
     return { node, update, checkbox };
   }
 
-  // ---- the selection bar, menu style (v0.253.14) ----
+  // ---- the selection bar, menu style (v0.253.15) ----
   // The bar of every list used to show up to seven things (a tick box, "Dismiss n on this page", "Dismiss all N matching", "Select all N matching",
   // "Dismiss n selected", "Clear selection ...), also with nothing selected. Now, as in a mail list:
   //   nothing selected:  [tick box] [arrow]          the tick box selects / unselects the page, the arrow opens: Select this page / Select all N matching / Clear
@@ -2805,27 +2805,64 @@
     try { return window.localStorage.getItem('srw:bulk-bar') === 'classic' ? 'classic' : 'menu'; } catch (e) { return 'menu'; }
   }
 
-  // `extraAction` (v0.253.14): one more thing the list does with its rows, shown IN the bar so it reads as part of the selection (the Missing from Catalog
-  // list's "Add/Search"): { pool() -> every row it can act on, keyOf-compatible with the list's rows; label(n, ofSelection) -> text; title; run(rows, button) }.
-  // With a selection it acts on the selected rows of the pool (the bar shows the button only then); `menuLabel(n)` -> an entry of the arrow menu that selects the
-  // whole pool. The classic bar has no menu: it shows the button for the whole pool.
-  function bulkExtraButton(extra, selected, keyOf) {
-    if (!extra) return null;
-    const pool = extra.pool() || [];
-    const rows = selected ? pool.filter((r) => selected.has(keyOf(r))) : pool;
-    if (!rows.length) return null;
-    const btn = el('button', { type: 'button', className: 'srw-btn srw-btn-sm srw-btn-primary', textContent: extra.label(rows.length, Boolean(selected)), title: extra.title || '' });
-    btn.addEventListener('click', () => extra.run(rows, btn));
-    return btn;
+  // `extraActions` (v0.253.15): the other things a row can do, offered for a SELECTION in the same bar, so a list can do in bulk what one row does alone (the
+  // New / Missing-from-Catalog lists: Add, Add + search). Each: { label(n), title, primary, accepts(item), run(items, button) }; the bar shows the button while
+  // the selection holds `accepts`-able items. `extraSelect` = { label(n), pool() }: an entry of the arrow menu that selects a whole pool of rows (Missing from
+  // Catalog: "Select all N that can be added"). The classic bar has no menu: it shows the buttons for the pool.
+  function bulkExtraButtons(extras, items) {
+    return (extras || []).map((x) => {
+      const mine = items.filter((it) => (x.accepts ? x.accepts(it) : true));
+      if (!mine.length) return null;
+      const btn = el('button', { type: 'button', className: `srw-btn${x.primary ? ' srw-btn-primary' : ''}`, textContent: x.label(mine.length), title: x.title || '' });
+      btn.addEventListener('click', () => x.run(mine, btn));
+      return btn;
+    }).filter(Boolean);
+  }
+
+  // "Add" / "Add + search" of a list of rows, as the buttons of one row do (releases_handoff, one scene after the other: every call goes through Stash and
+  // takes seconds). `items` need provider, scene_stashdb_id, entity_type, entity_stashdb_id. `onDone()` reads the list again.
+  function bulkAddActions(onDone) {
+    const accepts = (it) => Boolean(it && it.provider && it.scene_stashdb_id && it.entity_type && it.entity_stashdb_id);
+    const run = (search) => (items, btn) => confirmInline(btn,
+      search
+        ? `Add ${items.length} scene(s) to your wishlist and search for them now? Each one already tracked (with no file yet) gets a fresh search. They are sent one at a time, which can take a while.`
+        : `Add ${items.length} scene(s) to your wishlist? The scheduled search finds them later. They are sent one at a time, which can take a while.`,
+      async () => {
+        // confirmInline hides the button on Yes; here it is the progress display of the loop below
+        btn.style.display = '';
+        btn.disabled = true;
+        let succeeded = 0;
+        const failures = [];
+        for (let i = 0; i < items.length; i++) {
+          const r = items[i];
+          btn.textContent = `Sending... (${i + 1}/${items.length})`;
+          try {
+            const result = await runOp('releases_handoff', {
+              provider: r.provider, entity_type: r.entity_type, entity_stashdb_id: r.entity_stashdb_id, scene_stashdb_id: r.scene_stashdb_id,
+              ...(search ? {} : { search: false }),
+            });
+            if (result.error) failures.push(`${r.title || r.scene_stashdb_id}: ${result.error}`);
+            else succeeded += 1;
+          } catch (e) {
+            failures.push(`${r.title || r.scene_stashdb_id}: ${e.message}`);
+          }
+        }
+        if (succeeded) notify(`Added ${succeeded} scene(s) to the wishlist`, '', 'success');
+        if (failures.length) notify(`${failures.length} of ${items.length} scene(s) failed`, failures.join('\n'), 'error');
+        await onDone();
+      });
+    return [
+      { label: (n) => `Add ${n}`, title: 'Put the selected scenes on the wishlist without searching now -- the scheduled search finds them later', accepts, run: run(false) },
+      { label: (n) => `Add + search ${n}`, title: 'Put the selected scenes on the wishlist and search the indexers right now', primary: true, accepts, run: run(true) },
+    ];
   }
 
   function buildBulkDismissBar(opts) {
     if (opts.selectUi === false || bulkBarStyle() === 'classic') {
       const bar = buildBulkDismissBarClassic(opts);
-      if (!opts.extraAction) return bar;
+      if (!opts.extraActions) return bar;
       const base = bar.update;
-      const keyOf = opts.keyOf || ((r) => `${r.provider}\u0000${r.scene_stashdb_id}`);
-      bar.update = () => { base(); const b = bulkExtraButton(opts.extraAction, null, keyOf); if (b) bar.node.appendChild(b); };
+      bar.update = () => { base(); bulkExtraButtons(opts.extraActions, opts.extraSelect ? (opts.extraSelect.pool() || []) : []).forEach((b) => bar.node.appendChild(b)); };
       bar.update();
       return bar;
     }
@@ -2835,10 +2872,10 @@
   function buildBulkDismissBarMenu({
     getPage, getTotal, loadAll, onDone, noun = 'releases',
     keyOf = (r) => `${r.provider}\u0000${r.scene_stashdb_id}`,
-    pick = (r) => ({ provider: r.provider, scene_stashdb_id: r.scene_stashdb_id }),
+    pick = (r) => ({ provider: r.provider, scene_stashdb_id: r.scene_stashdb_id, entity_type: r.entity_type, entity_stashdb_id: r.entity_stashdb_id }),
     dismissChunk = (chunk) => runOp('releases_bulk_dismiss', { scenes: chunk }),
     undo = (rows) => runOp('releases_restore', { rows }),
-    redraw = () => {}, selection = null, extraAction = null,
+    redraw = () => {}, selection = null, extraActions = null, extraSelect = null,
   }) {
     const node = el('div', { className: 'srw-bulk-dismiss srw-bulk-menu-bar' });
     let last = null; // { rows, count } -- the Undo
@@ -2916,10 +2953,10 @@
         item('Select this page', () => selectPage(true), !page.length),
         item(total > page.length ? `Select all ${total} matching` : 'Select all matching', selectAllMatching, !(total > n)),
       );
-      if (extraAction && extraAction.menuLabel) {
-        const pool = extraAction.pool() || [];
+      if (extraSelect) {
+        const pool = extraSelect.pool() || [];
         const fresh = pool.filter((r) => !sel.has(keyOf(r)));
-        menu.append(item(extraAction.menuLabel(pool.length), () => { pool.forEach((r) => sel.add(keyOf(r), pick(r))); redraw(); update(); }, !fresh.length));
+        menu.append(item(extraSelect.label(pool.length), () => { pool.forEach((r) => sel.add(keyOf(r), pick(r))); redraw(); update(); }, !fresh.length));
       }
       menu.append(item('Clear selection', clearAll, !n));
       const arrow = iconButton('button', 'faChevronDown', 'Selection options', { className: 'srw-btn srw-btn-sm srw-bulk-arrow', title: 'Select this page / Select all matching / Clear selection' });
@@ -2932,18 +2969,18 @@
         }
       });
       node.appendChild(el('span', { className: 'srw-bulk-menu-wrap' }, [box, arrow, menu]));
-      // The extra action shows only WITH a selection (like Dismiss); "everything that can be added" is a choice of the arrow menu (it selects them).
-      const extraBtn = n > 0 ? bulkExtraButton(extraAction, sel, keyOf) : null;
+      // The row's other actions (Add, Add + search) show only WITH a selection, like Dismiss; "everything that can be added" is a choice of the arrow menu.
+      const extraBtns = n > 0 ? bulkExtraButtons(extraActions, sel.items()) : [];
       if (n > 0) {
         const count = el('span', { className: 'srw-bulk-count' }, [`${n} selected`]);
         if (total > n && onPage === page.length) {
           count.append(' · ', el('a', { href: '#', className: 'srw-bulk-all', textContent: `Select all ${total}`, onClick: (e) => { e.preventDefault(); selectAllMatching(); } }));
         }
         node.appendChild(count);
-        const btn = el('button', { className: 'srw-btn srw-btn-sm srw-btn-danger', textContent: `Dismiss ${n}` });
+        const btn = el('button', { className: 'btn btn-outline-danger srw-btn-fit srw-btn-dismiss', textContent: `Dismiss ${n}` });
         btn.addEventListener('click', () => confirmInline(btn, `Dismiss the ${n} selected ${noun}?`, () => dismiss(sel.items().map(pick)), { danger: true }));
+        extraBtns.forEach((b) => node.appendChild(b));
         node.appendChild(btn);
-        if (extraBtn) node.appendChild(extraBtn);
         node.appendChild(iconButton('button', 'faXmark', 'Clear selection', { className: 'srw-btn srw-btn-sm', title: 'Clear the selection', onClick: clearAll }));
       }
     }
@@ -3001,7 +3038,7 @@
         barShown = true;
       }
       if (onTotal) onTotal(result.total, active);
-      // One row under the filter bar (v0.253.14): the list's "select this page / Dismiss" bar on the left, the page selector in the middle. The bar is
+      // One row under the filter bar (v0.253.15): the list's "select this page / Dismiss" bar on the left, the page selector in the middle. The bar is
       // the one the caller put right before the list (or `bulkBar`); it is taken into this row, so every list gets the same place. It stays when the
       // list is empty (its Undo note is in it).
       const before = node.previousElementSibling;
@@ -3293,7 +3330,7 @@
     getRoute, onNavigate, initNavigationWatcher,
     el, waitForElement, entityIcon, buildPageHeader,
     watchKind, keepResult, recallResult, forgetResult, keptNote, searchStatusLabel, setBusy, openModal, sceneSubtitle, iconButton, busyIcon, ageWords, ageWarning, confirmInline, buildManagedList, buildSearchActions, whenNoOpenPanel, buildManualSearch, getSearchCapabilities,
-    rememberOpen, statusesFor, buildFilterShell, iconToggle, applyThemeColors, icon, mismatchWarning, buildPagedList, buildPager, releaseTitleNode, notify, dismissedNotice, releaseDismissedNotice, dismissRelease, buildWishlistDismiss, buildFilmDismissButtons, notifyHandoff, buildAddOnlyButton,
+    rememberOpen, statusesFor, buildFilterShell, iconToggle, applyThemeColors, bulkAddActions, icon, mismatchWarning, buildPagedList, buildPager, releaseTitleNode, notify, dismissedNotice, releaseDismissedNotice, dismissRelease, buildWishlistDismiss, buildFilmDismissButtons, notifyHandoff, buildAddOnlyButton,
     sceneUrl, notifyReadd, loadMetadataProviderUrls, loadProviders, resetProviders, providerInfo, providerLabel, providerKeys, providerOn, providersAllOn, providersSelected, isLateAdditionNew, buildLateAdditionBadge,
     buildFilteredPagedList, markRowBusy, buildBulkDismissBar, buildSelect, buildSafetyPanel, ignoreRenamers, pairingOptionsFor, castOptionsFor, buildPairingBadge, localPageFetcher, releaseQueryArgs, filterLocally, isFilterActive,
     describeProgress, applyProgress, attachLive, buildLiveHint,
