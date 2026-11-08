@@ -6,6 +6,9 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.253.18
+- **The open / closed state of the filter panel and of the Catalog tools is remembered** in the browser, like the other panels. Plugin only.
+
 ## 0.253.17
 - **The top of Missing from Catalog is one line:** "Catalog v", what is loaded and when it was checked, and "12 of 16 need attention" on the right. The date window, the years (small switchable fields) and the load buttons fold open under it; open from the start only while no year is loaded yet. Plugin only.
 

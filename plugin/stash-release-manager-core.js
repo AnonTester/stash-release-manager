@@ -11,7 +11,7 @@
   // rule and the bug it caused when this drifted). Change this if you
   // install under a different folder name.
   // Must equal `version:` in stash-release-manager.yml (scripts/test_plugin_version.py checks it).
-  const PLUGIN_VERSION = '0.253.17';
+  const PLUGIN_VERSION = '0.253.18';
   const PLUGIN_ID = 'stash-release-manager';
   const PLUGIN_NAME = 'StashReleaseManager';
 
@@ -867,7 +867,7 @@
       probe.remove();
       const rgb = (c) => (c.match(/[\d.]+/g) || []).map(Number);
       // The measured `.form-control` came out white with dark text on this Stash (its theme styles the fields of its own pages only), next to dark
-      // buttons: the fields follow the secondary-button palette instead (v0.253.17) -- the same colors in every list, filter bar, form and dialog.
+      // buttons: the fields follow the secondary-button palette instead (v0.253.18) -- the same colors in every list, filter bar, form and dialog.
       if (btn.bg && btn.fg && rgb(btn.bg).length >= 3 && !(rgb(btn.bg).length === 4 && rgb(btn.bg)[3] === 0)) { bg = btn.bg; fg = btn.fg; border = btn.border; }
       if (!bg || bg === 'transparent' || (rgb(bg).length === 4 && rgb(bg)[3] === 0)) bg = getComputedStyle(document.body).backgroundColor;
       const [r, g, b] = rgb(bg);
@@ -1466,6 +1466,15 @@
       try { localStorage.setItem(storageKey, details.open ? '1' : '0'); } catch (e) { /* ignore */ }
     });
     return details;
+  }
+
+  // The same remembered open / closed state for things that are no <details> (the filter panel, the Catalog tools): stored like rememberOpen() does
+  // (`srw-open:<key>` = '1' / '0'), so it survives a reload; null = the user has not chosen yet.
+  function storedOpen(key) {
+    try { const v = localStorage.getItem(`srw-open:${key}`); return v === null ? null : v === '1'; } catch (e) { return null; }
+  }
+  function storeOpen(key, open) {
+    try { localStorage.setItem(`srw-open:${key}`, open ? '1' : '0'); } catch (e) { /* ignore */ }
   }
 
   // ==================== Paging ====================
@@ -2396,7 +2405,7 @@
       || !providersAllOn(f.providers) || f.late !== 'all' || f.upgrades !== 'all' || Boolean(f.pairing) || Boolean(f.cast.trim()));
   }
 
-  // The statuses a list asks for: its own, plus 'dismissed' while the filter "Show dismissed" is ticked (v0.253.17).
+  // The statuses a list asks for: its own, plus 'dismissed' while the filter "Show dismissed" is ticked (v0.253.18).
   function statusesFor(f, base) {
     return f && f.showDismissed ? [...base, 'dismissed'] : base;
   }
@@ -2468,7 +2477,7 @@
     return sel;
   }
 
-  // ==================== The filter bar (v0.253.17) ====================
+  // ==================== The filter bar (v0.253.18) ====================
   //
   // One look for every list that filters by more than a search text. Row 1 is always the same and short: [search] [description] [tags] [Filters (n)]
   // [presets] [clear]; the two small icon switches widen the search to the scene's description / tags, the funnel opens a panel with the other filters
@@ -2489,14 +2498,16 @@
 
   // The shell: `search` (node), `toggles` ([node]), `clusters` ([{label, nodes}]), `presets` (node | null), `describe()` -> [{label, clear()}] of the active
   // filters, `onClear()` clears everything. Returns { node, refresh() }; call refresh() after any change of a filter.
-  function buildFilterShell({ key, search = null, toggles = [], clusters = [], presets = null, describe = () => [], onClear = null, hasText = () => false }) {
+  function buildFilterShell({ key, storeKey = null, search = null, toggles = [], clusters = [], presets = null, describe = () => [], onClear = null, hasText = () => false }) {
     const groups = clusters.map((c) => ({ label: c.label, nodes: c.nodes.filter(Boolean) })).filter((c) => c.nodes.length);
     const chipsBox = el('div', { className: 'srw-fb-chips' });
     const panel = el('div', { className: 'srw-fb-panel' }, groups.map((g) => el('div', { className: 'srw-fb-group' }, [
       el('span', { className: 'srw-fb-group-label', textContent: g.label }),
       el('span', { className: 'srw-fb-group-body' }, g.nodes),
     ])));
-    panel.hidden = !(key && filterPanelOpen.get(key));
+    // open or closed as the user left it: this session (per bar) first, then the browser's memory of this kind of list (`storeKey`), else closed
+    const wasOpen = key && filterPanelOpen.has(key) ? filterPanelOpen.get(key) : (storeKey ? storedOpen(storeKey) : null);
+    panel.hidden = !wasOpen;
     const count = el('span', { className: 'srw-fb-count' });
     const funnel = groups.length ? iconButton('button', 'faFilter', 'Filters', { className: 'srw-btn srw-fb-funnel',
       title: 'Filters: type, VR, dates, source ... (the active ones are listed below the bar)' }) : null;
@@ -2505,13 +2516,13 @@
       const arrow = el('span', { className: 'srw-fb-arrow' });
       const drawArrow = () => { arrow.replaceChildren(icon(panel.hidden ? 'faChevronDown' : 'faChevronUp') || document.createTextNode(panel.hidden ? '▾' : '▴')); };
       funnel.append(count, arrow);
-      funnel.addEventListener('click', () => { panel.hidden = !panel.hidden; if (key) filterPanelOpen.set(key, !panel.hidden); funnel.classList.toggle('srw-btn-on', !panel.hidden); drawArrow(); });
+      funnel.addEventListener('click', () => { panel.hidden = !panel.hidden; if (key) filterPanelOpen.set(key, !panel.hidden); if (storeKey) storeOpen(storeKey, !panel.hidden); funnel.classList.toggle('srw-btn-on', !panel.hidden); drawArrow(); });
       funnel.classList.toggle('srw-btn-on', !panel.hidden);
       drawArrow();
     }
-    // An eraser, not another x: the chips carry the x of their own (v0.253.17).
+    // An eraser, not another x: the chips carry the x of their own (v0.253.18).
     const clearBtn = onClear ? iconButton('button', 'faEraser', 'Clear all filters', { className: 'srw-btn srw-fb-clear', title: 'Clear all filters', onClick: onClear }) : null;
-    // The chips stand in row 1, right behind the funnel (v0.253.17): the active filters are read where the search is.
+    // The chips stand in row 1, right behind the funnel (v0.253.18): the active filters are read where the search is.
     const row = el('div', { className: 'srw-fb-row' }, [search, ...toggles, funnel, chipsBox, presets, clearBtn]);
     function refresh() {
       const shown = describe();
@@ -2654,7 +2665,7 @@
       return out;
     };
     shell = buildFilterShell({
-      key: state, search, toggles,
+      key: state, storeKey: `filters:${filters.join('+')}`, search, toggles,
       clusters: [{ label: 'What', nodes: what }, { label: 'When', nodes: when }, { label: 'Source', nodes: source }, { label: 'Also show', nodes: also }],
       describe, hasText: () => Boolean((state.search || '').trim()) || state.description || state.tags,
       onClear: () => {
@@ -2793,7 +2804,7 @@
     return { node, update, checkbox };
   }
 
-  // ---- the selection bar, menu style (v0.253.17) ----
+  // ---- the selection bar, menu style (v0.253.18) ----
   // The bar of every list used to show up to seven things (a tick box, "Dismiss n on this page", "Dismiss all N matching", "Select all N matching",
   // "Dismiss n selected", "Clear selection ...), also with nothing selected. Now, as in a mail list:
   //   nothing selected:  [tick box] [arrow]          the tick box selects / unselects the page, the arrow opens: Select this page / Select all N matching / Clear
@@ -2802,7 +2813,7 @@
   // options, same results as buildBulkDismissBarClassic(); the way back is `localStorage.setItem('srw:bulk-bar', 'classic')` (then reload) -- or revert
   // the commit of this version. Lists that bring their own selection (selectUi: false) keep the classic bar.
   // The Whisparr logo (a 48x48 picture of the one Whisparr itself serves, in the plugin's icon blue; it was the Calendar's button until v0.41.5, which
-  // replaced it by a download arrow because the sidecar searches now). Used (v0.253.17) to mark a scene Whisparr already tracks, without a file, that is NOT on
+  // replaced it by a download arrow because the sidecar searches now). Used (v0.253.18) to mark a scene Whisparr already tracks, without a file, that is NOT on
   // this wishlist yet: its search button is the logo, and "Add" is back next to it.
   const WHISPARR_ICON_DATA_URI = 'data:image/png;base64,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';
 
@@ -2821,7 +2832,7 @@
     try { return window.localStorage.getItem('srw:bulk-bar') === 'classic' ? 'classic' : 'menu'; } catch (e) { return 'menu'; }
   }
 
-  // `extraActions` (v0.253.17): the other things a row can do, offered for a SELECTION in the same bar, so a list can do in bulk what one row does alone (the
+  // `extraActions` (v0.253.18): the other things a row can do, offered for a SELECTION in the same bar, so a list can do in bulk what one row does alone (the
   // New / Missing-from-Catalog lists: Add, Add + search). Each: { label(n), title, primary, accepts(item), run(items, button) }; the bar shows the button while
   // the selection holds `accepts`-able items. `extraSelect` = { label(n), pool() }: an entry of the arrow menu that selects a whole pool of rows (Missing from
   // Catalog: "Select all N that can be added"). The classic bar has no menu: it shows the buttons for the pool.
@@ -3057,7 +3068,7 @@
         barShown = true;
       }
       if (onTotal) onTotal(result.total, active);
-      // One row under the filter bar (v0.253.17): the list's "select this page / Dismiss" bar on the left, the page selector in the middle. The bar is
+      // One row under the filter bar (v0.253.18): the list's "select this page / Dismiss" bar on the left, the page selector in the middle. The bar is
       // the one the caller put right before the list (or `bulkBar`); it is taken into this row, so every list gets the same place. It stays when the
       // list is empty (its Undo note is in it).
       const before = node.previousElementSibling;
@@ -3349,7 +3360,7 @@
     getRoute, onNavigate, initNavigationWatcher,
     el, waitForElement, entityIcon, buildPageHeader,
     watchKind, keepResult, recallResult, forgetResult, keptNote, searchStatusLabel, setBusy, openModal, sceneSubtitle, iconButton, busyIcon, ageWords, ageWarning, confirmInline, buildManagedList, buildSearchActions, whenNoOpenPanel, buildManualSearch, getSearchCapabilities,
-    rememberOpen, statusesFor, buildFilterShell, iconToggle, applyThemeColors, bulkAddActions, markInWhisparr, icon, mismatchWarning, buildPagedList, buildPager, releaseTitleNode, notify, dismissedNotice, releaseDismissedNotice, dismissRelease, buildWishlistDismiss, buildFilmDismissButtons, notifyHandoff, buildAddOnlyButton,
+    rememberOpen, storedOpen, storeOpen, statusesFor, buildFilterShell, iconToggle, applyThemeColors, bulkAddActions, markInWhisparr, icon, mismatchWarning, buildPagedList, buildPager, releaseTitleNode, notify, dismissedNotice, releaseDismissedNotice, dismissRelease, buildWishlistDismiss, buildFilmDismissButtons, notifyHandoff, buildAddOnlyButton,
     sceneUrl, notifyReadd, loadMetadataProviderUrls, loadProviders, resetProviders, providerInfo, providerLabel, providerKeys, providerOn, providersAllOn, providersSelected, isLateAdditionNew, buildLateAdditionBadge,
     buildFilteredPagedList, markRowBusy, buildBulkDismissBar, buildSelect, buildSafetyPanel, ignoreRenamers, pairingOptionsFor, castOptionsFor, buildPairingBadge, localPageFetcher, releaseQueryArgs, filterLocally, isFilterActive,
     describeProgress, applyProgress, attachLive, buildLiveHint,

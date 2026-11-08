@@ -707,7 +707,7 @@
   // year-by-year preview, ~12 small requests) now only runs when the
   // user explicitly clicks "Check StashDB for years", not automatically
   // on every expand.
-  const catalogOpen = new Map(); // 'provider:type:id' -> the Catalog tools were left open (kept while the page stays open)
+  const CATALOG_OPEN_KEY = 'entity:catalog-tools'; // remembered like the other panels (one choice for every entity)
 
   async function initBacklogPanel(panel, summaryText, provider, entityType, stashId, entityName, localId) {
     const { el } = window.SRW;
@@ -718,19 +718,20 @@
     const pickerArea = el('div', { className: 'srw-backlog-picker' });
     // The catalog tools (date window, years to load, reload) are ONE line above the scenes (v0.253.17): "Catalog v", what is loaded and when it was checked,
     // and on the right how many scenes need attention. The tools themselves (pickerArea) fold open under the line; they are open from the start only
-    // while no year is loaded yet (then they are what is needed), and the choice is kept for this entity while the page stays open.
+    // while no year is loaded yet and nothing was chosen (then they are what is needed); the choice is remembered, like the other panels.
     const catalogKey = `${provider}:${entityType}:${stashId}`;
     const summary = el('span', { className: 'srw-hint srw-catalog-summary', textContent: 'Loading…' });
     const attention = el('span', { className: 'srw-catalog-attention' });
     const arrow = el('span', { className: 'srw-fb-arrow' });
     const toggle = el('button', { type: 'button', className: 'srw-btn srw-catalog-toggle', title: 'Date window, years to load, reload' }, [el('span', { textContent: 'Catalog' }), arrow]);
     const drawArrow = () => arrow.replaceChildren(window.SRW.icon(pickerArea.hidden ? 'faChevronDown' : 'faChevronUp') || document.createTextNode(pickerArea.hidden ? '▾' : '▴'));
-    pickerArea.hidden = !catalogOpen.get(catalogKey);
+    pickerArea.hidden = !window.SRW.storedOpen(CATALOG_OPEN_KEY);
+    toggle.classList.toggle('srw-btn-on', !pickerArea.hidden);
     drawArrow();
-    toggle.addEventListener('click', () => { pickerArea.hidden = !pickerArea.hidden; catalogOpen.set(catalogKey, !pickerArea.hidden); toggle.classList.toggle('srw-btn-on', !pickerArea.hidden); drawArrow(); });
+    toggle.addEventListener('click', () => { pickerArea.hidden = !pickerArea.hidden; window.SRW.storeOpen(CATALOG_OPEN_KEY, !pickerArea.hidden); toggle.classList.toggle('srw-btn-on', !pickerArea.hidden); drawArrow(); });
     pickerArea.srwCatalog = {
       key: catalogKey, summary,
-      open: (on) => { pickerArea.hidden = !on; catalogOpen.set(catalogKey, on); toggle.classList.toggle('srw-btn-on', on); drawArrow(); },
+      open: (on) => { pickerArea.hidden = !on; toggle.classList.toggle('srw-btn-on', on); drawArrow(); }, // (not stored: it is the default, not a choice)
     };
     body.appendChild(el('div', { className: 'srw-catalog-row' }, [toggle, summary, attention]));
     body.appendChild(pickerArea);
@@ -858,7 +859,7 @@
         cat.summary.textContent = (loadedList.length ? `${shown} loaded (${loadedScenes} scenes)` : 'No year loaded yet')
           + (result.checked_at ? ` · checked ${sinceWords(result.checked_at)}` : '');
         cat.summary.title = result.checked_at ? `Checked ${result.checked_at} UTC` : '';
-        if (!catalogOpen.has(cat.key)) cat.open(!loadedList.length);
+        if (window.SRW.storedOpen(CATALOG_OPEN_KEY) === null) cat.open(!loadedList.length); // nothing chosen yet: open while no year is loaded
       }
     } catch (e) {
       pickerArea.textContent = `Release Manager: ${e.message}`;

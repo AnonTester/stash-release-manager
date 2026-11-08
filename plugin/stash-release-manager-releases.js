@@ -845,7 +845,7 @@
       return out;
     };
     shell = window.SRW.buildFilterShell({
-      key: listFilterKey, search: searchInput, toggles: [descToggle, tagsToggle],
+      key: listFilterKey, storeKey: 'filters:releases-list', search: searchInput, toggles: [descToggle, tagsToggle],
       clusters: [{ label: 'Presets', nodes: [presetControl] }, { label: 'What', nodes: [typeSelect, vrSelect] }, { label: 'When', nodes: [dateRangeWrap] },
         { label: 'Source', nodes: [providerBoxes] }, { label: 'Also show', nodes: [dismissedToggle] }],
       describe, hasText: () => Boolean(listSearchText.trim()) || listSearchDescription || listSearchTags,
@@ -1764,7 +1764,7 @@
       return out;
     };
     shell = window.SRW.buildFilterShell({
-      key: S, search: searchInput, toggles: [descToggle, tagsToggle],
+      key: S, storeKey: `filters:calendar-${noun}`, search: searchInput, toggles: [descToggle, tagsToggle],
       clusters: [{ label: 'Presets', nodes: [opts.noPresets ? null : presetControl] }, { label: 'What', nodes: [typeSelect, vrSelect] },
         { label: 'Source', nodes: [providerBoxes] }, { label: 'Also show', nodes: [opts.noImported ? null : importedToggle] }],
       describe, hasText: () => Boolean((S.search || '').trim()) || S.description || S.tags,
