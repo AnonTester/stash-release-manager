@@ -86,6 +86,7 @@ from recycle_bin import cleanup_recycle_bin
 
 from routers.watchlist import router as watchlist_router, init_watchlist_router
 from routers.history import router as history_router
+from routers.covers import router as covers_router, init_covers_router
 from routers.compare import router as compare_router, init_compare_router
 from routers.transfer import router as transfer_router, init_transfer_router
 from routers.setup import router as setup_router, init_setup_router
@@ -1676,6 +1677,7 @@ init_file_import_router(
     on_scene_created=on_scene_created,
     on_download_complete=on_download_complete,
 )
+init_covers_router(db, get_stash_client, get_provider_client)
 init_search_router(db, get_stashdb_client, get_theporndb_client, get_stash_client, get_whisparr_client,
                     get_search_source, settings, get_provider_client=get_provider_client, readd=readd_library_scene)
 init_quality_profiles_router(db)
@@ -2286,6 +2288,7 @@ app = FastAPI(title="StashReleaseManager", lifespan=lifespan)
 app.include_router(watchlist_router)
 app.include_router(userscript_router)
 app.include_router(releases_router)
+app.include_router(covers_router)
 app.include_router(encode_worker_router)
 app.include_router(convert_router)
 app.include_router(scan_router)

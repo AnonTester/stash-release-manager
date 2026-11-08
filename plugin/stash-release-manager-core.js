@@ -11,7 +11,7 @@
   // rule and the bug it caused when this drifted). Change this if you
   // install under a different folder name.
   // Must equal `version:` in stash-release-manager.yml (scripts/test_plugin_version.py checks it).
-  const PLUGIN_VERSION = '0.255.1';
+  const PLUGIN_VERSION = '0.256.0';
   const PLUGIN_ID = 'stash-release-manager';
   const PLUGIN_NAME = 'StashReleaseManager';
 
@@ -288,9 +288,10 @@
     }, [icon, el('span', { className: 'srw-local-entity-name', textContent: name })]);
   }
 
-  // The scene's cover, linking to the same scene page the title does (v0.254.0). Every scene row gets one: a scene that is in Stash shows
-  // Stash's own cover (/scene/<id>/screenshot), any other the stash-box cover that the sidecar fetched once and keeps (a data: URL; see
-  // api/scene_covers.py). The thumbs of one render are asked for together, one request per batch, at the next tick.
+  // Pictures of scenes, performers and studios (scenes v0.254.0, performers and studios v0.256.0). An item that is in Stash shows Stash's own
+  // picture; any other the stash-box picture that the sidecar fetched once, scaled and keeps (a data: URL; see api/scene_covers.py). The pictures
+  // of one render are asked for together, one request per batch, at the next tick.
+  const STASH_PICTURE = { scene: (id) => `/scene/${id}/screenshot`, performer: (id) => `/performer/${id}/image`, studio: (id) => `/studio/${id}/image` };
   const coverQueue = [];
   let coverTimer = null;
   function queueCover(entry) {
@@ -301,27 +302,37 @@
     coverTimer = null;
     const entries = coverQueue.splice(0, coverQueue.length);
     if (!entries.length) return;
-    const unique = new Map(entries.map((e) => [`${e.provider}:${e.scene}`, { provider: e.provider, scene_stashdb_id: e.scene }]));
+    const keyOf = (e) => `${e.kind}:${e.provider}:${e.id}`;
+    const unique = new Map(entries.map((e) => [keyOf(e), { kind: e.kind, provider: e.provider, id: e.id }]));
     let covers = {};
     for (let round = 0; round < 6; round++) {
       const ask = [...unique.entries()].filter(([k]) => !covers[k] || covers[k].pending).map(([, v]) => v);
       if (!ask.length) break;
       try {
-        const res = await runOp('releases_covers', { scenes: ask });
+        const res = await runOp('covers', { items: ask });
         if (res && res.error) break;
         covers = { ...covers, ...((res && res.covers) || {}) };
       } catch (e) { break; }
       if (!Object.values(covers).some((c) => c && c.pending)) break;
     }
     entries.forEach((e) => {
-      const c = covers[`${e.provider}:${e.scene}`];
-      if (c && c.stash) { e.link.href = `/scenes/${c.stash}`; e.img.src = `/scene/${c.stash}/screenshot`; return; }
+      const c = covers[keyOf(e)];
+      if (c && c.stash) { if (e.link && e.kind === 'scene') e.link.href = `/scenes/${c.stash}`; e.img.src = STASH_PICTURE[e.kind](c.stash); return; }
       if (c && c.data) { e.img.src = c.data; return; }
       if (e.fallback) { e.img.src = imageSrc(e.fallback); return; }
-      e.link.remove();
+      e.onNone();
     });
   }
 
+  // Gives an existing <img> the picture of an item: `kind` 'scene' | 'performer' | 'studio', the stash-box `provider` and the item's `id` there.
+  // `fallback` = the address the page already has (used only when the sidecar has none), `onNone()` runs when there is no picture at all.
+  function coverImage(img, { kind, provider, id, fallback = '', link = null, onNone = () => img.remove() }) {
+    if (!id) { if (fallback) img.src = imageSrc(fallback); else onNone(); return img; }
+    queueCover({ img, kind, provider: provider || 'stashdb', id: String(id), fallback, link, onNone });
+    return img;
+  }
+
+  // The scene's cover, linking to the same scene page the title does.
   function buildReleaseThumb(r) {
     const scene = r.scene_stashdb_id;
     if (!scene && !r.image_url) return null;
@@ -333,8 +344,7 @@
     }, [img]);
     // A cover that is blocked or gone leaves no broken-image icon behind.
     img.addEventListener('error', () => link.remove());
-    if (scene) queueCover({ link, img, provider: r.provider || 'stashdb', scene, fallback: r.image_url || '' });
-    else img.src = imageSrc(r.image_url);
+    coverImage(img, { kind: 'scene', provider: r.provider || 'stashdb', id: scene, fallback: r.image_url || '', link, onNone: () => link.remove() });
     return link;
   }
 
@@ -3401,7 +3411,7 @@
   window.SRW = {
     PLUGIN_ID, PLUGIN_NAME,
     getContentScope, resetContentScope, scopeAllows,
-    getSettings, runOp, sidecarWsUrl, stashUrl, imageSrc, copyText,
+    getSettings, runOp, sidecarWsUrl, stashUrl, imageSrc, coverImage, copyText,
     getRoute, onNavigate, initNavigationWatcher,
     el, waitForElement, entityIcon, buildPageHeader,
     watchKind, keepResult, recallResult, forgetResult, keptNote, searchStatusLabel, setBusy, openModal, sceneSubtitle, iconButton, busyIcon, ageWords, ageWarning, confirmInline, buildManagedList, buildSearchActions, whenNoOpenPanel, buildManualSearch, getSearchCapabilities,

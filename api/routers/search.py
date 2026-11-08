@@ -124,6 +124,16 @@ def _add_source_urls(provider, client, kind, results):
     return results
 
 
+def _remember_image_hints(kind, provider, results):
+    """The picture addresses the stash-box sent with its results are kept, so the sidecar can cache the pictures (scene_covers.py) without
+    asking the stash-box again. Never lets a failure here break a search."""
+    try:
+        import scene_covers
+        scene_covers.remember_hints(_db, kind, provider, results)
+    except Exception:
+        logger.warning("could not keep the picture addresses of the %s results", kind, exc_info=True)
+
+
 @router.get("/{provider}/performers")
 def search_performers(provider: str, term: str):
     client = _client_for(provider)
@@ -132,6 +142,7 @@ def search_performers(provider: str, term: str):
     except Exception as e:
         _reraise_as_http(e, provider)
     _add_source_urls(provider, client, "performer", found.get("results", []))
+    _remember_image_hints("performer", provider, found.get("results", []))
     return found
 
 
@@ -143,6 +154,7 @@ def search_studios(provider: str, term: str):
     except Exception as e:
         _reraise_as_http(e, provider)
     _add_source_urls(provider, client, "studio", found.get("results", []))
+    _remember_image_hints("studio", provider, found.get("results", []))
     return found
 
 
@@ -197,6 +209,7 @@ def _ids_in_library(provider, ids):
 
 def _decorate_scenes(provider, client, found):
     _add_source_urls(provider, client, "scene", found.get("results", []))
+    _remember_image_hints("scene", provider, found.get("results", []))
     ids = [s.get("id") for s in found.get("results", [])]
     # What this program already knows about each hit (v0.206.0): on the wishlist / imported / dismissed / import failed.
     states = release_repo.wishlist_states(_db, provider, ids)

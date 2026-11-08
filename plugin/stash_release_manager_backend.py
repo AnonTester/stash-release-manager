@@ -202,6 +202,8 @@ def main():
         result = _get(sidecar_url, "/films/imported", timeout=30)
     elif mode == "releases_local_scenes":
         result = _post(sidecar_url, "/releases/local-scenes", {"scenes": args.get("scenes") or []}, timeout=60)
+    elif mode == "covers":
+        result = _post(sidecar_url, "/covers", {"items": args.get("items") or []}, timeout=180)
     elif mode == "releases_covers":
         result = _post(sidecar_url, "/releases/covers", {"scenes": args.get("scenes") or []}, timeout=180)
     elif mode == "releases_retry_encode":
