@@ -11,7 +11,7 @@
   // rule and the bug it caused when this drifted). Change this if you
   // install under a different folder name.
   // Must equal `version:` in stash-release-manager.yml (scripts/test_plugin_version.py checks it).
-  const PLUGIN_VERSION = '0.253.6';
+  const PLUGIN_VERSION = '0.253.7';
   const PLUGIN_ID = 'stash-release-manager';
   const PLUGIN_NAME = 'StashReleaseManager';
 
@@ -2393,7 +2393,7 @@
       || !providersAllOn(f.providers) || f.late !== 'all' || f.upgrades !== 'all' || Boolean(f.pairing) || Boolean(f.cast.trim()));
   }
 
-  // The statuses a list asks for: its own, plus 'dismissed' while the filter "Show dismissed" is ticked (v0.253.6).
+  // The statuses a list asks for: its own, plus 'dismissed' while the filter "Show dismissed" is ticked (v0.253.7).
   function statusesFor(f, base) {
     return f && f.showDismissed ? [...base, 'dismissed'] : base;
   }
@@ -2465,7 +2465,7 @@
     return sel;
   }
 
-  // ==================== The filter bar (v0.253.6) ====================
+  // ==================== The filter bar (v0.253.7) ====================
   //
   // One look for every list that filters by more than a search text. Row 1 is always the same and short: [search] [description] [tags] [Filters (n)]
   // [presets] [clear]; the two small icon switches widen the search to the scene's description / tags, the funnel opens a panel with the other filters
@@ -2498,9 +2498,13 @@
     const funnel = groups.length ? iconButton('button', 'faFilter', 'Filters', { className: 'srw-btn srw-fb-funnel',
       title: 'Filters: type, VR, dates, source ... (the active ones are listed below the bar)' }) : null;
     if (funnel) {
-      funnel.appendChild(count);
-      funnel.addEventListener('click', () => { panel.hidden = !panel.hidden; if (key) filterPanelOpen.set(key, !panel.hidden); funnel.classList.toggle('srw-btn-on', !panel.hidden); });
+      // The arrow tells that a panel hides behind the button (like the arrow of a drop-down): down = closed, up = open.
+      const arrow = el('span', { className: 'srw-fb-arrow' });
+      const drawArrow = () => { arrow.replaceChildren(icon(panel.hidden ? 'faChevronDown' : 'faChevronUp') || document.createTextNode(panel.hidden ? '▾' : '▴')); };
+      funnel.append(count, arrow);
+      funnel.addEventListener('click', () => { panel.hidden = !panel.hidden; if (key) filterPanelOpen.set(key, !panel.hidden); funnel.classList.toggle('srw-btn-on', !panel.hidden); drawArrow(); });
       funnel.classList.toggle('srw-btn-on', !panel.hidden);
+      drawArrow();
     }
     const clearBtn = onClear ? iconButton('button', 'faXmark', 'Clear all filters', { className: 'srw-btn srw-fb-clear', title: 'Clear all filters', onClick: onClear }) : null;
     const row = el('div', { className: 'srw-fb-row' }, [search, ...toggles, funnel, presets, clearBtn]);
