@@ -11,7 +11,7 @@
   // rule and the bug it caused when this drifted). Change this if you
   // install under a different folder name.
   // Must equal `version:` in stash-release-manager.yml (scripts/test_plugin_version.py checks it).
-  const PLUGIN_VERSION = '0.253.7';
+  const PLUGIN_VERSION = '0.253.8';
   const PLUGIN_ID = 'stash-release-manager';
   const PLUGIN_NAME = 'StashReleaseManager';
 
@@ -855,7 +855,7 @@
       probe.style.cssText = 'position:absolute;visibility:hidden;left:-9999px;top:0';
       document.body.appendChild(probe);
       const cs = getComputedStyle(probe);
-      let bg = cs.backgroundColor; const fg = cs.color; const border = cs.borderTopColor;
+      let bg = cs.backgroundColor; let fg = cs.color; let border = cs.borderTopColor;
       // Stash's own secondary button (the filter bars' buttons follow it)
       const sec = document.createElement('button');
       sec.className = 'btn btn-secondary';
@@ -866,6 +866,9 @@
       sec.remove();
       probe.remove();
       const rgb = (c) => (c.match(/[\d.]+/g) || []).map(Number);
+      // The measured `.form-control` came out white with dark text on this Stash (its theme styles the fields of its own pages only), next to dark
+      // buttons: the fields follow the secondary-button palette instead (v0.253.8) -- the same colors in every list, filter bar, form and dialog.
+      if (btn.bg && btn.fg && rgb(btn.bg).length >= 3 && !(rgb(btn.bg).length === 4 && rgb(btn.bg)[3] === 0)) { bg = btn.bg; fg = btn.fg; border = btn.border; }
       if (!bg || bg === 'transparent' || (rgb(bg).length === 4 && rgb(bg)[3] === 0)) bg = getComputedStyle(document.body).backgroundColor;
       const [r, g, b] = rgb(bg);
       if (r == null) return;
@@ -2393,7 +2396,7 @@
       || !providersAllOn(f.providers) || f.late !== 'all' || f.upgrades !== 'all' || Boolean(f.pairing) || Boolean(f.cast.trim()));
   }
 
-  // The statuses a list asks for: its own, plus 'dismissed' while the filter "Show dismissed" is ticked (v0.253.7).
+  // The statuses a list asks for: its own, plus 'dismissed' while the filter "Show dismissed" is ticked (v0.253.8).
   function statusesFor(f, base) {
     return f && f.showDismissed ? [...base, 'dismissed'] : base;
   }
@@ -2465,7 +2468,7 @@
     return sel;
   }
 
-  // ==================== The filter bar (v0.253.7) ====================
+  // ==================== The filter bar (v0.253.8) ====================
   //
   // One look for every list that filters by more than a search text. Row 1 is always the same and short: [search] [description] [tags] [Filters (n)]
   // [presets] [clear]; the two small icon switches widen the search to the scene's description / tags, the funnel opens a panel with the other filters
@@ -3121,7 +3124,7 @@
     getRoute, onNavigate, initNavigationWatcher,
     el, waitForElement, entityIcon, buildPageHeader,
     watchKind, keepResult, recallResult, forgetResult, keptNote, searchStatusLabel, setBusy, openModal, sceneSubtitle, iconButton, busyIcon, ageWords, ageWarning, confirmInline, buildManagedList, buildSearchActions, whenNoOpenPanel, buildManualSearch, getSearchCapabilities,
-    rememberOpen, statusesFor, buildFilterShell, iconToggle, icon, mismatchWarning, buildPagedList, buildPager, releaseTitleNode, notify, dismissedNotice, releaseDismissedNotice, dismissRelease, buildWishlistDismiss, buildFilmDismissButtons, notifyHandoff, buildAddOnlyButton,
+    rememberOpen, statusesFor, buildFilterShell, iconToggle, applyThemeColors, icon, mismatchWarning, buildPagedList, buildPager, releaseTitleNode, notify, dismissedNotice, releaseDismissedNotice, dismissRelease, buildWishlistDismiss, buildFilmDismissButtons, notifyHandoff, buildAddOnlyButton,
     sceneUrl, notifyReadd, loadMetadataProviderUrls, loadProviders, resetProviders, providerInfo, providerLabel, providerKeys, providerOn, providersAllOn, providersSelected, isLateAdditionNew, buildLateAdditionBadge,
     buildFilteredPagedList, markRowBusy, buildBulkDismissBar, buildSelect, buildSafetyPanel, ignoreRenamers, pairingOptionsFor, castOptionsFor, buildPairingBadge, localPageFetcher, releaseQueryArgs, filterLocally, isFilterActive,
     describeProgress, applyProgress, attachLive, buildLiveHint,

@@ -2469,17 +2469,16 @@ a.srw-btn { text-decoration: none; display: inline-block; text-align: center; }
 .srw-cal-dismissed-badge:hover { background: rgba(220, 53, 69, 0.15); }
 .srw-cal-dismissed-badge .srw-icon { width: 0.8em; height: 0.8em; }
 
-/* Fields inside the filter bar (v0.253.7): the drop-downs and date fields took the white field colors of the measured theme (dark text on white next to the
-   dark search field and buttons). They now use the bar's own colors: the secondary-button colors Stash gives (--srw-btn-*), the dark search field's ground.
-   Two selectors: inside the plugin page (beats the #srw-plugin-root field rules) and on the Studio / Performer page (outside it). */
+/* Fields inside the filter bar: the same colors as every other field of the plugin (--srw-field-*, taken from Stash's secondary-button palette by
+   applyThemeColors()). Two selectors: inside the plugin page (beats the #srw-plugin-root field rules) and on the Studio / Performer page (outside it). */
 #srw-plugin-root .srw-fb select, .srw-fb select, #srw-plugin-root .srw-fb input.srw-list-date-filter, .srw-fb input.srw-list-date-filter,
 #srw-plugin-root .srw-fb input.srw-search-input, .srw-fb input.srw-search-input {
-  background-color: var(--srw-btn-bg, rgba(0, 0, 0, 0.15));
-  color: var(--srw-btn-fg, rgba(255, 255, 255, 0.85));
-  border: 1px solid var(--srw-btn-border, rgb(85, 85, 85));
+  background-color: var(--srw-field-bg, #394b59);
+  color: var(--srw-field-fg, #fff);
+  border: 1px solid var(--srw-field-border, rgb(85, 85, 85));
   border-radius: 3.5px;
   color-scheme: dark;
 }
-#srw-plugin-root .srw-fb select option, .srw-fb select option { background-color: #1e1e1e; color: #e0e0e0; }
+#srw-plugin-root .srw-fb select option, .srw-fb select option { background-color: var(--srw-field-bg, #394b59); color: var(--srw-field-fg, #fff); }
 .srw-fb-arrow { display: inline-flex; margin-left: 0.35rem; }
 .srw-fb-arrow .srw-icon { width: 0.7em; height: 0.7em; }

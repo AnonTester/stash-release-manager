@@ -81,6 +81,7 @@
     // (2026-09-25) -- one shared key, it's a "do I want this panel
     // open" preference, not a per-entity one.
     window.SRW.rememberOpen(panel, 'entity:new-releases', panel.open);
+    window.SRW.applyThemeColors(); // the fields of this page's filter bars use the same colors as the plugin page
     refreshPanel(panel, entityType, ids, entityName);
     return panel;
   }
@@ -216,9 +217,9 @@
         // A dismissed release (filter "Show dismissed"): marked, with Restore instead of the Add / Dismiss buttons.
         items.push(el('span', { className: 'srw-dismissed-badge', textContent: 'Dismissed', title: 'You dismissed this release; Restore puts it back on the list' }));
         items.push(window.SRW.iconButton('button', 'faRotateLeft', 'Restore', {
-          className: 'srw-btn', title: 'Restore: back on the list of new releases',
+          className: 'srw-btn', title: 'Restore: back where it came from (New releases, or Missing from Catalog)',
           onClick: async () => {
-            const res = await window.SRW.runOp('releases_undismiss', { provider: r.provider, scene_stashdb_id: r.scene_stashdb_id });
+            const res = await window.SRW.runOp('releases_undismiss', { provider: r.provider, scene_stashdb_id: r.scene_stashdb_id, previous: true });
             if (res && res.error) { window.SRW.notify('Restore failed', res.error, 'error'); return; }
             onDone(r, null); // the list is read again: the row is a new one now
           },
@@ -1156,7 +1157,21 @@
         pairing: (r) => r.cast_pairing,
         cast: (r) => r.cast_names,
       };
-      const dismissible = (r) => !r.download_job_id;
+      const dismissible = (r) => !r.download_job_id && r.status !== 'dismissed';
+      // "Show dismissed" (v0.253.8): the entity's dismissed releases are read once, when the box is ticked first; they are no part of `missing`
+      // (nothing is added, searched or counted for them), only listed -- marked, with Restore back to where each one came from.
+      let dismissedRows = [];
+      let dismissedLoaded = false;
+      const loadDismissed = async () => {
+        const rows = await fetchReleasesByStatuses(['dismissed'], provider, entityType, stashId, 1000);
+        dismissedRows = Array.isArray(rows) ? rows.filter((x) => !x.muted) : [];
+        dismissedLoaded = true;
+      };
+      const listFetcher = async (f, page, perPage) => {
+        if (f.showDismissed && !dismissedLoaded) await loadDismissed();
+        const source = f.showDismissed ? missing.concat(dismissedRows) : missing;
+        return window.SRW.localPageFetcher(() => source.slice().sort((a, b) => (b.scene_date || '').localeCompare(a.scene_date || '')), fields)(f, page, perPage);
+      };
       const removeRows = (list) => {
         const gone = new Set(list.map((r) => `${r.provider}\u0000${r.scene_stashdb_id}`));
         missing = missing.filter((r) => !gone.has(`${r.provider}\u0000${r.scene_stashdb_id}`));
@@ -1180,12 +1195,12 @@
       // page is still grouped by year/quarter as before. "Added late"
       // narrows to back-catalogue additions found by the scan.
       view = window.SRW.buildFilteredPagedList({
-        filters: ['search', 'description', 'vr', 'late', 'cast', 'pairing', 'dates', 'providers'],
+        filters: ['search', 'description', 'vr', 'late', 'cast', 'pairing', 'dates', 'providers', 'dismissed'],
         perPage: 40,
         showFilterBarFrom: 10,
         pairingOptions: window.SRW.pairingOptionsFor(missing),
         castOptions: window.SRW.castOptionsFor(missing, entityType === 'performer' ? entityName : ''),
-        fetchPage: window.SRW.localPageFetcher(() => missing, fields),
+        fetchPage: listFetcher,
         // Flat, newest first, one page at a time (v0.101.3) -- the year/quarter folding is gone now that the list pages.
         renderItems: (items) => {
           shownRows = items;

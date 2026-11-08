@@ -304,6 +304,8 @@ def query_releases(db, statuses=("new",), q="", search_description=False, entity
     hand-off first, for the wishlist section) or 'imported'. `upgrades`: 'only' / 'hide' rows that replace a library file (release.upgrade_of)."""
     where = [f"release.status IN ({','.join('?' * len(statuses))})"]
     params = list(statuses)
+    if "dismissed" in statuses and len(statuses) > 1:  # "Show dismissed" next to other statuses (v0.253.8): releases of a hidden studio stay hidden
+        where.append("release.muted = 0")
     if q and q.strip():
         text = "release.title || ' ' || release.studio_name"
         if search_description:
@@ -447,6 +449,20 @@ def restore_rows(db, rows):
     if restored:
         _changed(None, None, "bulk_status")
     return restored
+
+
+def restore_previous_for_scene(db, provider, scene_stashdb_id):
+    """Restore of a dismissed scene to the status it had before the dismiss (`dismissed_prev_status`; 'new' when unknown, e.g. dismissed before
+    v0.253.8). Rows of a hidden studio (muted) are left alone. Returns the number of rows restored."""
+    with db.connect() as conn:
+        cur = conn.execute(
+            """UPDATE release SET status = COALESCE(NULLIF(dismissed_prev_status, 'dismissed'), 'new'), dismissed_prev_status = NULL
+               WHERE provider = ? AND scene_stashdb_id = ? AND status = 'dismissed' AND muted = 0""",
+            (provider, scene_stashdb_id))
+        n = cur.rowcount
+    if n:
+        _changed(provider, scene_stashdb_id, "status")
+    return n
 
 
 def _update_status(conn, where_clause, where_params, status):

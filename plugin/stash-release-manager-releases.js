@@ -999,9 +999,9 @@
         // A dismissed release ("Show dismissed"): marked, with Restore instead of the Add / Dismiss buttons.
         items.push(el('span', { className: 'srw-dismissed-badge', textContent: 'Dismissed', title: 'You dismissed this release; Restore puts it back on the list' }));
         items.push(window.SRW.iconButton('button', 'faRotateLeft', 'Restore', {
-          className: 'srw-btn', title: 'Restore: back on the list of new releases',
+          className: 'srw-btn', title: 'Restore: back where it came from',
           onClick: async () => {
-            const res = await window.SRW.runOp('releases_undismiss', { provider: r.provider, scene_stashdb_id: r.scene_stashdb_id });
+            const res = await window.SRW.runOp('releases_undismiss', { provider: r.provider, scene_stashdb_id: r.scene_stashdb_id, previous: true });
             if (res && res.error) { window.SRW.notify('Restore failed', res.error, 'error'); return; }
             await renderReleaseList(container);
           },

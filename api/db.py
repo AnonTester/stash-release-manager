@@ -569,6 +569,7 @@ class Database:
         self._migrate_upgrade_review(conn)
         self._migrate_release_targeted_search(conn)
         self._migrate_release_studio_mute(conn)
+        self._migrate_release_dismissed_prev(conn)
         self._migrate_release_tags(conn)
         self._migrate_release_cast_pairing(conn)
         self._migrate_vr_verdict_manual(conn)
@@ -851,6 +852,21 @@ class Database:
             conn.execute("ALTER TABLE release ADD COLUMN muted INTEGER NOT NULL DEFAULT 0")
         if "muted_prev_status" not in cols:
             conn.execute("ALTER TABLE release ADD COLUMN muted_prev_status TEXT")
+
+    def _migrate_release_dismissed_prev(self, conn):
+        """Adds `release.dismissed_prev_status` (v0.253.8) and a trigger that fills it: whatever sets a row to 'dismissed' (single Dismiss, bulk,
+        the favorite banner, a hidden studio), the status it had BEFORE is kept, so a Restore from the "Show dismissed" lists puts the release back
+        where it came from (the Missing from Catalog list or New releases). Rows dismissed earlier have none: they come back as 'new'."""
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(release)").fetchall()}
+        if "dismissed_prev_status" not in cols:
+            conn.execute("ALTER TABLE release ADD COLUMN dismissed_prev_status TEXT")
+        conn.execute("""CREATE TRIGGER IF NOT EXISTS release_dismissed_prev AFTER UPDATE OF status ON release
+                        WHEN NEW.status = 'dismissed' AND OLD.status != 'dismissed'
+                        BEGIN
+                            UPDATE release SET dismissed_prev_status = OLD.status
+                            WHERE provider = NEW.provider AND scene_stashdb_id = NEW.scene_stashdb_id
+                              AND entity_type = NEW.entity_type AND entity_stashdb_id = NEW.entity_stashdb_id;
+                        END""")
 
     def _migrate_release_tags(self, conn):
         """Adds `release.tags` (v0.92.0): the scene's provider tags as '|tag one|tag two|' (lower-case search is done in SQL);

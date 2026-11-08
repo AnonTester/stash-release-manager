@@ -266,7 +266,7 @@ def main():
     elif mode == "releases_imported_file":
         result = _get(sidecar_url, f"/releases/{args.get('provider')}/{args.get('scene_stashdb_id')}/imported-file", timeout=30)
     elif mode == "releases_undismiss":
-        path = f"/releases/{args.get('provider')}/{args.get('scene_stashdb_id')}/undismiss"
+        path = f"/releases/{args.get('provider')}/{args.get('scene_stashdb_id')}/undismiss" + ("?previous=true" if args.get("previous") else "")
         result = _post(sidecar_url, path, {})
     elif mode == "releases_retry_failed":
         path = f"/releases/{args.get('provider')}/{args.get('scene_stashdb_id')}/retry-failed"

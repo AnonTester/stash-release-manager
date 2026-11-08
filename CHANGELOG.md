@@ -6,6 +6,11 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.253.8
+- **"Show dismissed" on Missing from Catalog too** (Studio / Performer page), in the filter panel under "Also show". The dismissed releases are listed with the others, marked, with Restore; nothing is added, searched or counted for them.
+- **Restore goes back to where the release came from.** The database keeps the status a release had before it was dismissed; a Restore from a "Show dismissed" list puts a Missing-from-Catalog release back there and a new release back on New releases (one dismissed before this version comes back as new). Needs the sidecar rebuild.
+- **The same field colors everywhere.** Fields (drop-downs, text, date, search, password; filter bars, settings, dialogs) follow Stash's secondary-button palette instead of the white colors of a measured form field, on every page of the plugin and on the Studio / Performer page.
+
 ## 0.253.7
 - **Filter bar: an arrow on the funnel and the right colors.** The funnel shows an arrow like a drop-down (down = closed, up = open); the drop-downs, date fields and search field in the bar use the bar's own dark colors instead of white field colors. Plugin only.
 
