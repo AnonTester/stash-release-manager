@@ -715,7 +715,7 @@
       const detail = f.kind === 'ambiguous'
         ? `${f.reason ? `${f.reason}. ` : ''}candidates: ${(f.candidates || []).map((c) => c.title).join(', ')}`
         : (f.reason || '');
-      const dismissBtn = el('button', { className: 'srw-btn srw-btn-sm', textContent: 'Dismiss' });
+      const dismissBtn = el('button', { className: 'btn btn-outline-danger srw-btn-fit srw-btn-dismiss', textContent: 'Dismiss' });
       dismissBtn.addEventListener('click', async () => {
         dismissBtn.disabled = true;
         try {
@@ -982,7 +982,7 @@
         return at;
       };
       const dismissBtn = el('button', {
-        className: 'srw-btn srw-btn-sm', textContent: 'Dismiss', title: 'The file is fine -- don\'t show it again (a 2D file then gets no upgrade search)',
+        className: 'btn btn-outline-danger srw-btn-fit srw-btn-dismiss', textContent: 'Dismiss', title: 'The file is fine -- don\'t show it again (a 2D file then gets no upgrade search)',
         onClick: async () => {
           const r = await window.SRW.runOp('vr_check_dismiss', { finding_id: f.id });
           if (r.error) { window.SRW.notify('VR check', r.error, 'error'); return; }
@@ -2846,7 +2846,7 @@
             namesakeStatus.textContent = ` "${r.name}" deleted`;
           }, { danger: true }) });
         // "Dismiss": it is another film with a similar name -- the pair stays hidden (the same table as "Not this"), with Undo.
-        const dismissBtn = el('button', { className: 'srw-btn srw-btn-sm', textContent: 'Dismiss',
+        const dismissBtn = el('button', { className: 'btn btn-outline-danger srw-btn-fit srw-btn-dismiss', textContent: 'Dismiss',
           title: 'Not the same film: hide this empty group with these namesakes',
           onClick: async () => {
             const ids = n.namesakes.map((x) => x.id);

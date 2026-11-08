@@ -57,6 +57,8 @@
   // with calendarProviderFilter: List and Calendar are independent
   // pages a user can filter differently.
   let listSearchText = '';
+  let switchToList = null; // set by the page: shows the List view (the Calendar's dismissed badge uses it)
+  let listShowDismissed = false; // "Show dismissed" on the List view (v0.253.6)
   let listSearchDescription = false; // see calendarSearchDescription
   let listSearchTags = false;
   let listTypeFilter = 'both'; // 'both' | 'studio' | 'performer'
@@ -261,6 +263,7 @@
       setActiveModeBtn();
       await renderCurrentView(container);
     });
+    switchToList = async () => { viewMode = 'list'; setActiveModeBtn(); await renderCurrentView(container); }; // the dismissed badge of a Calendar day
     calModeBtn.addEventListener('click', async () => {
       viewMode = 'calendar';
       setActiveModeBtn();
@@ -729,7 +732,7 @@
     const count = opts ? opts.count : targets.length;
     if (filterActive && count) {
       const btn = el('button', {
-        className: 'srw-btn srw-btn-sm srw-btn-danger',
+        className: 'btn btn-outline-danger srw-btn-fit srw-btn-dismiss',
         textContent: opts ? `Dismiss all ${count} matching` : `Dismiss ${count} shown`,
       });
       // One shared click handler for both buttons: `getScenes` yields what
@@ -752,7 +755,7 @@
       });
       if (opts && opts.pageScenes && opts.pageScenes.length) {
         const pageBtn = el('button', {
-          className: 'srw-btn srw-btn-sm srw-btn-danger',
+          className: 'btn btn-outline-danger srw-btn-fit srw-btn-dismiss',
           textContent: `Dismiss ${opts.pageScenes.length} on this page`,
         });
         wire(pageBtn, opts.pageScenes.length, 'the', async () => opts.pageScenes);
@@ -766,59 +769,50 @@
     return el('div', { className: 'srw-bulk-dismiss' }, children);
   }
 
+  const listFilterKey = {}; // keeps "filter panel open" across the redraws of the bar (see SRW.buildFilterShell)
+
   function buildListFilterBar(onFilterChange) {
     const { el } = window.SRW;
+    let shell = null;
+    const change = () => { if (shell) shell.refresh(); onFilterChange(); };
     const searchInput = el('input', {
       type: 'search', placeholder: 'Search title or studio…', value: listSearchText,
       className: 'srw-search-input',
-      oninput: (e) => { listSearchText = e.target.value; onFilterChange(); },
+      oninput: (e) => { listSearchText = e.target.value; if (shell) shell.refresh(); onFilterChange(); },
     });
-    const descCheckbox = el('input', { type: 'checkbox' });
-    descCheckbox.checked = listSearchDescription;
-    descCheckbox.addEventListener('change', () => { listSearchDescription = descCheckbox.checked; onFilterChange(); });
-    const descToggle = el('label', {
-      className: 'srw-provider-filter-item', title: 'Also match the scene description, not only title/studio',
-    }, [descCheckbox, ' incl. description']);
-    const tagsCheckbox = el('input', { type: 'checkbox' });
-    tagsCheckbox.checked = listSearchTags;
-    tagsCheckbox.addEventListener('change', () => { listSearchTags = tagsCheckbox.checked; onFilterChange(); });
-    const tagsToggle = el('label', {
-      className: 'srw-provider-filter-item', title: 'Also match the scene\'s tags, not only title/studio',
-    }, [tagsCheckbox, ' incl. tags']);
-    // Drop-downs like the other lists' filter bars (v0.225.5); the function names stay for the presets that set the values.
+    const descToggle = window.SRW.iconToggle('faFileLines', 'Also search the description', 'Also match the scene description, not only title/studio',
+      () => listSearchDescription, (v) => { listSearchDescription = v; }, change);
+    const tagsToggle = window.SRW.iconToggle('faTag', 'Also search the tags', 'Also match the scene\'s tags, not only title/studio',
+      () => listSearchTags, (v) => { listSearchTags = v; }, change);
     const typeSelect = window.SRW.buildSelect(
       [{ key: 'both', label: 'All types' }, { key: 'studio', label: 'Studios' }, { key: 'performer', label: 'Performer' }],
-      () => listTypeFilter, (v) => { listTypeFilter = v; onFilterChange(); }, 'Came in through a watched studio or a watched performer');
-    function updateActiveFilterBtn() { typeSelect.value = listTypeFilter; }
+      () => listTypeFilter, (v) => { listTypeFilter = v; change(); }, 'Came in through a watched studio or a watched performer');
     const vrSelect = window.SRW.buildSelect(
       [{ key: 'all', label: 'VR + Non-VR' }, { key: 'vr', label: 'VR' }, { key: 'non_vr', label: 'Non-VR' }],
-      () => listVrFilter, (v) => { listVrFilter = v; onFilterChange(); }, 'VR or flat releases');
-    function updateActiveVrBtn() { vrSelect.value = listVrFilter; }
-    // Date-range filter (2026-09-20) -- against `scene_date` (falling
-    // back to `scene_created`'s own day, see release_repo.query_releases()),
-    // same field the year/month/day grouping below is already built
-    // from. Plain <input type="date"> pair, same convention as the
-    // Watchlist tab's own per-entity auto-hand-off from/until fields.
+      () => listVrFilter, (v) => { listVrFilter = v; change(); }, 'VR or flat releases');
+    // Date-range filter -- against `scene_date` (falling back to `scene_created`'s own day, see release_repo.query_releases()).
     const dateFromInput = el('input', { type: 'date', className: 'srw-list-date-filter', value: listDateFrom });
     const dateUntilInput = el('input', { type: 'date', className: 'srw-list-date-filter', value: listDateUntil });
-    dateFromInput.addEventListener('change', () => { listDateFrom = dateFromInput.value; onFilterChange(); });
-    dateUntilInput.addEventListener('change', () => { listDateUntil = dateUntilInput.value; onFilterChange(); });
-    const clearDatesBtn = el('button', {
-      className: 'srw-btn srw-btn-sm', textContent: '×', title: 'Clear date filter',
-      onClick: () => {
-        listDateFrom = ''; listDateUntil = '';
-        dateFromInput.value = ''; dateUntilInput.value = '';
-        onFilterChange();
-      },
-    });
+    dateFromInput.addEventListener('change', () => { listDateFrom = dateFromInput.value; change(); });
+    dateUntilInput.addEventListener('change', () => { listDateUntil = dateUntilInput.value; change(); });
     const dateRangeWrap = el('span', { className: 'srw-list-date-range' }, [
-      el('span', { className: 'srw-list-date-range-label', textContent: 'from' }),
-      dateFromInput,
-      el('span', { className: 'srw-list-date-range-label', textContent: 'until' }),
-      dateUntilInput,
-      clearDatesBtn,
+      el('span', { className: 'srw-list-date-range-label', textContent: 'from' }), dateFromInput,
+      el('span', { className: 'srw-list-date-range-label', textContent: 'until' }), dateUntilInput,
     ]);
-    const providerBoxes = buildProviderCheckboxes(listProviderFilter, onFilterChange);
+    const providerBoxes = buildProviderCheckboxes(listProviderFilter, change);
+    const dismissedBox = el('input', { type: 'checkbox' });
+    dismissedBox.checked = listShowDismissed;
+    dismissedBox.addEventListener('change', () => { listShowDismissed = dismissedBox.checked; change(); });
+    const dismissedToggle = el('label', { className: 'srw-provider-filter-item', title: 'Also list the releases you dismissed (marked, with Restore)' }, [dismissedBox, ' Show dismissed']);
+    // The controls show the module variables again (a preset, a removed chip, "clear").
+    function syncAll() {
+      searchInput.value = listSearchText;
+      descToggle.sync(); tagsToggle.sync();
+      typeSelect.value = listTypeFilter; vrSelect.value = listVrFilter;
+      dateFromInput.value = listDateFrom; dateUntilInput.value = listDateUntil;
+      syncProviderCheckboxes(providerBoxes, listProviderFilter);
+      dismissedBox.checked = listShowDismissed;
+    }
     const presetControl = buildPresetControl(
       () => ({
         search: listSearchText, description: listSearchDescription, tags: listSearchTags, type: listTypeFilter, vr: listVrFilter,
@@ -827,33 +821,41 @@
       (p) => {
         listSearchText = p.search || '';
         listSearchDescription = Boolean(p.description);
-        descCheckbox.checked = listSearchDescription;
         listSearchTags = Boolean(p.tags);
-        tagsCheckbox.checked = listSearchTags;
         listTypeFilter = p.type || 'both';
         listVrFilter = p.vr || 'all';
         Object.assign(listProviderFilter, { stashdb: true, theporndb: true }, p.providers || {});
         listDateFrom = p.date_from || '';
         listDateUntil = p.date_until || '';
-        searchInput.value = listSearchText;
-        dateFromInput.value = listDateFrom;
-        dateUntilInput.value = listDateUntil;
-        updateActiveFilterBtn();
-        updateActiveVrBtn();
-        syncProviderCheckboxes(providerBoxes, listProviderFilter);
-        onFilterChange();
+        syncAll();
+        change();
       },
     );
-    return el('div', { className: 'srw-filter-bar' }, [
-      presetControl,
-      searchInput,
-      descToggle,
-      tagsToggle,
-      typeSelect,
-      vrSelect,
-      dateRangeWrap,
-      providerBoxes,
-    ]);
+    const undo = (fn) => () => { fn(); syncAll(); change(); };
+    const describe = () => {
+      const out = [];
+      if (listTypeFilter !== 'both') out.push({ label: `Type: ${listTypeFilter === 'studio' ? 'Studios' : 'Performer'}`, clear: undo(() => { listTypeFilter = 'both'; }) });
+      if (listVrFilter !== 'all') out.push({ label: listVrFilter === 'vr' ? 'VR' : 'Non-VR', clear: undo(() => { listVrFilter = 'all'; }) });
+      if (listDateFrom || listDateUntil) out.push({ label: `${listDateFrom || '…'} – ${listDateUntil || '…'}`, clear: undo(() => { listDateFrom = ''; listDateUntil = ''; }) });
+      if (!window.SRW.providersAllOn(listProviderFilter)) {
+        out.push({ label: `Source: ${window.SRW.providerKeys().filter((k) => window.SRW.providerOn(listProviderFilter, k)).map(window.SRW.providerLabel).join(', ') || 'none'}`,
+          clear: undo(() => { window.SRW.providerKeys().forEach((k) => { listProviderFilter[k] = true; }); }) });
+      }
+      if (listShowDismissed) out.push({ label: 'Dismissed shown', clear: undo(() => { listShowDismissed = false; }) });
+      return out;
+    };
+    shell = window.SRW.buildFilterShell({
+      key: listFilterKey, storeKey: 'filters:releases-list', search: searchInput, toggles: [descToggle, tagsToggle],
+      clusters: [{ label: 'Presets', nodes: [presetControl] }, { label: 'What', nodes: [typeSelect, vrSelect] }, { label: 'When', nodes: [dateRangeWrap] },
+        { label: 'Source', nodes: [providerBoxes] }, { label: 'Also show', nodes: [dismissedToggle] }],
+      describe, hasText: () => Boolean(listSearchText.trim()) || listSearchDescription || listSearchTags,
+      onClear: undo(() => {
+        listSearchText = ''; listSearchDescription = false; listSearchTags = false; listTypeFilter = 'both'; listVrFilter = 'all';
+        listDateFrom = ''; listDateUntil = ''; listShowDismissed = false;
+        window.SRW.providerKeys().forEach((k) => { listProviderFilter[k] = true; });
+      }),
+    });
+    return shell.node;
   }
 
   // Current List-view page (1-based) -- module level so it survives a
@@ -864,7 +866,7 @@
   // server-side filtering/paging -- see release_repo.query_releases()).
   function listQueryArgs() {
     return {
-      statuses: ['new'],
+      statuses: listShowDismissed ? ['new', 'dismissed'] : ['new'],
       q: listSearchText.trim(),
       search_description: listSearchDescription,
       search_tags: listSearchTags,
@@ -905,42 +907,63 @@
     const bulkSlot = el('div');
     const newListWrap = el('div');
     let requestSeq = 0;
+    // The selection bar (v0.253.12, as on every other list): tick boxes per row, "Dismiss n", ONE Undo. The instance lives as long as this view, so the
+    // Undo note survives the re-reading of the list after a Dismiss.
+    let shownRows = [];
+    let shownTotal = 0;
+    let lastResponse = null;
+    const bulkBar = window.SRW.buildBulkDismissBar({
+      extraActions: window.SRW.bulkAddActions(async () => { await loadPage(listPage); sectionsChanged(); }), // Add / Add + search of a selection, as the buttons of a row
+      getPage: () => shownRows.filter((r) => r.status !== 'dismissed'),
+      getTotal: () => shownTotal,
+      filterActive: () => true,
+      loadAll: async () => {
+        const all = await window.SRW.runOp('releases_query', { ...listQueryArgs(), statuses: ['new'], ids_only: true });
+        return all.error ? all : all.scenes;
+      },
+      onDone: async () => { await loadPage(listPage); sectionsChanged(); },
+      redraw: () => { if (lastResponse) drawPage(lastResponse, listPage); }, // the boxes show the selection; no request
+    });
     async function loadPage(page) {
       const seq = ++requestSeq;
       const args = listQueryArgs();
       const response = await window.SRW.runOp('releases_query', { ...args, page, per_page: perPage });
       if (seq !== requestSeq) return; // a newer filter change is already on its way
-      newListWrap.innerHTML = '';
-      bulkSlot.innerHTML = '';
       if (response.error) {
+        newListWrap.innerHTML = '';
         newListWrap.appendChild(el('p', { textContent: `Error: ${response.error}` }));
         return;
       }
       const totalPages = Math.max(1, Math.ceil(response.total / perPage));
       if (page > totalPages) { listPage = totalPages; loadPage(totalPages); return; }
       listPage = page;
+      lastResponse = response;
+      drawPage(response, page);
+    }
+    function drawPage(response, page) {
+      const args = listQueryArgs();
+      const totalPages = Math.max(1, Math.ceil(response.total / perPage));
+      newListWrap.innerHTML = '';
+      bulkSlot.innerHTML = '';
+      shownRows = response.rows;
+      shownTotal = response.total;
+      bulkBar.update();
       const filterActive = Boolean(args.q || args.entity_type || args.vr || args.date_from || args.date_until
         || !window.SRW.providersAllOn(listProviderFilter));
-      bulkSlot.appendChild(buildBulkDismissSlot([], filterActive, container, {
-        count: response.total,
-        pageScenes: response.rows.map((r) => ({ provider: r.provider, scene_stashdb_id: r.scene_stashdb_id })),
-        loadScenes: async () => {
-          const all = await window.SRW.runOp('releases_query', { ...args, ids_only: true });
-          return all.error ? all : all.scenes;
-        },
-      }));
+      // The selection bar left and the page selector in the middle, one row under the filter bar (the same as every other list).
       if (!response.rows.length) {
+        newListWrap.appendChild(el('div', { className: 'srw-list-toolbar' }, [bulkBar.node, el('span')]));
         newListWrap.appendChild(el('p', {
           textContent: filterActive ? 'No releases match the current filter.' : 'No new releases.',
         }));
         return;
       }
-      if (totalPages > 1) newListWrap.appendChild(buildServerPager(page, totalPages, response.total, loadPage, perPage));
-      newListWrap.appendChild(buildNewReleasesByDate(response.rows, container));
+      newListWrap.appendChild(el('div', { className: 'srw-list-toolbar' }, [bulkBar.node, totalPages > 1 ? buildServerPager(page, totalPages, response.total, loadPage, perPage) : el('span')]));
+      newListWrap.appendChild(buildNewReleasesByDate(response.rows, container, (r) => bulkBar.checkbox(r)));
       if (totalPages > 1) newListWrap.appendChild(buildServerPager(page, totalPages, response.total, loadPage, perPage));
       // Fire-and-forget Whisparr/library badge pass, capped to the newest
       // 50 rows of this page (see annotateWhisparrStatus()).
-      annotateWhisparrStatus(newListWrap, response.rows.slice(0, 50), container);
+      annotateWhisparrStatus(newListWrap, response.rows.filter((r) => r.status !== 'dismissed').slice(0, 50), container);
     }
     // Filter changes go back to page 1; typing is debounced so a query
     // isn't sent per keystroke.
@@ -958,11 +981,11 @@
 
   // One flat list per page, newest first (v0.102.1) -- the Year > Month > Day folding is gone: the list pages server-side and
   // the filter bar's date range narrows it. Scene merge first, so a scene found via several watched entities is one row.
-  function buildNewReleasesByDate(releases, container) {
+  function buildNewReleasesByDate(releases, container, selectBox) {
     const merged = groupByScene(releases);
     const day = (r) => r.scene_date || r.scene_created.slice(0, 10);
     merged.sort((a, b) => day(b).localeCompare(day(a)));
-    return buildDayReleaseList(merged, container, true);
+    return buildDayReleaseList(merged, container, true, selectBox);
   }
 
   // Centralized in core.js (2026-09-21) -- see its own comment.
@@ -974,12 +997,14 @@
   const arrangeReleaseRow = window.SRW.arrangeReleaseRow;
   const rowMeta = window.SRW.rowMeta;
 
-  function buildDayReleaseList(dayReleases, container, showDate = false) {
+  function buildDayReleaseList(dayReleases, container, showDate = false, selectBox = null) {
     const { el } = window.SRW;
     const ul = el('ul', { className: 'srw-release-list' });
     dayReleases.forEach((r) => {
       const isTpdb = r.provider !== 'stashdb'; // any provider but StashDB: handled by this sidecar without Whisparr
       const items = [
+        // the tick box of the selection bar (first column); a dismissed row gets an empty cell so the columns stay aligned
+        selectBox ? (r.status === 'dismissed' ? el('span', { className: 'srw-row-select' }) : selectBox(r)) : null,
         buildReleaseThumb(r),
         buildEntityIcons(r.entity_types),
         buildLocalEntityLink(r),
@@ -992,6 +1017,23 @@
       ];
       // In the flat list the row carries its own date (there is no day heading above it any more).
       if (showDate) items.push(el('span', { className: 'srw-release-date', textContent: r.scene_date || r.scene_created.slice(0, 10) }));
+      if (r.status === 'dismissed') {
+        // A dismissed release ("Show dismissed"): marked, with Restore instead of the Add / Dismiss buttons.
+        items.push(el('span', { className: 'srw-dismissed-badge', textContent: 'Dismissed', title: 'You dismissed this release; Restore puts it back on the list' }));
+        items.push(window.SRW.iconButton('button', 'faRotateLeft', 'Restore', {
+          className: 'srw-btn', title: 'Restore: back where it came from',
+          onClick: async () => {
+            const res = await window.SRW.runOp('releases_undismiss', { provider: r.provider, scene_stashdb_id: r.scene_stashdb_id, previous: true });
+            if (res && res.error) { window.SRW.notify('Restore failed', res.error, 'error'); return; }
+            await renderReleaseList(container);
+          },
+        }));
+        const dli = el('li', { className: `srw-release-item srw-release-item-${r.provider} srw-release-dismissed` }, items);
+        dli.dataset.sceneId = r.scene_stashdb_id;
+        arrangeReleaseRow(dli, r);
+        ul.appendChild(dli);
+        return;
+      }
       // ThePornDB releases can be added too since 2026-09-25 -- they
       // take the Whisparr-free path (handoff.hand_off()); the badge just
       // shows where the release was found.
@@ -1038,7 +1080,7 @@
         }));
       }
       items.push(el('button', {
-        className: 'srw-btn',
+        className: 'btn btn-outline-danger srw-btn-fit srw-btn-dismiss',
         textContent: 'Dismiss',
         onClick: async () => {
           const res = await window.SRW.dismissRelease(r);
@@ -1099,7 +1141,9 @@
         if (!li) return;
         if (info.satisfied) { li.remove(); return; }
         const actionBtn = li.querySelector('.srw-whisparr-action');
-        if (info.whisparr_exists || info.whisparr_has_file || info.whisparr_file_mismatch) li.querySelectorAll('.srw-whisparr-add-only').forEach((x) => x.remove());
+        const rel = releases.find((x) => x.scene_stashdb_id === sceneId);
+        const onWishlist = Boolean(rel && rel.status === 'sent_to_whisparr'); // tracked by Whisparr but not on the wishlist (v0.253.16): Add stays, the logo searches
+        if ((info.whisparr_exists && onWishlist) || info.whisparr_has_file || info.whisparr_file_mismatch) li.querySelectorAll('.srw-whisparr-add-only').forEach((x) => x.remove());
         if (info.in_library) {
           const label = info.quality ? `In Library — ${info.quality}` : 'In Library';
           const badge = el('span', { className: 'srw-release-in-library', textContent: label });
@@ -1144,9 +1188,13 @@
               : 'Downloaded (Whisparr) — awaiting Stash rescan',
           }));
         } else if (info.whisparr_exists && actionBtn) {
-          actionBtn.textContent = 'Search now';
-          actionBtn.classList.remove('srw-btn-primary');
-          actionBtn.classList.add('srw-btn-whisparr');
+          if (!onWishlist) {
+            window.SRW.markInWhisparr(actionBtn);
+          } else {
+            actionBtn.textContent = 'Search now';
+            actionBtn.classList.remove('srw-btn-primary');
+            actionBtn.classList.add('srw-btn-whisparr');
+          }
         }
       });
       window.SRW.resolveSceneLinks(listWrap);
@@ -1179,6 +1227,7 @@
     let shownTotal = 0;
     let view = null;
     const bar = (status === 'sent_to_whisparr' || isLate) ? window.SRW.buildBulkDismissBar({
+      ...(isLate ? { extraActions: window.SRW.bulkAddActions(async () => { await view.reload(); reloadLiveSections(); }) } : {}), // the Added-late rows have Add / Add + search; a wishlist row has other buttons
       getPage: () => shownRows.filter(dismissible), getTotal: () => shownTotal, filterActive: () => shownFiltered,
       loadAll: async () => {
         const all = await window.SRW.runOp('releases_query', {
@@ -1270,7 +1319,7 @@
             }),
         }));
         li.push(el('button', {
-          className: 'srw-btn', textContent: 'Dismiss',
+          className: 'btn btn-outline-danger srw-btn-fit srw-btn-dismiss', textContent: 'Dismiss',
           onClick: async (e) => {
             const unmark = window.SRW.markRowBusy(e.currentTarget, 'Dismissing…');
             const res = await window.SRW.dismissRelease(r);
@@ -1647,44 +1696,42 @@
     const noun = opts.noun || 'scene';
     const importedKey = opts.importedStoreKey || 'srw:calendar-show-imported';
     const { el } = window.SRW;
+    let shell = null;
+    const change = () => { if (shell) shell.refresh(); onFilterChange(); };
     const searchInput = el('input', {
       type: 'search', placeholder: 'Search title or studio…', value: S.search,
       className: 'srw-search-input',
-      oninput: (e) => { S.search = e.target.value; onFilterChange(); },
+      oninput: (e) => { S.search = e.target.value; if (shell) shell.refresh(); onFilterChange(); },
     });
-    const descCheckbox = el('input', { type: 'checkbox' });
-    descCheckbox.checked = S.description;
-    descCheckbox.addEventListener('change', () => { S.description = descCheckbox.checked; onFilterChange(); });
-    const descToggle = el('label', {
-      className: 'srw-provider-filter-item', title: `Also match the ${noun} description, not only title/studio`,
-    }, [descCheckbox, ' incl. description']);
-    const tagsCheckbox = el('input', { type: 'checkbox' });
-    tagsCheckbox.checked = S.tags;
-    tagsCheckbox.addEventListener('change', () => { S.tags = tagsCheckbox.checked; onFilterChange(); });
-    const tagsToggle = el('label', {
-      className: 'srw-provider-filter-item', title: `Also match the ${noun}'s tags, not only title/studio`,
-    }, [tagsCheckbox, ' incl. tags']);
-    // Drop-downs like the other lists' filter bars (v0.225.5); the function names stay for the presets that set the values.
+    const descToggle = window.SRW.iconToggle('faFileLines', `Also search the ${noun} description`, `Also match the ${noun} description, not only title/studio`,
+      () => S.description, (v) => { S.description = v; }, change);
+    const tagsToggle = window.SRW.iconToggle('faTag', `Also search the ${noun}'s tags`, `Also match the ${noun}'s tags, not only title/studio`,
+      () => S.tags, (v) => { S.tags = v; }, change);
     const typeSelect = window.SRW.buildSelect(
       [{ key: 'both', label: 'All types' }, { key: 'studio', label: 'Studios' }, { key: 'performer', label: 'Performer' }],
-      () => S.type, (v) => { S.type = v; onFilterChange(); }, opts.typeTitle || 'Came in through a watched studio or a watched performer');
-    function updateActiveFilterBtn() { typeSelect.value = S.type; }
+      () => S.type, (v) => { S.type = v; change(); }, opts.typeTitle || 'Came in through a watched studio or a watched performer');
     const vrSelect = window.SRW.buildSelect(
       [{ key: 'all', label: 'VR + Non-VR' }, { key: 'vr', label: 'VR' }, { key: 'non_vr', label: 'Non-VR' }],
-      () => S.vr, (v) => { S.vr = v; onFilterChange(); }, 'VR or flat releases');
-    function updateActiveVrBtn() { vrSelect.value = S.vr; }
+      () => S.vr, (v) => { S.vr = v; change(); }, 'VR or flat releases');
     // `opts.providerKeys`: the providers this list can contain (the Movies lists only have ThePornDB); default: every provider.
-    const providerBoxes = buildProviderCheckboxes(S.providers, onFilterChange, opts.providerKeys || null);
+    const providerBoxes = buildProviderCheckboxes(S.providers, change, opts.providerKeys || null);
     const importedCheckbox = el('input', { type: 'checkbox' });
     importedCheckbox.checked = S.showImported;
     importedCheckbox.addEventListener('change', () => {
       S.showImported = importedCheckbox.checked;
       try { localStorage.setItem(importedKey, S.showImported ? '1' : '0'); } catch (e) { /* ignore */ }
-      onFilterChange();
+      change();
     });
     const importedToggle = el('label', {
       className: 'srw-provider-filter-item', title: `Also show the green pills of ${noun}s that were already imported`,
     }, [importedCheckbox, ' Show imported']);
+    function syncAll() {
+      searchInput.value = S.search;
+      descToggle.sync(); tagsToggle.sync();
+      typeSelect.value = S.type; vrSelect.value = S.vr;
+      syncProviderCheckboxes(providerBoxes, S.providers);
+      importedCheckbox.checked = S.showImported;
+    }
     // Calendar has no date-range filter (the month is its range) --
     // a preset saved here stores empty dates, and one saved from the
     // List view just has its dates ignored here.
@@ -1696,29 +1743,37 @@
       (p) => {
         S.search = p.search || '';
         S.description = Boolean(p.description);
-        descCheckbox.checked = S.description;
         S.tags = Boolean(p.tags);
-        tagsCheckbox.checked = S.tags;
         S.type = p.type || 'both';
         S.vr = p.vr || 'all';
         Object.assign(S.providers, { stashdb: true, theporndb: true }, p.providers || {});
-        searchInput.value = S.search;
-        updateActiveFilterBtn();
-        updateActiveVrBtn();
-        syncProviderCheckboxes(providerBoxes, S.providers);
-        onFilterChange();
+        syncAll();
+        change();
       },
     );
-    return el('div', { className: 'srw-filter-bar' }, [
-      opts.noPresets ? null : presetControl,
-      searchInput,
-      descToggle,
-      tagsToggle,
-      typeSelect,
-      vrSelect,
-      providerBoxes,
-      opts.noImported ? null : importedToggle,
-    ]);
+    const keys = opts.providerKeys || window.SRW.providerKeys();
+    const undo = (fn) => () => { fn(); syncAll(); change(); };
+    const describe = () => {
+      const out = [];
+      if (S.type !== 'both') out.push({ label: `Type: ${S.type === 'studio' ? 'Studios' : 'Performer'}`, clear: undo(() => { S.type = 'both'; }) });
+      if (S.vr !== 'all') out.push({ label: S.vr === 'vr' ? 'VR' : 'Non-VR', clear: undo(() => { S.vr = 'all'; }) });
+      if (!keys.every((k) => window.SRW.providerOn(S.providers, k))) {
+        out.push({ label: `Source: ${keys.filter((k) => window.SRW.providerOn(S.providers, k)).map(window.SRW.providerLabel).join(', ') || 'none'}`,
+          clear: undo(() => { keys.forEach((k) => { S.providers[k] = true; }); }) });
+      }
+      return out;
+    };
+    shell = window.SRW.buildFilterShell({
+      key: S, storeKey: `filters:calendar-${noun}`, search: searchInput, toggles: [descToggle, tagsToggle],
+      clusters: [{ label: 'Presets', nodes: [opts.noPresets ? null : presetControl] }, { label: 'What', nodes: [typeSelect, vrSelect] },
+        { label: 'Source', nodes: [providerBoxes] }, { label: 'Also show', nodes: [opts.noImported ? null : importedToggle] }],
+      describe, hasText: () => Boolean((S.search || '').trim()) || S.description || S.tags,
+      onClear: undo(() => {
+        S.search = ''; S.description = false; S.tags = false; S.type = 'both'; S.vr = 'all';
+        keys.forEach((k) => { S.providers[k] = true; });
+      }),
+    });
+    return shell.node;
   }
 
   async function renderCalendarView(container) {
@@ -1760,7 +1815,7 @@
     const sectionsPromise = buildStatusSections(container); // runs while the month and the pictures load
     const [monthResult, settings] = await Promise.all([
       window.SRW.runOp('releases_query', {
-        statuses: ['new', 'sent_to_whisparr', 'imported', 'import_failed'],
+        statuses: ['new', 'sent_to_whisparr', 'imported', 'import_failed', 'dismissed'], // dismissed: only counted per day (badge), no card
         date_from: monthStart, date_until: monthEnd, per_page: 0,
       }),
       window.SRW.runOp('settings_get_all'),
@@ -1782,7 +1837,7 @@
     // never needs a new image fetch, just a re-filter of already-
     // resolved data.
     const distinctEntities = new Map();
-    all.forEach((r) => distinctEntities.set(`${r.provider}:${r.entity_type}:${r.entity_stashdb_id}`, r));
+    all.filter((r) => r.status !== 'dismissed').forEach((r) => distinctEntities.set(`${r.provider}:${r.entity_type}:${r.entity_stashdb_id}`, r)); // no pictures for the dismissed (they are only counted)
     await Promise.all(Array.from(distinctEntities.values()).map((r) =>
       resolveEntityImage(r.entity_type, r.entity_stashdb_id, r.provider)
     ));
@@ -1828,8 +1883,10 @@
       const filtered = filterCalendarReleases(all);
       rebuildBulk();
       const byDay = {};
+      const dismissedByDay = {}; // v0.253.6: dismissed releases are no cards, a badge on the day counts them
       filtered.forEach((r) => {
         const day = r.scene_date || r.scene_created.slice(0, 10);
+        if (r.status === 'dismissed') { dismissedByDay[day] = (dismissedByDay[day] || 0) + 1; return; }
         (byDay[day] = byDay[day] || []).push(r);
       });
       // Stable per-day order, independent of which of the four status
@@ -1851,7 +1908,7 @@
       // it already was, before and after any status change.
       Object.values(byDay).forEach((day) => day.sort((a, b) => b.scene_created.localeCompare(a.scene_created)));
       gridWrap.innerHTML = '';
-      gridWrap.appendChild(buildCalendarGrid(calendarMonth, byDay, container));
+      gridWrap.appendChild(buildCalendarGrid(calendarMonth, byDay, container, dismissedByDay));
       gridWrap.appendChild(buildCalendarLegend());
       if (whisparrStatusCache) applyCalendarWhisparrStatus(gridWrap, whisparrStatusCache, idToRelease, container);
     }
@@ -1900,7 +1957,7 @@
     const fetchMonthRows = async (month, light = false) => {
       const ms = `${monthKeyOf(month)}-01`;
       const res = await window.SRW.runOp('releases_query', {
-        statuses: ['new', 'sent_to_whisparr', 'imported', 'import_failed'],
+        statuses: ['new', 'sent_to_whisparr', 'imported', 'import_failed', 'dismissed'], // dismissed: only counted per day (badge), no card
         date_from: ms, date_until: `${ms.slice(0, 8)}${pad2(new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate())}`, per_page: 0, light,
       });
       return res.error ? null : res.rows;
@@ -1919,7 +1976,7 @@
     const sameRelease = (x, r) => x.provider === r.provider && x.scene_stashdb_id === r.scene_stashdb_id;
     async function drawRows(rows) {
       const ents = new Map();
-      groupByScene(rows).forEach((r) => ents.set(`${r.provider}:${r.entity_type}:${r.entity_stashdb_id}`, r));
+      groupByScene(rows).filter((r) => r.status !== 'dismissed').forEach((r) => ents.set(`${r.provider}:${r.entity_type}:${r.entity_stashdb_id}`, r));
       await Promise.all(Array.from(ents.values()).map((r) => resolveEntityImage(r.entity_type, r.entity_stashdb_id, r.provider)));
       rememberEntityImages();
       rawRows = rows;
@@ -2043,7 +2100,25 @@
     });
   }
 
-  function buildCalendarGrid(month, byDay, container) {
+  // The badge on a day with dismissed releases (v0.253.6): the dismissed ones are no cards (the calendar would be full of them); a click opens the
+  // List view for that day with "Show dismissed" on and the calendar's own filter, so what the number counted is what the list shows.
+  function buildDismissedDayBadge(count, dateKey, container) {
+    const badge = window.SRW.iconButton('button', 'faBan', `${count} dismissed`, {
+      className: 'srw-cal-dismissed-badge',
+      title: `${count} release${count === 1 ? '' : 's'} dismissed on this day -- click to list ${count === 1 ? 'it' : 'them'} (with Restore)`,
+      onClick: async () => {
+        listSearchText = calendarSearchText; listSearchDescription = calendarSearchDescription; listSearchTags = calendarSearchTags;
+        listTypeFilter = calendarTypeFilter; listVrFilter = calendarVrFilter;
+        window.SRW.providerKeys().forEach((k) => { listProviderFilter[k] = window.SRW.providerOn(calendarProviderFilter, k); });
+        listDateFrom = dateKey; listDateUntil = dateKey; listShowDismissed = true; listPage = 1;
+        if (switchToList) await switchToList(); else { viewMode = 'list'; await renderCurrentView(container); }
+      },
+    });
+    badge.append(` ${count}`);
+    return badge;
+  }
+
+  function buildCalendarGrid(month, byDay, container, dismissedByDay = {}) {
     const { el } = window.SRW;
     const year = month.getFullYear();
     const monthIndex = month.getMonth();
@@ -2085,7 +2160,10 @@
       const dayCell = el('div', {
         className: 'srw-cal-day' + (dateKey === todayKey ? ' srw-cal-day-today' : ''),
       }, [
-        el('div', { className: 'srw-cal-daynum', textContent: String(d) }),
+        el('div', { className: 'srw-cal-dayhead' }, [
+          el('div', { className: 'srw-cal-daynum', textContent: String(d) }),
+          dismissedByDay[dateKey] ? buildDismissedDayBadge(dismissedByDay[dateKey], dateKey, container) : null,
+        ]),
       ]);
       const buildPill = (r) => {
         const key = `${r.provider}:${r.entity_type}:${r.entity_stashdb_id}`;

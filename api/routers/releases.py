@@ -824,11 +824,15 @@ def restore_dismissed(body: RestoreRowsRequest):
 
 
 @router.post("/{provider}/{scene_stashdb_id}/undismiss")
-def undismiss(provider: str, scene_stashdb_id: str):
+def undismiss(provider: str, scene_stashdb_id: str, previous: bool = False):
     """Undo a dismiss -- moves the release back to 'new' so it reappears
     in the main list/Calendar. Scene-scoped for the same reason as
     dismiss() above. Added 2026-09-12 after the user asked what Dismiss
     actually does and found there was no way back once clicked."""
+    if previous:  # v0.253.8: back where it came from (Missing from Catalog, New releases, wishlist ...)
+        n = release_repo.restore_previous_for_scene(_db, provider, scene_stashdb_id)
+        history.scene("info", "dismiss", "Dismiss undone (back to where it was)", provider, scene_stashdb_id)
+        return {"ok": True, "restored": n}
     release_repo.set_status_for_scene(_db, provider, scene_stashdb_id, "new")
     history.scene("info", "dismiss", "Dismiss undone (back to new)", provider, scene_stashdb_id)
     return {"ok": True}

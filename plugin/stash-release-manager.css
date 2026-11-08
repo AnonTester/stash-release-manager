@@ -1503,7 +1503,7 @@
 .srw-bulk-dismiss {
   display: flex;
   flex-wrap: wrap;
-  justify-content: center;
+  justify-content: flex-start; /* left-aligned (v0.253.10) */
   align-items: center;
   gap: 7px;
 }
@@ -1663,7 +1663,7 @@
 .srw-backlog-year-label.srw-year-loaded { color: #3fb950; font-weight: 600; }
 .srw-backlog-year-label.srw-year-outside { opacity: 0.35; text-decoration: line-through; }
 .srw-window-editor { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; margin-bottom: 0.5rem; }
-.srw-window-editor > .srw-hint:last-child { flex-basis: 100%; margin: 0; }
+.srw-info { cursor: help; opacity: 0.75; }
 
 /* Import phases on the progress bar (2026-09-26): downloading keeps the
    default colour, the import copy is teal, "waiting"/"verifying" amber
@@ -2271,7 +2271,11 @@ a.srw-btn { text-decoration: none; display: inline-block; text-align: center; }
 #srw-plugin-root .srw-filter-select, .srw-modal .srw-filter-select,
 #srw-plugin-root input:is([type=text], [type=search], [type=number], [type=password], [type=date], [type=url], [type=email], :not([type])),
 .srw-modal input:is([type=text], [type=search], [type=number], [type=password], [type=date], [type=url], [type=email], :not([type])),
-#srw-plugin-root textarea, .srw-modal textarea {
+#srw-plugin-root textarea, .srw-modal textarea,
+#srw-releases-pane select, #srw-entity-panel select,
+#srw-releases-pane input:is([type=text], [type=search], [type=number], [type=date], [type=url], :not([type])),
+#srw-entity-panel input:is([type=text], [type=search], [type=number], [type=date], [type=url], :not([type])),
+#srw-releases-pane textarea, #srw-entity-panel textarea {
   background-color: var(--srw-field-bg, #1e1e1e);
   color: var(--srw-field-fg, #e0e0e0);
   border: 1px solid var(--srw-field-border, rgba(128, 128, 128, 0.4));
@@ -2439,3 +2443,86 @@ a.srw-btn { text-decoration: none; display: inline-block; text-align: center; }
 .srw-form-grid .srw-btn { margin: 0.25rem 0.5rem 0.25rem 0; }
 .srw-form-grid .srw-btn-danger { margin-top: 0.75rem; }
 .srw-form-grid .srw-inline-confirm-buttons .srw-btn { margin: 0; }
+
+/* Show dismissed (v0.253.5): the tick box above a list, and a dismissed row */
+.srw-show-dismissed { display: inline-flex; align-items: center; gap: 0.4rem; margin: 0 0 0.5rem; cursor: pointer; }
+.srw-dismissed-badge { display: inline-block; font-size: 0.86rem; padding: 0.05rem 0.4rem; border-radius: 0.6rem; border: 1px solid rgba(220, 53, 69, 0.6); color: rgba(220, 53, 69, 0.95); white-space: nowrap; }
+.srw-release-item.srw-release-dismissed { opacity: 0.75; }
+
+/* The filter bar (v0.253.6): row 1 (search, two icon switches, funnel, presets, clear), a panel with groups, chips of the active filters */
+.srw-filter-bar.srw-fb { display: flex; flex-direction: column; align-items: stretch; gap: 6px; justify-content: flex-start; }
+.srw-fb-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 7px; }
+.srw-fb-toggle.srw-btn-on, .srw-fb-funnel.srw-btn-on { background: #2b6cb0 !important; border-color: #2b6cb0 !important; color: #fff !important; }
+.srw-fb-funnel { position: relative; }
+.srw-fb-count { display: inline-block; margin-left: 0.3rem; min-width: 1.1rem; padding: 0 0.3rem; border-radius: 0.6rem; background: #2b6cb0; color: #fff; font-size: 0.78rem; line-height: 1.15rem; text-align: center; }
+.srw-fb-funnel.srw-btn-on .srw-fb-count { background: rgba(255, 255, 255, 0.25); }
+.srw-fb-panel { display: flex; flex-wrap: wrap; gap: 6px 22px; justify-content: center; padding: 8px 4px 2px; border-top: 1px solid rgba(128, 128, 128, 0.3); }
+.srw-fb-panel[hidden] { display: none; }
+.srw-fb-chips[hidden] { display: none; }
+.srw-fb-group { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; }
+.srw-fb-group-label { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em; opacity: 0.65; }
+.srw-fb-group-body { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 7px; }
+.srw-fb-chips { display: contents; } /* the chips are items of row 1 */
+.srw-fb-chip { display: inline-flex; align-items: center; gap: 0.3rem; padding: 0.05rem 0.2rem 0.05rem 0.55rem; border-radius: 0.8rem; border: 1px solid rgba(43, 108, 176, 0.8); font-size: 0.88rem; }
+.srw-fb-chip-x { background: none; border: 0; color: inherit; padding: 0 0.35rem; cursor: pointer; opacity: 0.8; }
+.srw-fb-chip-x:hover { opacity: 1; }
+.srw-sort-row .srw-filter-bar.srw-fb { flex-direction: row; flex-wrap: wrap; align-items: center; }
+
+/* A Calendar day with dismissed releases: a small badge next to the day number (v0.253.6) */
+.srw-cal-dayhead { display: flex; align-items: center; justify-content: space-between; gap: 0.3rem; }
+.srw-cal-dismissed-badge { display: inline-flex; align-items: center; gap: 0.2rem; padding: 0 0.4rem; border-radius: 0.6rem; border: 1px solid rgba(220, 53, 69, 0.6); background: transparent; color: rgba(220, 53, 69, 0.95); font-size: 0.78rem; line-height: 1.2rem; cursor: pointer; }
+.srw-cal-dismissed-badge:hover { background: rgba(220, 53, 69, 0.15); }
+.srw-cal-dismissed-badge .srw-icon { width: 0.8em; height: 0.8em; }
+
+/* Fields inside the filter bar: the same colors as every other field of the plugin (--srw-field-*, taken from Stash's secondary-button palette by
+   applyThemeColors()). Two selectors: inside the plugin page (beats the #srw-plugin-root field rules) and on the Studio / Performer page (outside it). */
+#srw-plugin-root .srw-fb select, .srw-fb select, #srw-plugin-root .srw-fb input.srw-list-date-filter, .srw-fb input.srw-list-date-filter,
+#srw-plugin-root .srw-fb input.srw-search-input, .srw-fb input.srw-search-input {
+  background-color: var(--srw-field-bg, #394b59);
+  color: var(--srw-field-fg, #fff);
+  border: 1px solid var(--srw-field-border, rgb(85, 85, 85));
+  border-radius: 3.5px;
+  color-scheme: dark;
+}
+#srw-plugin-root .srw-fb select option, .srw-fb select option { background-color: var(--srw-field-bg, #394b59); color: var(--srw-field-fg, #fff); }
+.srw-fb-arrow { display: inline-flex; margin-left: 0.35rem; }
+.srw-fb-arrow .srw-icon { width: 0.7em; height: 0.7em; }
+
+/* The row under the filter bar (v0.253.10): the bulk Dismiss bar left, the page selector in the middle */
+.srw-list-toolbar { display: grid; grid-template-columns: 1fr auto 1fr; align-items: start; gap: 0.5rem 1rem; margin: 0.4rem 0; }
+.srw-list-toolbar > :first-child { justify-self: start; }
+.srw-list-toolbar > :nth-child(2) { grid-column: 2; }
+.srw-list-toolbar .srw-bulk-dismiss { justify-content: flex-start; }
+.srw-list-toolbar .srw-pager { margin: 0; }
+@media (max-width: 800px) { .srw-list-toolbar { grid-template-columns: 1fr; } .srw-list-toolbar > :nth-child(2) { grid-column: 1; justify-self: center; } }
+
+/* A chip that only tells (the sources while all are on): not highlighted like an active filter */
+.srw-fb-chip.srw-fb-chip-quiet { border-color: rgba(128, 128, 128, 0.55); opacity: 0.85; }
+
+/* The selection bar, menu style (v0.253.12): tick box + arrow (a small menu), the counter, Dismiss n, a clear x */
+.srw-bulk-menu-bar { gap: 0.6rem; }
+.srw-bulk-menu-wrap { position: relative; display: inline-flex; align-items: center; gap: 0.2rem; }
+.srw-bulk-menu-wrap .srw-bulk-tick { margin: 0 0.15rem; }
+.srw-bulk-menu { position: absolute; top: 100%; left: 0; z-index: 30; display: flex; flex-direction: column; min-width: 13rem; margin-top: 0.2rem; padding: 0.25rem;
+  background: var(--srw-field-bg, #394b59); color: var(--srw-field-fg, #fff); border: 1px solid var(--srw-field-border, rgb(85, 85, 85)); border-radius: 4px; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4); }
+.srw-bulk-menu[hidden] { display: none; }
+.srw-bulk-menu-item { text-align: left; background: none; border: 0; color: inherit; padding: 0.3rem 0.6rem; border-radius: 3px; cursor: pointer; white-space: nowrap; }
+.srw-bulk-menu-item:hover:not(:disabled) { background: rgba(255, 255, 255, 0.12); }
+.srw-bulk-menu-item:disabled { opacity: 0.45; cursor: default; }
+.srw-bulk-menu-bar .srw-bulk-count { white-space: nowrap; }
+
+/* A scene Whisparr tracks (no file) that is not on the wishlist (v0.253.16): the logo is the search button */
+.srw-whisparr-logo { width: 1.25em; height: 1.25em; vertical-align: middle; }
+.srw-btn-icon .srw-whisparr-logo { margin: 0 0.1em; }
+.srw-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+
+/* The Catalog line (v0.253.17): one row above the scenes; the tools (date window, years, reload) fold open under it */
+.srw-catalog-row { display: flex; align-items: center; flex-wrap: wrap; gap: 0.6rem; margin: 0.3rem 0 0.5rem; }
+.srw-catalog-summary { margin: 0; }
+.srw-catalog-attention { margin-left: auto; font-size: 0.93em; opacity: 0.85; }
+.srw-catalog-toggle.srw-btn-on { background: #2b6cb0 !important; border-color: #2b6cb0 !important; color: #fff !important; }
+.srw-backlog-picker { margin: 0 0 0.6rem; padding: 0.5rem 0.6rem; border-radius: 4px; background: rgba(128, 128, 128, 0.1); }
+.srw-backlog-picker[hidden] { display: none; }
+/* the years as small switchable fields in a wrapping grid, not a long line of tick boxes */
+.srw-backlog-years { display: flex; flex-wrap: wrap; gap: 0.35rem; margin: 0.3rem 0 0.5rem; }
+.srw-backlog-years .srw-backlog-year-label { display: inline-flex; align-items: center; gap: 0.3rem; padding: 0.1rem 0.5rem; border: 1px solid rgba(128, 128, 128, 0.45); border-radius: 0.8rem; white-space: nowrap; }

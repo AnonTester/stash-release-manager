@@ -637,7 +637,7 @@
       // "Dismiss N shown": only with an active filter, only the suggestions of this month (what can be seen), with Undo.
       const targets = filterIsActive(calState) ? shown.filter((f) => f.status === 'suggested') : [];
       calBulkSlot.replaceChildren(...(targets.length ? [(() => {
-        const btn = el('button', { className: 'srw-btn srw-btn-sm srw-btn-danger', textContent: `Dismiss ${targets.length} shown` });
+        const btn = el('button', { className: 'btn btn-outline-danger srw-btn-fit srw-btn-dismiss', textContent: `Dismiss ${targets.length} shown` });
         btn.addEventListener('click', () => confirmInline(btn, `Dismiss all ${targets.length} movies matching the current filter?`, async () => {
           const ids = targets.map((f) => f.id);
           const res = await window.SRW.runOp('films_bulk_status', { ids, status: 'dismissed' });

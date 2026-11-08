@@ -6,7 +6,58 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
-## 0.253.4
+## 0.253.18
+- **The open / closed state of the filter panel and of the Catalog tools is remembered** in the browser, like the other panels. Plugin only.
+
+## 0.253.17
+- **The top of Missing from Catalog is one line:** "Catalog v", what is loaded and when it was checked, and "12 of 16 need attention" on the right. The date window, the years (small switchable fields) and the load buttons fold open under it; open from the start only while no year is loaded yet. Plugin only.
+
+## 0.253.16
+- **Scenes Whisparr already tracks but that are not on the wishlist** now have **Add** and the Whisparr logo as their search button (before: only a teal "Search now"). Cards that are on the wishlist keep their buttons.
+- **The bulk buttons follow the rows' rule:** Add n / Add + search n act on the selected scenes the row offers them for; the button shows that number, its tooltip the rest, and the notice after the run how many were skipped. Scenes on the wishlist get only Dismiss in the bar. Plugin only.
+
+## 0.253.15
+- **A selection can do in bulk what one row does alone:** on the lists whose rows have Add / Add + search / Dismiss, the bar offers **Add n**, **Add + search n** and **Dismiss n** for a selection (nothing with an empty selection); scenes are sent one after the other with the same question first.
+- **One Dismiss button:** the bar's Dismiss, the classic bar, the Calendar's "Dismiss N shown" and the movies use the row's outline-red Dismiss.
+- Sidecar: "Select all N matching" now carries one watched entity per scene (needed to add scenes that are not on the page).
+
+## 0.253.14
+- **No "Add/Search" without a selection** (Missing from Catalog), just like Dismiss: the button shows only while something is selected; "everything that can be added" is **Select all N that can be added** in the arrow menu. Plugin only.
+
+## 0.253.13
+- **"Add/Search all" is part of the selection bar** (Studio / Performer > Missing from Catalog): with nothing selected "Add/Search all 12", with a selection "Add/Search n" (the selected scenes that can be added), next to Dismiss. Plugin only.
+
+## 0.253.12
+- **The selection bar, as in a mail list.** No Dismiss buttons while nothing is selected. A tick box (empty / some / whole page) with an arrow; the arrow opens *Select this page / Select all N matching / Clear selection*. With a selection the same row shows "n selected", **Dismiss n** (asks first, one Undo) and a clear x. The Releases > New releases List has the same bar with a tick box per row. The old bar comes back with `localStorage.setItem('srw:bulk-bar', 'classic')` (then reload).
+- The source chips of the filter bar are gone again (a "Source" chip shows only while a source is switched off).
+
+## 0.253.11
+- **Filter bar: no doubled x, and the sources are always shown.** The "clear all" button is an eraser (no second x next to the chips); the sources a list shows are chips too (x = switch one off, the last one stays). Plugin only.
+
+## 0.253.10
+- **The active filters stand in row 1 of the filter bar**, right behind the funnel.
+- **"Select this page" and the Dismiss buttons have one place on every list: directly under the filter bar, left-aligned, in the same row as the page selector.** Plugin only.
+
+## 0.253.9
+- **Every field of the Studio / Performer page's Releases tab takes the plugin's field colors** (the "Date window" fields had a fixed dark grey of their own). Plugin only.
+
+## 0.253.8
+- **"Show dismissed" on Missing from Catalog too** (Studio / Performer page), in the filter panel under "Also show". The dismissed releases are listed with the others, marked, with Restore; nothing is added, searched or counted for them.
+- **Restore goes back to where the release came from.** The database keeps the status a release had before it was dismissed; a Restore from a "Show dismissed" list puts a Missing-from-Catalog release back there and a new release back on New releases (one dismissed before this version comes back as new). Needs the sidecar rebuild.
+- **The same field colors everywhere.** Fields (drop-downs, text, date, search, password; filter bars, settings, dialogs) follow Stash's secondary-button palette instead of the white colors of a measured form field, on every page of the plugin and on the Studio / Performer page.
+
+## 0.253.7
+- **Filter bar: an arrow on the funnel and the right colors.** The funnel shows an arrow like a drop-down (down = closed, up = open); the drop-downs, date fields and search field in the bar use the bar's own dark colors instead of white field colors. Plugin only.
+
+## 0.253.6
+- **One filter bar for every list.** Every list that filters by more than a search text now has the same two-tier bar: search, two small icon switches (also search the description / the tags), a funnel that opens the other filters in groups (Presets / What / When / Source / Also show), a clear button, and the active filters as chips under the bar. Lists with only a search field are unchanged.
+- **"Show dismissed"** (group "Also show") on the Studio / Performer New releases list and on Releases > New releases > List: dismissed releases are marked and have Restore.
+- **Calendar: a badge on every day with dismissed releases.** A click opens the List view for that day with "Show dismissed" on and the calendar's own filter. Plugin only.
+
+## 0.253.5
+- **"Show dismissed" on the Studio / Performer page.** A release you dismissed disappeared from "New releases" and looked as if it had never been loaded. A tick box "Show dismissed" above the list (always there, also when the list is empty) adds the dismissed releases: marked "Dismissed", dimmed, with a Restore button instead of Add / Dismiss; they are left out of the bulk Dismiss. The Releases page already had its Dismissed tab. Plugin only.
+
+## 0.253.4 (with 0.250.8 - 0.253.3; commits by AnonTester)
 - The two number fields of an added stash-box (query delay, favorites sync interval) are on separate lines.
 - The buttons in the connection forms have a gap: Save / Check connection / Test connection / Reset no longer touch each other, and "Remove connection" sits clear of the buttons above it.
 

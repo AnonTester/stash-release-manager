@@ -81,6 +81,7 @@
     // (2026-09-25) -- one shared key, it's a "do I want this panel
     // open" preference, not a per-entity one.
     window.SRW.rememberOpen(panel, 'entity:new-releases', panel.open);
+    window.SRW.applyThemeColors(); // the fields of this page's filter bars use the same colors as the plugin page
     refreshPanel(panel, entityType, ids, entityName);
     return panel;
   }
@@ -98,7 +99,8 @@
     let shownTotal = 0;
     let shownFiltered = false;
     const bar = window.SRW.buildBulkDismissBar({
-      getPage: () => shownRows, getTotal: () => shownTotal, filterActive: () => shownFiltered,
+      extraActions: window.SRW.bulkAddActions(() => view.reload()), // Add / Add + search of a selection, as the buttons of a row
+      getPage: () => shownRows.filter((x) => x.status !== 'dismissed'), getTotal: () => (view && view.state.showDismissed ? shownRows.filter((x) => x.status !== 'dismissed').length : shownTotal), filterActive: () => shownFiltered,
       loadAll: async () => {
         const all = await window.SRW.runOp('releases_query', { ...window.SRW.releaseQueryArgs(view.state), statuses: ['new'], entities, ids_only: true });
         return all.error ? all : all.scenes;
@@ -111,13 +113,13 @@
       redraw: () => view.redraw(),
     });
     view = window.SRW.buildFilteredPagedList({
-      filters: ['search', 'description', 'vr', 'dates', 'providers'],
+      filters: ['search', 'description', 'vr', 'dates', 'providers', 'dismissed'],
       perPage: 25,
-      showFilterBarFrom: 10,
+      showFilterBarFrom: 0, // the short first row is always there: "Show dismissed" is wanted exactly when the list is empty
       emptyText: 'No new releases found.',
       fetchPage: async (f, page, perPage) => {
         const response = await window.SRW.runOp('releases_query', {
-          ...window.SRW.releaseQueryArgs(f), statuses: ['new'], entities, page, per_page: perPage,
+          ...window.SRW.releaseQueryArgs(f), statuses: window.SRW.statusesFor(f, ['new']), entities, page, per_page: perPage,
         });
         if (response.error) return response;
         return { total: response.total, items: response.rows };
@@ -166,7 +168,7 @@
     // Fire-and-forget: patches an "In Library"/Whisparr-quality badge
     // into each row once the check comes back, rather than delaying
     // the whole list on it -- best-effort, see annotateLibraryStatus().
-    annotateLibraryStatus(list, releases, countHint, onDone);
+    annotateLibraryStatus(list, releases.filter((r) => r.status !== 'dismissed'), countHint, onDone);
     return list;
   }
 
@@ -182,7 +184,8 @@
     releases.forEach((r) => {
       const isTpdb = r.provider !== 'stashdb'; // any provider but StashDB: handled by this sidecar without Whisparr
       const items = [
-        selectBox ? selectBox(r) : null, // the tick box of the bulk Dismiss bar (first column)
+        // the tick box of the bulk Dismiss bar (first column); a dismissed row gets an empty cell so the columns stay aligned
+        selectBox ? (r.status === 'dismissed' ? el('span', { className: 'srw-row-select' }) : selectBox(r)) : null,
         buildReleaseThumb(r),
         el('a', {
           className: 'srw-release-title', href: sceneUrl(r.provider, r.scene_stashdb_id),
@@ -211,6 +214,24 @@
       // entries; "Missing from Catalog" is exactly where the user
       // wants to know whether a past hand-off's search actually found
       // anything.
+      if (r.status === 'dismissed') {
+        // A dismissed release (filter "Show dismissed"): marked, with Restore instead of the Add / Dismiss buttons.
+        items.push(el('span', { className: 'srw-dismissed-badge', textContent: 'Dismissed', title: 'You dismissed this release; Restore puts it back on the list' }));
+        items.push(window.SRW.iconButton('button', 'faRotateLeft', 'Restore', {
+          className: 'srw-btn', title: 'Restore: back where it came from (New releases, or Missing from Catalog)',
+          onClick: async () => {
+            const res = await window.SRW.runOp('releases_undismiss', { provider: r.provider, scene_stashdb_id: r.scene_stashdb_id, previous: true });
+            if (res && res.error) { window.SRW.notify('Restore failed', res.error, 'error'); return; }
+            onDone(r, null); // the list is read again: the row is a new one now
+          },
+        }));
+        const dli = el('li', { className: `srw-release-item srw-release-item-${r.provider} srw-release-dismissed` }, items);
+        dli.dataset.sceneId = r.scene_stashdb_id;
+        dli.dataset.sceneDate = r.scene_date || '';
+        window.SRW.arrangeReleaseRow(dli, r);
+        list.appendChild(dli);
+        return;
+      }
       if (showSearchStatus) {
         items.push(el('span', {
           className: 'srw-search-status',
@@ -334,7 +355,9 @@
     }
     const { el } = window.SRW;
     const actionBtn = li.querySelector('.srw-whisparr-action');
-    if (info.whisparr_exists || info.whisparr_has_file || info.whisparr_file_mismatch) li.querySelectorAll('.srw-whisparr-add-only').forEach((x) => x.remove());
+    // On the wishlist already (or with a file): no Add. Tracked by Whisparr but NOT on the wishlist (v0.253.16): Add stays, the search button is the logo.
+    const onWishlist = Boolean(release && release.status === 'sent_to_whisparr');
+    if ((info.whisparr_exists && onWishlist) || info.whisparr_has_file || info.whisparr_file_mismatch) li.querySelectorAll('.srw-whisparr-add-only').forEach((x) => x.remove());
     if (info.in_library) {
       const label = info.quality ? `In Library — ${info.quality}` : 'In Library';
       const badge = el('span', { className: 'srw-release-in-library', textContent: label });
@@ -377,9 +400,13 @@
           : 'Downloaded (Whisparr) — awaiting Stash rescan',
       }));
     } else if (info.whisparr_exists && actionBtn) {
-      actionBtn.textContent = 'Search now';
-      actionBtn.classList.remove('srw-btn-primary');
-      actionBtn.classList.add('srw-btn-whisparr');
+      if (onWishlist) {
+        actionBtn.textContent = 'Search now';
+        actionBtn.classList.remove('srw-btn-primary');
+        actionBtn.classList.add('srw-btn-whisparr');
+      } else {
+        window.SRW.markInWhisparr(actionBtn); // known to Whisparr, not on the wishlist: the logo searches, Add puts it on the wishlist
+      }
     }
     return false;
   }
@@ -405,57 +432,6 @@
   // by the caller (see refreshBacklogResults()) to StashDB-only,
   // not-mismatched, not-already-downloaded releases -- this function
   // doesn't re-check any of that itself.
-  function buildBulkHandoffButton(eligible, onDone) {
-    if (!eligible.length) return null;
-    const { el } = window.SRW;
-    const btn = el('button', {
-      // Normal primary blue (v0.101.2): teal means "Search now" for a release that is already on the wishlist; this bulk
-      // button covers both adding and searching, so it carries no special meaning.
-      className: 'srw-btn srw-btn-primary srw-bulk-handoff-btn',
-      textContent: `Add/Search all (${eligible.length})`,
-    });
-    btn.addEventListener('click', () => runBulkHandoff(eligible, btn, onDone));
-    return btn;
-  }
-
-  function runBulkHandoff(eligible, btn, onDone) {
-    window.SRW.confirmInline(btn,
-      `Add/search ${eligible.length} scene(s)? Each one not already tracked yet gets added to your `
-      + `wishlist and searched; each one already tracked (with no file yet) gets a fresh search instead. `
-      + `This can take a while for a lot of scenes, since they're sent one at a time.`,
-      async () => {
-        // confirmInline hides `btn` on Yes (its own default, meant for
-        // a plain one-shot action) -- undone immediately here since
-        // this button IS the progress indicator for the loop below
-        // (its own textContent), unlike every other confirmInline call
-        // site in this plugin.
-        btn.style.display = '';
-        btn.disabled = true;
-        let succeeded = 0;
-        const failures = [];
-        for (let i = 0; i < eligible.length; i++) {
-          const r = eligible[i];
-          btn.textContent = `Sending... (${i + 1}/${eligible.length})`;
-          try {
-            const result = await window.SRW.runOp('releases_handoff', {
-              provider: r.provider, entity_type: r.entity_type,
-              entity_stashdb_id: r.entity_stashdb_id, scene_stashdb_id: r.scene_stashdb_id,
-            });
-            if (result.error) failures.push(`${r.title || r.scene_stashdb_id}: ${result.error}`);
-            else succeeded += 1;
-          } catch (e) {
-            failures.push(`${r.title || r.scene_stashdb_id}: ${e.message}`);
-          }
-        }
-        if (succeeded) window.SRW.notify(`Added ${succeeded} scene(s) to the wishlist`, '', 'success');
-        if (failures.length) {
-          window.SRW.notify(`${failures.length} of ${eligible.length} scene(s) failed`, failures.join('\n'), 'error');
-        }
-        await onDone();
-      },
-    );
-  }
-
   // 2026-09-13: user found a backlog scene ("Mean Girls", Academy POV
   // 2018) that was already in their Stash library -- nothing in the UI
   // said so, inviting a pointless duplicate hand-off. One batched
@@ -731,6 +707,8 @@
   // year-by-year preview, ~12 small requests) now only runs when the
   // user explicitly clicks "Check StashDB for years", not automatically
   // on every expand.
+  const CATALOG_OPEN_KEY = 'entity:catalog-tools'; // remembered like the other panels (one choice for every entity)
+
   async function initBacklogPanel(panel, summaryText, provider, entityType, stashId, entityName, localId) {
     const { el } = window.SRW;
     const body = panel.querySelector('.srw-panel-body');
@@ -738,7 +716,24 @@
 
     const resultsArea = el('div', { className: 'srw-backlog-results' });
     const pickerArea = el('div', { className: 'srw-backlog-picker' });
-    // The year overview (which years are loaded / can be loaded) sits ABOVE the scenes, so it is seen first.
+    // The catalog tools (date window, years to load, reload) are ONE line above the scenes (v0.253.17): "Catalog v", what is loaded and when it was checked,
+    // and on the right how many scenes need attention. The tools themselves (pickerArea) fold open under the line; they are open from the start only
+    // while no year is loaded yet and nothing was chosen (then they are what is needed); the choice is remembered, like the other panels.
+    const catalogKey = `${provider}:${entityType}:${stashId}`;
+    const summary = el('span', { className: 'srw-hint srw-catalog-summary', textContent: 'Loading…' });
+    const attention = el('span', { className: 'srw-catalog-attention' });
+    const arrow = el('span', { className: 'srw-fb-arrow' });
+    const toggle = el('button', { type: 'button', className: 'srw-btn srw-catalog-toggle', title: 'Date window, years to load, reload' }, [el('span', { textContent: 'Catalog' }), arrow]);
+    const drawArrow = () => arrow.replaceChildren(window.SRW.icon(pickerArea.hidden ? 'faChevronDown' : 'faChevronUp') || document.createTextNode(pickerArea.hidden ? '▾' : '▴'));
+    pickerArea.hidden = !window.SRW.storedOpen(CATALOG_OPEN_KEY);
+    toggle.classList.toggle('srw-btn-on', !pickerArea.hidden);
+    drawArrow();
+    toggle.addEventListener('click', () => { pickerArea.hidden = !pickerArea.hidden; window.SRW.storeOpen(CATALOG_OPEN_KEY, !pickerArea.hidden); toggle.classList.toggle('srw-btn-on', !pickerArea.hidden); drawArrow(); });
+    pickerArea.srwCatalog = {
+      key: catalogKey, summary,
+      open: (on) => { pickerArea.hidden = !on; toggle.classList.toggle('srw-btn-on', on); drawArrow(); }, // (not stored: it is the default, not a choice)
+    };
+    body.appendChild(el('div', { className: 'srw-catalog-row' }, [toggle, summary, attention]));
     body.appendChild(pickerArea);
     body.appendChild(resultsArea);
 
@@ -835,6 +830,7 @@
       pickerArea.textContent = '';
       if (!years.length) {
         pickerArea.appendChild(el('p', { className: 'srw-hint', textContent: `No scenes found for this entity on ${window.SRW.providerLabel(provider)}.` }));
+        if (pickerArea.srwCatalog) pickerArea.srwCatalog.summary.textContent = `No scenes on ${window.SRW.providerLabel(provider)}`;
         return;
       }
       // Which years already have backlog scenes stored -- a fresh,
@@ -854,6 +850,17 @@
         years, counts, loadedYears, provider, entityType, stashId, entityName, resultsArea, pickerArea, result.checked_at,
         result.window || {},
       ));
+      // the one line above: which years are loaded, when it was checked; open the tools from the start only while nothing is loaded
+      if (pickerArea.srwCatalog) {
+        const cat = pickerArea.srwCatalog;
+        const loadedList = [...loadedYears.keys()].sort((a, b) => b - a);
+        const shown = loadedList.slice(0, 4).join(', ') + (loadedList.length > 4 ? ` +${loadedList.length - 4}` : '');
+        const loadedScenes = loadedList.reduce((n, y) => n + (counts[y] || 0), 0);
+        cat.summary.textContent = (loadedList.length ? `${shown} loaded (${loadedScenes} scenes)` : 'No year loaded yet')
+          + (result.checked_at ? ` · checked ${sinceWords(result.checked_at)}` : '');
+        cat.summary.title = result.checked_at ? `Checked ${result.checked_at} UTC` : '';
+        if (window.SRW.storedOpen(CATALOG_OPEN_KEY) === null) cat.open(!loadedList.length); // nothing chosen yet: open while no year is loaded
+      }
     } catch (e) {
       pickerArea.textContent = `Release Manager: ${e.message}`;
     }
@@ -863,6 +870,17 @@
   // edited right here, years outside it are greyed out, loaded years are
   // marked (✓, not preselected), and "All" loads every in-window year not
   // loaded yet -- with a warning when no From date limits it.
+  // "3 h ago" for a UTC time 'YYYY-MM-DD HH:MM:SS'
+  function sinceWords(utc) {
+    const t = Date.parse(`${String(utc).replace(' ', 'T')}Z`);
+    if (Number.isNaN(t)) return utc;
+    const min = Math.max(0, Math.round((Date.now() - t) / 60000));
+    if (min < 2) return 'just now';
+    if (min < 120) return `${min} min ago`;
+    if (min < 48 * 60) return `${Math.round(min / 60)} h ago`;
+    return `${Math.round(min / 1440)} days ago`;
+  }
+
   function buildYearPicker(years, counts, loadedYears, provider, entityType, stashId, entityName, resultsArea, pickerArea,
     checkedAt, win) {
     const { el, confirmInline } = window.SRW;
@@ -967,7 +985,7 @@
       el('span', { className: 'srw-list-date-range-label', textContent: 'Date window: from' }), fromInput,
       el('span', { className: 'srw-list-date-range-label', textContent: 'until' }), untilInput,
       saveBtn, defaultHint, status,
-      el('div', { className: 'srw-hint', textContent: 'Applies to everything for this entity: which new/late scenes '
+      el('span', { className: 'srw-hint srw-info', textContent: 'ⓘ', title: 'Applies to everything for this entity: which new/late scenes '
         + 'the scan stores, which years/scenes load here, and Auto → Wishlist.' }),
     ]);
   }
@@ -1044,6 +1062,8 @@
     const openKeys = new Set();
     resultsArea.querySelectorAll('details[open]').forEach((d) => openKeys.add(detailsGroupKey(d)));
     resultsArea.textContent = 'Loading...';
+    const staleSlot = resultsArea.parentNode && resultsArea.parentNode.querySelector('.srw-catalog-attention');
+    if (staleSlot) staleSlot.textContent = '';
     try {
       const releases = await fetchReleasesByStatuses(
         ['backlog', 'sent_to_whisparr', 'import_failed'], provider, entityType, stashId, 1000,
@@ -1097,13 +1117,13 @@
         }));
         return;
       }
-      const countHint = el('p', {
-        className: 'srw-hint',
-        textContent: missing.length === sorted.length
-          ? `${missing.length} scene(s) need attention.`
-          : `${missing.length} of ${sorted.length} scene(s) need attention.`,
-      });
-      resultsArea.appendChild(countHint);
+      const attentionSlot = resultsArea.parentNode && resultsArea.parentNode.querySelector('.srw-catalog-attention');
+      const countHint = attentionSlot || el('p', { className: 'srw-hint' });
+      countHint.textContent = missing.length === sorted.length
+        ? `${missing.length} need attention`
+        : `${missing.length} of ${sorted.length} need attention`;
+      countHint.title = 'Scenes of the loaded years that are not in your library (or not at the wanted quality) yet';
+      if (!attentionSlot) resultsArea.appendChild(countHint);
       // Bulk send/search (2026-09-15, user request) -- everything
       // currently showing "Add to Wishlist" or "Search now"
       // (both go through the same releases_handoff op either way, see
@@ -1114,15 +1134,16 @@
       // not a bulk one) and whisparr_has_file (nothing to send/search
       // for, it's just awaiting a Stash rescan) -- and ThePornDB
       // releases, which this hand-off has never supported.
+      // The scenes a row offers Add / Add + search for (v0.253.16): not on the wishlist already, no file in Whisparr; ThePornDB scenes can be added too.
       const eligibleForBulk = missing.filter((r) => {
-        if (r.provider === 'theporndb') return false;
+        if (r.status === 'sent_to_whisparr' || r.status === 'import_failed') return false;
         const info = statusById[r.scene_stashdb_id];
         return !(info && (info.whisparr_file_mismatch || info.whisparr_has_file));
       });
-      const bulkBtn = buildBulkHandoffButton(
-        eligibleForBulk, () => refreshBacklogResults(resultsArea, provider, entityType, stashId, entityName),
-      );
-      if (bulkBtn) resultsArea.appendChild(bulkBtn);
+      // Add / Add + search of a selection are in the selection bar below (v0.253.15), like the buttons of one row; the arrow menu selects everything that can be added.
+      const bulkRefresh = () => refreshBacklogResults(resultsArea, provider, entityType, stashId, entityName);
+      const extraActions = window.SRW.bulkAddActions(bulkRefresh);
+      const extraSelect = { label: (n) => `Select all ${n} that can be added`, pool: () => eligibleForBulk };
       // "Dismiss N on this page" / "Dismiss all N matching" (v0.250.2) and a Dismiss per row that takes the row out of the list in the browser (no
       // new read of the whole backlog). A scene that is downloading is not offered.
       let view = null;
@@ -1137,14 +1158,29 @@
         pairing: (r) => r.cast_pairing,
         cast: (r) => r.cast_names,
       };
-      const dismissible = (r) => !r.download_job_id;
+      const dismissible = (r) => !r.download_job_id && r.status !== 'dismissed';
+      // "Show dismissed" (v0.253.8): the entity's dismissed releases are read once, when the box is ticked first; they are no part of `missing`
+      // (nothing is added, searched or counted for them), only listed -- marked, with Restore back to where each one came from.
+      let dismissedRows = [];
+      let dismissedLoaded = false;
+      const loadDismissed = async () => {
+        const rows = await fetchReleasesByStatuses(['dismissed'], provider, entityType, stashId, 1000);
+        dismissedRows = Array.isArray(rows) ? rows.filter((x) => !x.muted) : [];
+        dismissedLoaded = true;
+      };
+      const listFetcher = async (f, page, perPage) => {
+        if (f.showDismissed && !dismissedLoaded) await loadDismissed();
+        const source = f.showDismissed ? missing.concat(dismissedRows) : missing;
+        return window.SRW.localPageFetcher(() => source.slice().sort((a, b) => (b.scene_date || '').localeCompare(a.scene_date || '')), fields)(f, page, perPage);
+      };
       const removeRows = (list) => {
         const gone = new Set(list.map((r) => `${r.provider}\u0000${r.scene_stashdb_id}`));
         missing = missing.filter((r) => !gone.has(`${r.provider}\u0000${r.scene_stashdb_id}`));
-        countHint.textContent = missing.length ? `${missing.length} scene(s) need attention.` : 'Nothing left that needs attention.';
+        countHint.textContent = missing.length ? `${missing.length} need attention` : 'Nothing left that needs attention';
         view.reload(); // the list is in the browser: no request
       };
       const backlogBar = window.SRW.buildBulkDismissBar({
+        extraActions, extraSelect,
         getPage: () => shownRows.filter(dismissible),
         getTotal: () => (view ? window.SRW.filterLocally(missing, view.state, fields).filter(dismissible).length : 0),
         filterActive: () => Boolean(view && window.SRW.isFilterActive(view.state)),
@@ -1161,12 +1197,12 @@
       // page is still grouped by year/quarter as before. "Added late"
       // narrows to back-catalogue additions found by the scan.
       view = window.SRW.buildFilteredPagedList({
-        filters: ['search', 'description', 'vr', 'late', 'cast', 'pairing', 'dates', 'providers'],
+        filters: ['search', 'description', 'vr', 'late', 'cast', 'pairing', 'dates', 'providers', 'dismissed'],
         perPage: 40,
         showFilterBarFrom: 10,
         pairingOptions: window.SRW.pairingOptionsFor(missing),
         castOptions: window.SRW.castOptionsFor(missing, entityType === 'performer' ? entityName : ''),
-        fetchPage: window.SRW.localPageFetcher(() => missing, fields),
+        fetchPage: listFetcher,
         // Flat, newest first, one page at a time (v0.101.3) -- the year/quarter folding is gone now that the list pages.
         renderItems: (items) => {
           shownRows = items;
