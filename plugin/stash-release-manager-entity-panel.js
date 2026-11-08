@@ -98,7 +98,7 @@
     let shownTotal = 0;
     let shownFiltered = false;
     const bar = window.SRW.buildBulkDismissBar({
-      getPage: () => shownRows, getTotal: () => shownTotal, filterActive: () => shownFiltered,
+      getPage: () => shownRows.filter((x) => x.status !== 'dismissed'), getTotal: () => (view && view.state.showDismissed ? shownRows.filter((x) => x.status !== 'dismissed').length : shownTotal), filterActive: () => shownFiltered,
       loadAll: async () => {
         const all = await window.SRW.runOp('releases_query', { ...window.SRW.releaseQueryArgs(view.state), statuses: ['new'], entities, ids_only: true });
         return all.error ? all : all.scenes;
@@ -117,7 +117,7 @@
       emptyText: 'No new releases found.',
       fetchPage: async (f, page, perPage) => {
         const response = await window.SRW.runOp('releases_query', {
-          ...window.SRW.releaseQueryArgs(f), statuses: ['new'], entities, page, per_page: perPage,
+          ...window.SRW.releaseQueryArgs(f), statuses: window.SRW.statusesFor(f, ['new']), entities, page, per_page: perPage,
         });
         if (response.error) return response;
         return { total: response.total, items: response.rows };
@@ -145,6 +145,7 @@
       },
     });
     body.textContent = '';
+    body.appendChild(window.SRW.buildShowDismissedToggle(() => view));
     body.appendChild(bar.node);
     body.appendChild(view.node);
     await view.reset();
@@ -166,7 +167,7 @@
     // Fire-and-forget: patches an "In Library"/Whisparr-quality badge
     // into each row once the check comes back, rather than delaying
     // the whole list on it -- best-effort, see annotateLibraryStatus().
-    annotateLibraryStatus(list, releases, countHint, onDone);
+    annotateLibraryStatus(list, releases.filter((r) => r.status !== 'dismissed'), countHint, onDone);
     return list;
   }
 
@@ -182,7 +183,8 @@
     releases.forEach((r) => {
       const isTpdb = r.provider !== 'stashdb'; // any provider but StashDB: handled by this sidecar without Whisparr
       const items = [
-        selectBox ? selectBox(r) : null, // the tick box of the bulk Dismiss bar (first column)
+        // the tick box of the bulk Dismiss bar (first column); a dismissed row gets an empty cell so the columns stay aligned
+        selectBox ? (r.status === 'dismissed' ? el('span', { className: 'srw-row-select' }) : selectBox(r)) : null,
         buildReleaseThumb(r),
         el('a', {
           className: 'srw-release-title', href: sceneUrl(r.provider, r.scene_stashdb_id),
@@ -211,6 +213,25 @@
       // entries; "Missing from Catalog" is exactly where the user
       // wants to know whether a past hand-off's search actually found
       // anything.
+      if (r.status === 'dismissed') {
+        // A dismissed release (filter "Show dismissed"): marked, with Restore instead of the Add / Dismiss buttons.
+        items.push(el('span', { className: 'srw-dismissed-badge', textContent: 'Dismissed', title: 'You dismissed this release; Restore puts it back on the list' }));
+        items.push(window.SRW.iconButton('button', 'faRotateLeft', 'Restore', {
+          className: 'srw-btn', title: 'Restore: back on the list of new releases',
+          onClick: async () => {
+            const res = await window.SRW.runOp('releases_restore', { rows: [{
+              provider: r.provider, scene_stashdb_id: r.scene_stashdb_id, entity_type: r.entity_type, entity_stashdb_id: r.entity_stashdb_id, status: 'new' }] });
+            if (res && res.error) { window.SRW.notify('Restore failed', res.error, 'error'); return; }
+            onDone(r, null); // the list is read again: the row is a new one now
+          },
+        }));
+        const dli = el('li', { className: `srw-release-item srw-release-item-${r.provider} srw-release-dismissed` }, items);
+        dli.dataset.sceneId = r.scene_stashdb_id;
+        dli.dataset.sceneDate = r.scene_date || '';
+        window.SRW.arrangeReleaseRow(dli, r);
+        list.appendChild(dli);
+        return;
+      }
       if (showSearchStatus) {
         items.push(el('span', {
           className: 'srw-search-status',

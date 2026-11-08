@@ -11,7 +11,7 @@
   // rule and the bug it caused when this drifted). Change this if you
   // install under a different folder name.
   // Must equal `version:` in stash-release-manager.yml (scripts/test_plugin_version.py checks it).
-  const PLUGIN_VERSION = '0.253.4';
+  const PLUGIN_VERSION = '0.253.5';
   const PLUGIN_ID = 'stash-release-manager';
   const PLUGIN_NAME = 'StashReleaseManager';
 
@@ -2384,13 +2384,26 @@
   function defaultFilterState() {
     return {
       search: '', description: false, tags: false, type: 'both', vr: 'all', kind: 'all', dateFrom: '', dateUntil: '',
-      providers: { stashdb: true, theporndb: true }, late: 'all', upgrades: 'all', pairing: '', pairingOptions: [], cast: '', castOptions: [],
+      providers: { stashdb: true, theporndb: true }, late: 'all', upgrades: 'all', showDismissed: false, pairing: '', pairingOptions: [], cast: '', castOptions: [],
     };
   }
 
   function isFilterActive(f) {
     return Boolean(f.search.trim() || f.type !== 'both' || f.vr !== 'all' || f.kind !== 'all' || f.dateFrom || f.dateUntil
       || !providersAllOn(f.providers) || f.late !== 'all' || f.upgrades !== 'all' || Boolean(f.pairing) || Boolean(f.cast.trim()));
+  }
+
+  // The statuses a list asks for: its own, plus 'dismissed' while the filter "Show dismissed" is ticked (v0.253.5).
+  function statusesFor(f, base) {
+    return f && f.showDismissed ? [...base, 'dismissed'] : base;
+  }
+
+  // The tick box "Show dismissed" above a list (v0.253.5): its own control, not part of the filter bar, because that bar only appears from ten
+  // entries on -- and "nothing is shown" is exactly when you want to see what you dismissed. `getView()` = the filtered paged list it controls.
+  function buildShowDismissedToggle(getView) {
+    const box = el('input', { type: 'checkbox' });
+    box.addEventListener('change', () => { const v = getView(); if (v) { v.state.showDismissed = box.checked; v.reload(); } });
+    return el('label', { className: 'srw-filter-check srw-show-dismissed', title: 'Also list the releases you dismissed (marked, with Restore)' }, [box, ' Show dismissed']);
   }
 
   function releaseQueryArgs(f) {
@@ -3018,7 +3031,7 @@
     getRoute, onNavigate, initNavigationWatcher,
     el, waitForElement, entityIcon, buildPageHeader,
     watchKind, keepResult, recallResult, forgetResult, keptNote, searchStatusLabel, setBusy, openModal, sceneSubtitle, iconButton, busyIcon, ageWords, ageWarning, confirmInline, buildManagedList, buildSearchActions, whenNoOpenPanel, buildManualSearch, getSearchCapabilities,
-    rememberOpen, icon, mismatchWarning, buildPagedList, buildPager, releaseTitleNode, notify, dismissedNotice, releaseDismissedNotice, dismissRelease, buildWishlistDismiss, buildFilmDismissButtons, notifyHandoff, buildAddOnlyButton,
+    rememberOpen, statusesFor, buildShowDismissedToggle, icon, mismatchWarning, buildPagedList, buildPager, releaseTitleNode, notify, dismissedNotice, releaseDismissedNotice, dismissRelease, buildWishlistDismiss, buildFilmDismissButtons, notifyHandoff, buildAddOnlyButton,
     sceneUrl, notifyReadd, loadMetadataProviderUrls, loadProviders, resetProviders, providerInfo, providerLabel, providerKeys, providerOn, providersAllOn, providersSelected, isLateAdditionNew, buildLateAdditionBadge,
     buildFilteredPagedList, markRowBusy, buildBulkDismissBar, buildSelect, buildSafetyPanel, ignoreRenamers, pairingOptionsFor, castOptionsFor, buildPairingBadge, localPageFetcher, releaseQueryArgs, filterLocally, isFilterActive,
     describeProgress, applyProgress, attachLive, buildLiveHint,

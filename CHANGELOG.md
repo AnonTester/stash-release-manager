@@ -6,6 +6,9 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.253.5
+- **"Show dismissed" on the Studio / Performer page.** A release you dismissed disappeared from "New releases" and looked as if it had never been loaded. A tick box "Show dismissed" above the list (always there, also when the list is empty) adds the dismissed releases: marked "Dismissed", dimmed, with a Restore button instead of Add / Dismiss; they are left out of the bulk Dismiss. The Releases page already had its Dismissed tab. Plugin only.
+
 ## 0.253.4 (with 0.250.8 - 0.253.3; commits by AnonTester)
 - The two number fields of an added stash-box (query delay, favorites sync interval) are on separate lines.
 - The buttons in the connection forms have a gap: Save / Check connection / Test connection / Reset no longer touch each other, and "Remove connection" sits clear of the buttons above it.
