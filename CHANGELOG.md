@@ -6,6 +6,9 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.253.17
+- **The top of Missing from Catalog is one line:** "Catalog v", what is loaded and when it was checked, and "12 of 16 need attention" on the right. The date window, the years (small switchable fields) and the load buttons fold open under it; open from the start only while no year is loaded yet. Plugin only.
+
 ## 0.253.16
 - **Scenes Whisparr already tracks but that are not on the wishlist** now have **Add** and the Whisparr logo as their search button (before: only a teal "Search now"). Cards that are on the wishlist keep their buttons.
 - **The bulk buttons follow the rows' rule:** Add n / Add + search n act on the selected scenes the row offers them for; the button shows that number, its tooltip the rest, and the notice after the run how many were skipped. Scenes on the wishlist get only Dismiss in the bar. Plugin only.

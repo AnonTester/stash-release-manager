@@ -707,6 +707,8 @@
   // year-by-year preview, ~12 small requests) now only runs when the
   // user explicitly clicks "Check StashDB for years", not automatically
   // on every expand.
+  const catalogOpen = new Map(); // 'provider:type:id' -> the Catalog tools were left open (kept while the page stays open)
+
   async function initBacklogPanel(panel, summaryText, provider, entityType, stashId, entityName, localId) {
     const { el } = window.SRW;
     const body = panel.querySelector('.srw-panel-body');
@@ -714,7 +716,23 @@
 
     const resultsArea = el('div', { className: 'srw-backlog-results' });
     const pickerArea = el('div', { className: 'srw-backlog-picker' });
-    // The year overview (which years are loaded / can be loaded) sits ABOVE the scenes, so it is seen first.
+    // The catalog tools (date window, years to load, reload) are ONE line above the scenes (v0.253.17): "Catalog v", what is loaded and when it was checked,
+    // and on the right how many scenes need attention. The tools themselves (pickerArea) fold open under the line; they are open from the start only
+    // while no year is loaded yet (then they are what is needed), and the choice is kept for this entity while the page stays open.
+    const catalogKey = `${provider}:${entityType}:${stashId}`;
+    const summary = el('span', { className: 'srw-hint srw-catalog-summary', textContent: 'Loading…' });
+    const attention = el('span', { className: 'srw-catalog-attention' });
+    const arrow = el('span', { className: 'srw-fb-arrow' });
+    const toggle = el('button', { type: 'button', className: 'srw-btn srw-catalog-toggle', title: 'Date window, years to load, reload' }, [el('span', { textContent: 'Catalog' }), arrow]);
+    const drawArrow = () => arrow.replaceChildren(window.SRW.icon(pickerArea.hidden ? 'faChevronDown' : 'faChevronUp') || document.createTextNode(pickerArea.hidden ? '▾' : '▴'));
+    pickerArea.hidden = !catalogOpen.get(catalogKey);
+    drawArrow();
+    toggle.addEventListener('click', () => { pickerArea.hidden = !pickerArea.hidden; catalogOpen.set(catalogKey, !pickerArea.hidden); toggle.classList.toggle('srw-btn-on', !pickerArea.hidden); drawArrow(); });
+    pickerArea.srwCatalog = {
+      key: catalogKey, summary,
+      open: (on) => { pickerArea.hidden = !on; catalogOpen.set(catalogKey, on); toggle.classList.toggle('srw-btn-on', on); drawArrow(); },
+    };
+    body.appendChild(el('div', { className: 'srw-catalog-row' }, [toggle, summary, attention]));
     body.appendChild(pickerArea);
     body.appendChild(resultsArea);
 
@@ -811,6 +829,7 @@
       pickerArea.textContent = '';
       if (!years.length) {
         pickerArea.appendChild(el('p', { className: 'srw-hint', textContent: `No scenes found for this entity on ${window.SRW.providerLabel(provider)}.` }));
+        if (pickerArea.srwCatalog) pickerArea.srwCatalog.summary.textContent = `No scenes on ${window.SRW.providerLabel(provider)}`;
         return;
       }
       // Which years already have backlog scenes stored -- a fresh,
@@ -830,6 +849,17 @@
         years, counts, loadedYears, provider, entityType, stashId, entityName, resultsArea, pickerArea, result.checked_at,
         result.window || {},
       ));
+      // the one line above: which years are loaded, when it was checked; open the tools from the start only while nothing is loaded
+      if (pickerArea.srwCatalog) {
+        const cat = pickerArea.srwCatalog;
+        const loadedList = [...loadedYears.keys()].sort((a, b) => b - a);
+        const shown = loadedList.slice(0, 4).join(', ') + (loadedList.length > 4 ? ` +${loadedList.length - 4}` : '');
+        const loadedScenes = loadedList.reduce((n, y) => n + (counts[y] || 0), 0);
+        cat.summary.textContent = (loadedList.length ? `${shown} loaded (${loadedScenes} scenes)` : 'No year loaded yet')
+          + (result.checked_at ? ` · checked ${sinceWords(result.checked_at)}` : '');
+        cat.summary.title = result.checked_at ? `Checked ${result.checked_at} UTC` : '';
+        if (!catalogOpen.has(cat.key)) cat.open(!loadedList.length);
+      }
     } catch (e) {
       pickerArea.textContent = `Release Manager: ${e.message}`;
     }
@@ -839,6 +869,17 @@
   // edited right here, years outside it are greyed out, loaded years are
   // marked (✓, not preselected), and "All" loads every in-window year not
   // loaded yet -- with a warning when no From date limits it.
+  // "3 h ago" for a UTC time 'YYYY-MM-DD HH:MM:SS'
+  function sinceWords(utc) {
+    const t = Date.parse(`${String(utc).replace(' ', 'T')}Z`);
+    if (Number.isNaN(t)) return utc;
+    const min = Math.max(0, Math.round((Date.now() - t) / 60000));
+    if (min < 2) return 'just now';
+    if (min < 120) return `${min} min ago`;
+    if (min < 48 * 60) return `${Math.round(min / 60)} h ago`;
+    return `${Math.round(min / 1440)} days ago`;
+  }
+
   function buildYearPicker(years, counts, loadedYears, provider, entityType, stashId, entityName, resultsArea, pickerArea,
     checkedAt, win) {
     const { el, confirmInline } = window.SRW;
@@ -943,7 +984,7 @@
       el('span', { className: 'srw-list-date-range-label', textContent: 'Date window: from' }), fromInput,
       el('span', { className: 'srw-list-date-range-label', textContent: 'until' }), untilInput,
       saveBtn, defaultHint, status,
-      el('div', { className: 'srw-hint', textContent: 'Applies to everything for this entity: which new/late scenes '
+      el('span', { className: 'srw-hint srw-info', textContent: 'ⓘ', title: 'Applies to everything for this entity: which new/late scenes '
         + 'the scan stores, which years/scenes load here, and Auto → Wishlist.' }),
     ]);
   }
@@ -1020,6 +1061,8 @@
     const openKeys = new Set();
     resultsArea.querySelectorAll('details[open]').forEach((d) => openKeys.add(detailsGroupKey(d)));
     resultsArea.textContent = 'Loading...';
+    const staleSlot = resultsArea.parentNode && resultsArea.parentNode.querySelector('.srw-catalog-attention');
+    if (staleSlot) staleSlot.textContent = '';
     try {
       const releases = await fetchReleasesByStatuses(
         ['backlog', 'sent_to_whisparr', 'import_failed'], provider, entityType, stashId, 1000,
@@ -1073,13 +1116,13 @@
         }));
         return;
       }
-      const countHint = el('p', {
-        className: 'srw-hint',
-        textContent: missing.length === sorted.length
-          ? `${missing.length} scene(s) need attention.`
-          : `${missing.length} of ${sorted.length} scene(s) need attention.`,
-      });
-      resultsArea.appendChild(countHint);
+      const attentionSlot = resultsArea.parentNode && resultsArea.parentNode.querySelector('.srw-catalog-attention');
+      const countHint = attentionSlot || el('p', { className: 'srw-hint' });
+      countHint.textContent = missing.length === sorted.length
+        ? `${missing.length} need attention`
+        : `${missing.length} of ${sorted.length} need attention`;
+      countHint.title = 'Scenes of the loaded years that are not in your library (or not at the wanted quality) yet';
+      if (!attentionSlot) resultsArea.appendChild(countHint);
       // Bulk send/search (2026-09-15, user request) -- everything
       // currently showing "Add to Wishlist" or "Search now"
       // (both go through the same releases_handoff op either way, see
@@ -1132,7 +1175,7 @@
       const removeRows = (list) => {
         const gone = new Set(list.map((r) => `${r.provider}\u0000${r.scene_stashdb_id}`));
         missing = missing.filter((r) => !gone.has(`${r.provider}\u0000${r.scene_stashdb_id}`));
-        countHint.textContent = missing.length ? `${missing.length} scene(s) need attention.` : 'Nothing left that needs attention.';
+        countHint.textContent = missing.length ? `${missing.length} need attention` : 'Nothing left that needs attention';
         view.reload(); // the list is in the browser: no request
       };
       const backlogBar = window.SRW.buildBulkDismissBar({

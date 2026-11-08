@@ -1663,7 +1663,7 @@
 .srw-backlog-year-label.srw-year-loaded { color: #3fb950; font-weight: 600; }
 .srw-backlog-year-label.srw-year-outside { opacity: 0.35; text-decoration: line-through; }
 .srw-window-editor { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; margin-bottom: 0.5rem; }
-.srw-window-editor > .srw-hint:last-child { flex-basis: 100%; margin: 0; }
+.srw-info { cursor: help; opacity: 0.75; }
 
 /* Import phases on the progress bar (2026-09-26): downloading keeps the
    default colour, the import copy is teal, "waiting"/"verifying" amber
@@ -2515,3 +2515,14 @@ a.srw-btn { text-decoration: none; display: inline-block; text-align: center; }
 .srw-whisparr-logo { width: 1.25em; height: 1.25em; vertical-align: middle; }
 .srw-btn-icon .srw-whisparr-logo { margin: 0 0.1em; }
 .srw-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+
+/* The Catalog line (v0.253.17): one row above the scenes; the tools (date window, years, reload) fold open under it */
+.srw-catalog-row { display: flex; align-items: center; flex-wrap: wrap; gap: 0.6rem; margin: 0.3rem 0 0.5rem; }
+.srw-catalog-summary { margin: 0; }
+.srw-catalog-attention { margin-left: auto; font-size: 0.93em; opacity: 0.85; }
+.srw-catalog-toggle.srw-btn-on { background: #2b6cb0 !important; border-color: #2b6cb0 !important; color: #fff !important; }
+.srw-backlog-picker { margin: 0 0 0.6rem; padding: 0.5rem 0.6rem; border-radius: 4px; background: rgba(128, 128, 128, 0.1); }
+.srw-backlog-picker[hidden] { display: none; }
+/* the years as small switchable fields in a wrapping grid, not a long line of tick boxes */
+.srw-backlog-years { display: flex; flex-wrap: wrap; gap: 0.35rem; margin: 0.3rem 0 0.5rem; }
+.srw-backlog-years .srw-backlog-year-label { display: inline-flex; align-items: center; gap: 0.3rem; padding: 0.1rem 0.5rem; border: 1px solid rgba(128, 128, 128, 0.45); border-radius: 0.8rem; white-space: nowrap; }
