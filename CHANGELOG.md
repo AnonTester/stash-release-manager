@@ -6,6 +6,9 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.253.11
+- **Filter bar: no doubled x, and the sources are always shown.** The "clear all" button is an eraser (no second x next to the chips); the sources a list shows are chips too (x = switch one off, the last one stays). Plugin only.
+
 ## 0.253.10
 - **The active filters stand in row 1 of the filter bar**, right behind the funnel.
 - **"Select this page" and the Dismiss buttons have one place on every list: directly under the filter bar, left-aligned, in the same row as the page selector.** Plugin only.

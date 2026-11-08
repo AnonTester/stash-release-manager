@@ -837,9 +837,10 @@
       if (listTypeFilter !== 'both') out.push({ label: `Type: ${listTypeFilter === 'studio' ? 'Studios' : 'Performer'}`, clear: undo(() => { listTypeFilter = 'both'; }) });
       if (listVrFilter !== 'all') out.push({ label: listVrFilter === 'vr' ? 'VR' : 'Non-VR', clear: undo(() => { listVrFilter = 'all'; }) });
       if (listDateFrom || listDateUntil) out.push({ label: `${listDateFrom || '…'} – ${listDateUntil || '…'}`, clear: undo(() => { listDateFrom = ''; listDateUntil = ''; }) });
-      if (!window.SRW.providersAllOn(listProviderFilter)) {
-        out.push({ label: `Source: ${window.SRW.providerKeys().filter((k) => window.SRW.providerOn(listProviderFilter, k)).map(window.SRW.providerLabel).join(', ') || 'none'}`,
-          clear: undo(() => { window.SRW.providerKeys().forEach((k) => { listProviderFilter[k] = true; }); }) });
+      {
+        const on = window.SRW.providerKeys().filter((k) => window.SRW.providerOn(listProviderFilter, k));
+        const all = window.SRW.providersAllOn(listProviderFilter);
+        on.forEach((k) => out.push({ label: window.SRW.providerLabel(k), quiet: all, clear: on.length > 1 ? undo(() => { listProviderFilter[k] = false; }) : () => {} }));
       }
       if (listShowDismissed) out.push({ label: 'Dismissed shown', clear: undo(() => { listShowDismissed = false; }) });
       return out;
@@ -1730,9 +1731,10 @@
       const out = [];
       if (S.type !== 'both') out.push({ label: `Type: ${S.type === 'studio' ? 'Studios' : 'Performer'}`, clear: undo(() => { S.type = 'both'; }) });
       if (S.vr !== 'all') out.push({ label: S.vr === 'vr' ? 'VR' : 'Non-VR', clear: undo(() => { S.vr = 'all'; }) });
-      if (!keys.every((k) => window.SRW.providerOn(S.providers, k))) {
-        out.push({ label: `Source: ${keys.filter((k) => window.SRW.providerOn(S.providers, k)).map(window.SRW.providerLabel).join(', ') || 'none'}`,
-          clear: undo(() => { keys.forEach((k) => { S.providers[k] = true; }); }) });
+      {
+        const on = keys.filter((k) => window.SRW.providerOn(S.providers, k));
+        const all = on.length === keys.length;
+        on.forEach((k) => out.push({ label: window.SRW.providerLabel(k), quiet: all, clear: on.length > 1 ? undo(() => { S.providers[k] = false; }) : () => {} }));
       }
       return out;
     };

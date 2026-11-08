@@ -11,7 +11,7 @@
   // rule and the bug it caused when this drifted). Change this if you
   // install under a different folder name.
   // Must equal `version:` in stash-release-manager.yml (scripts/test_plugin_version.py checks it).
-  const PLUGIN_VERSION = '0.253.10';
+  const PLUGIN_VERSION = '0.253.11';
   const PLUGIN_ID = 'stash-release-manager';
   const PLUGIN_NAME = 'StashReleaseManager';
 
@@ -867,7 +867,7 @@
       probe.remove();
       const rgb = (c) => (c.match(/[\d.]+/g) || []).map(Number);
       // The measured `.form-control` came out white with dark text on this Stash (its theme styles the fields of its own pages only), next to dark
-      // buttons: the fields follow the secondary-button palette instead (v0.253.10) -- the same colors in every list, filter bar, form and dialog.
+      // buttons: the fields follow the secondary-button palette instead (v0.253.11) -- the same colors in every list, filter bar, form and dialog.
       if (btn.bg && btn.fg && rgb(btn.bg).length >= 3 && !(rgb(btn.bg).length === 4 && rgb(btn.bg)[3] === 0)) { bg = btn.bg; fg = btn.fg; border = btn.border; }
       if (!bg || bg === 'transparent' || (rgb(bg).length === 4 && rgb(bg)[3] === 0)) bg = getComputedStyle(document.body).backgroundColor;
       const [r, g, b] = rgb(bg);
@@ -2396,7 +2396,7 @@
       || !providersAllOn(f.providers) || f.late !== 'all' || f.upgrades !== 'all' || Boolean(f.pairing) || Boolean(f.cast.trim()));
   }
 
-  // The statuses a list asks for: its own, plus 'dismissed' while the filter "Show dismissed" is ticked (v0.253.10).
+  // The statuses a list asks for: its own, plus 'dismissed' while the filter "Show dismissed" is ticked (v0.253.11).
   function statusesFor(f, base) {
     return f && f.showDismissed ? [...base, 'dismissed'] : base;
   }
@@ -2468,7 +2468,7 @@
     return sel;
   }
 
-  // ==================== The filter bar (v0.253.10) ====================
+  // ==================== The filter bar (v0.253.11) ====================
   //
   // One look for every list that filters by more than a search text. Row 1 is always the same and short: [search] [description] [tags] [Filters (n)]
   // [presets] [clear]; the two small icon switches widen the search to the scene's description / tags, the funnel opens a panel with the other filters
@@ -2509,18 +2509,20 @@
       funnel.classList.toggle('srw-btn-on', !panel.hidden);
       drawArrow();
     }
-    const clearBtn = onClear ? iconButton('button', 'faXmark', 'Clear all filters', { className: 'srw-btn srw-fb-clear', title: 'Clear all filters', onClick: onClear }) : null;
-    // The chips stand in row 1, right behind the funnel (v0.253.10): the active filters are read where the search is.
+    // An eraser, not another x: the chips carry the x of their own (v0.253.11).
+    const clearBtn = onClear ? iconButton('button', 'faEraser', 'Clear all filters', { className: 'srw-btn srw-fb-clear', title: 'Clear all filters', onClick: onClear }) : null;
+    // The chips stand in row 1, right behind the funnel (v0.253.11): the active filters are read where the search is.
     const row = el('div', { className: 'srw-fb-row' }, [search, ...toggles, funnel, chipsBox, presets, clearBtn]);
     function refresh() {
-      const active = describe();
+      const shown = describe();
+      const active = shown.filter((a) => !a.quiet); // a quiet chip (the sources while all are on) is shown, but is no active filter
       count.textContent = active.length ? String(active.length) : '';
       count.hidden = !active.length;
-      chipsBox.replaceChildren(...active.map((a) => el('span', { className: 'srw-fb-chip' }, [
+      chipsBox.replaceChildren(...shown.map((a) => el('span', { className: `srw-fb-chip${a.quiet ? ' srw-fb-chip-quiet' : ''}` }, [
         el('span', { textContent: a.label }),
         el('button', { type: 'button', className: 'srw-fb-chip-x', title: 'Remove this filter', 'aria-label': `Remove: ${a.label}`, textContent: '×', onClick: a.clear }),
       ])));
-      chipsBox.hidden = !active.length;
+      chipsBox.hidden = !shown.length;
       if (clearBtn) clearBtn.hidden = !(active.length || hasText());
     }
     refresh();
@@ -2645,8 +2647,11 @@
       if ((state.dateFrom || state.dateUntil) && filters.includes('dates')) {
         add(`${state.dateFrom || '…'} – ${state.dateUntil || '…'}`, () => { state.dateFrom = ''; state.dateUntil = ''; });
       }
-      if (!providersAllOn(state.providers) && filters.includes('providers')) {
-        add(`Source: ${providerKeys().filter((k) => providerOn(state.providers, k)).map(providerLabel).join(', ') || 'none'}`, () => { providerKeys().forEach((k) => { state.providers[k] = true; }); });
+      if (filters.includes('providers')) {
+        // One chip per selected source, always (v0.253.11): which sources the list shows is read here; x switches that source off (the last one stays).
+        const on = providerKeys().filter((k) => providerOn(state.providers, k));
+        const all = providersAllOn(state.providers);
+        on.forEach((k) => out.push({ label: providerLabel(k), quiet: all, clear: () => { if (on.length > 1) { state.providers[k] = false; rebuild(); } } }));
       }
       if (state.showDismissed && filters.includes('dismissed')) add('Dismissed shown', () => { state.showDismissed = false; });
       return out;
@@ -2841,7 +2846,7 @@
         barShown = true;
       }
       if (onTotal) onTotal(result.total, active);
-      // One row under the filter bar (v0.253.10): the list's "select this page / Dismiss" bar on the left, the page selector in the middle. The bar is
+      // One row under the filter bar (v0.253.11): the list's "select this page / Dismiss" bar on the left, the page selector in the middle. The bar is
       // the one the caller put right before the list (or `bulkBar`); it is taken into this row, so every list gets the same place. It stays when the
       // list is empty (its Undo note is in it).
       const before = node.previousElementSibling;

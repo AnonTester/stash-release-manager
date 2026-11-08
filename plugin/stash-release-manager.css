@@ -2495,3 +2495,6 @@ a.srw-btn { text-decoration: none; display: inline-block; text-align: center; }
 .srw-list-toolbar .srw-bulk-dismiss { justify-content: flex-start; }
 .srw-list-toolbar .srw-pager { margin: 0; }
 @media (max-width: 800px) { .srw-list-toolbar { grid-template-columns: 1fr; } .srw-list-toolbar > :nth-child(2) { grid-column: 1; justify-self: center; } }
+
+/* A chip that only tells (the sources while all are on): not highlighted like an active filter */
+.srw-fb-chip.srw-fb-chip-quiet { border-color: rgba(128, 128, 128, 0.55); opacity: 0.85; }
