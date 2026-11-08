@@ -875,6 +875,19 @@ def list_sent_to_whisparr_without_grab(db):
     return _dedupe_by_scene(rows)
 
 
+def restore_upgrade_rows_marked_imported(db):
+    """Puts back on the wishlist the upgrade rows (release.upgrade_of) that the pre-grab library check of run_indexer_search() marked 'imported'
+    before it knew about upgrades: the scene is in the library by definition, the upgrade candidate is still on the wishlist, nothing was
+    grabbed for it. Returns how many rows were restored."""
+    with db.connect() as conn:
+        cur = conn.execute(
+            """UPDATE release SET status = 'sent_to_whisparr', imported_at = NULL
+               WHERE status = 'imported' AND upgrade_of IS NOT NULL AND download_job_id IS NULL AND grabbed_title IS NULL
+                 AND EXISTS (SELECT 1 FROM upgrade_candidate u WHERE u.provider = release.provider
+                             AND u.provider_scene_id = release.scene_stashdb_id AND u.status = 'wishlist')""")
+        return cur.rowcount
+
+
 def list_grabbed_awaiting_import(db):
     """`sent_to_whisparr` releases that DO have a recorded download job
     -- what download_sources.SabnzbdSource polls to see if that job has

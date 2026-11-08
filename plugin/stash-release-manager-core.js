@@ -11,7 +11,7 @@
   // rule and the bug it caused when this drifted). Change this if you
   // install under a different folder name.
   // Must equal `version:` in stash-release-manager.yml (scripts/test_plugin_version.py checks it).
-  const PLUGIN_VERSION = '0.250.7';
+  const PLUGIN_VERSION = '0.253.4';
   const PLUGIN_ID = 'stash-release-manager';
   const PLUGIN_NAME = 'StashReleaseManager';
 
@@ -98,6 +98,11 @@
       }
     } else {
       value = output?.output ?? output ?? {};
+    }
+    // A saved setting / download client / stash-box makes the overview's kept connection status stale (Settings > Connections > Overview).
+    if (!(value && value.error) && (/^(settings_set|(download_clients|metadata_providers)_(create|update|delete))$/.test(mode)
+        || (mode === 'stash_sync' && (args.add || args.overwrite)))) {
+      try { window.localStorage.setItem('srw:conn-changed', String(Date.now())); } catch (e) { /* no storage */ }
     }
     if (RENAMER_APPLY_MODES.has(mode) && value && value.error && Array.isArray(value.renamers)) {
       // held back by another enabled renamer: from now on the safety panels show the warning (with its "continue anyway" box)
@@ -2264,6 +2269,8 @@
     if (!p) return null;
     switch (p.phase) {
       case 'waiting_import':
+        // The import has already looked for the file and not found it: that is why it still waits (a wrong folder pair of the download client).
+        if (p.import_error) return { pct: 100, warn: true, text: `⚠ Download complete, but the import cannot find the file: ${p.import_error}` };
         return { pct: 100, text: 'Download complete — waiting for import' };
       case 'preparing':
         return { pct: 0, text: 'Import starting…' };

@@ -68,11 +68,18 @@ def state(origin: str, ids: str):
 
 @router.post("/wishlist")
 def wishlist(body: dict, search: bool = False):
-    """Put one scene on the wishlist (search=true: and search for it right now)."""
+    """Put one scene on the wishlist (search=true: and search for it right now). `replace` (the scene is in Stash, e.g. as a preview or in a low
+    resolution): it goes on the upgrade list instead, the same as "Re-add" on the Search page -- a better release replaces the file after a
+    verified download, the old one goes to the recycle bin."""
     provider = _provider(body.get("origin"))
     scene_id = str(body.get("id") or "").strip()
     if not scene_id:
         raise HTTPException(400, "No scene id")
+    if body.get("replace") and search_router._ids_in_library(provider, [scene_id]).get(scene_id):
+        out = search_router.readd_scene(provider, {"id": scene_id}, search)
+        if out.get("error"):
+            raise HTTPException(409, out["error"])
+        return {**out, "replace": True}
     client = search_router._client_for(provider)
     if not hasattr(client, "get_scene_full"):
         raise HTTPException(400, f"Sending a scene from {provider} is not supported yet")

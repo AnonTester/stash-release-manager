@@ -6,6 +6,42 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.253.4 (with 0.250.8 - 0.253.3; commits by AnonTester)
+- The two number fields of an added stash-box (query delay, favorites sync interval) are on separate lines.
+- The buttons in the connection forms have a gap: Save / Check connection / Test connection / Reset no longer touch each other, and "Remove connection" sits clear of the buttons above it.
+
+## 0.253.3
+- The priority field of a download client is only as wide as its number (it kept the width of a field with a placeholder).
+
+## 0.253.2
+- **Connection forms are laid out as a grid.** In Settings > Connections and in the setup guide every label sits in one column and its field in the next; a number field (priority, intervals, delays) is only as wide as a number instead of as long as the URL box; check boxes keep their inline look; on a narrow screen label and field stack.
+- **"Torrents: after seeding" and "SABnzbd history lookup" only show when such a client exists.** The torrent option needs a qBittorrent client, the history lookup a SABnzbd client; they appear and disappear as clients are added or removed.
+
+## 0.253.1
+- **Connections > Overview keeps its status for 10 minutes.** The services are asked once; opening the tab again shows the kept result ("checked 3 min ago"). It is dropped when a setting, a download client or a stash-box is saved, added or removed (or keys are taken over from Stash), and "Check again" asks anyway. The kept result lives in the browser, so a reload does not ask again either.
+- **Edit on the overview scrolls to the connection.** It opens the tab, scrolls to that stash-box, download client, Prowlarr or Whisparr box and flashes it for a moment, instead of only switching the tab.
+- **The add buttons and the options moved to the top of the tabs.** Stash-boxes: "Add a stash-box…" and "Update keys from Stash" (the import block, when there is something to import) first, the stash-boxes below. Download clients: "Add a download client…", "Torrents: after seeding" and the SABnzbd history lookup first, then "Your download clients".
+
+## 0.253.0
+- **Settings > Connections is organised in tabs.** The long stack of boxes is split into **Overview**, **Stash-boxes** (StashDB, ThePornDB, the stash-boxes you added), **Download clients** and **Search & Whisparr** (Prowlarr, Whisparr). The Overview opens first and lists every connection with its address and whether it answers (green / amber / red; a download client also shows its completed-folder check), an **Edit** button that opens the connection's tab and buttons to add a stash-box, a download client or Prowlarr / Whisparr (they switch to the tab and open the add form). The keys are never shown there.
+- **Download clients: each client's settings are open under its line** (the folder pair, the check result), not behind an "Edit" button; the form for a new client is folded away behind "Add a download client…", and the new-stash-box form behind "Add a stash-box…". A client is checked when the tab opens.
+- A small "Update keys from Stash" button stays on the Stash-boxes tab while the big import block is hidden (0.252.1).
+
+## 0.252.1
+- **"Stash-boxes in your Stash" only shows when there is something to import.** The block (and its buttons "Update keys from Stash" / "Read Stash again") was always there, also when Stash has no other stash-box or every one is set up here already ("there are no further ones to add"). It is hidden then; it stays for a stash-box that can be added, for one that has no API key in Stash (it needs you), and when Stash's configuration could not be read (so you see why). The setup guide's "Other stash-boxes" step says in one line that there is nothing to add.
+
+## 0.252.0
+- **The completed-downloads folder of a download client is required, and it is checked.** A finished torrent that the sidecar cannot find (the client calls its folder `/downloads/complete`, the sidecar has it as `/downloads`) used to wait for import for ever; 0.250.9 made the error visible, this makes it findable at set-up. The labels now say what the folder is ("Completed downloads folder, as the client calls it" / "as this program sees it") and that it is required, in the download client form, in Settings > File Import and in the setup guide's Downloads step (which showed no folder fields before; they are shown now for every client). "Check" and "Test connection" ask the client (qBittorrent: the category's or the default save path; SABnzbd: its complete folder) and tell whether the folder can be seen from here, or why not, with both paths. Nothing is blocked: a pair left empty still works where the client and the sidecar use the same path.
+
+## 0.251.0
+- **Userscript: a scene Stash already has can be sent as an upgrade.** The two send buttons were switched off as soon as Stash had any file for the scene, so a preview (7 minutes of a 27-minute scene) or a low-resolution copy could not be put on the wishlist from StashDB's page. They are on now: for a scene Stash has, "Send to wishlist" and "Send and search now" put it on the upgrade list (the same as "Re-add" on the Search page): a better release replaces the file after a verified download, the old file goes to the recycle bin. The pop-up says it was sent as an upgrade; a scene that is on the wishlist already keeps its send button off. The server side is the new `replace` flag of `POST /userscript/wishlist`. Update the script in your userscript manager afterwards.
+
+## 0.250.9
+- **A finished torrent that the import cannot find says why.** When the download client calls its folder by a path the sidecar does not have (the folder pair under the client's settings is empty or wrong, e.g. the client says `/downloads/complete/...` while the sidecar mounts that folder as `/downloads`), the download showed "Download complete - waiting for import" for ever and History only said "Downloaded file not found - retrying automatically". The import error now names both paths and points to the download client's folder pair, History carries it in its details, and Activity / Releases show it in amber on the waiting download.
+
+## 0.250.8
+- **Fix: upgrades moved to the wishlist ended up under "Imported" without being searched.** The pre-grab library check of the indexer search (a scene Stash already has is marked imported instead of searched) did not know about upgrades: every scene on the wishlist that replaces a library file is in the library by definition, so the next search run marked it imported, took it off the wishlist and dropped its cover. Upgrade rows are now left out of that check (a scene that is being upgraded is searched, held to the upgrade rules). Rows that were marked imported by mistake (an upgrade still on the wishlist, nothing downloaded for it) go back on the wishlist at the next search run.
+
 ## 0.250.7 (with 0.250.6)
 - **A release posted before the scene existed is no longer taken for it.** Some studios give every new episode the same title, and the release names carry no date, so old posts of other episodes matched a brand-new scene and several wrong downloads came in. Every automatic search now sets aside a result whose indexer age is more than 14 days older than the scene's release date; the search log shows it as "posted before the scene was released (another scene)". No full date or no age = nothing changes. Manual search is unaffected.
 - **Fix: a moved file that Stash never scanned stayed "verifying" for ever.** If Stash was restarted right after a file was moved into the library, the scan job was lost. The 15-minute retry now asks Stash about every still-pending file and starts one new scan for those it does not know (at most once per file and 20 minutes).

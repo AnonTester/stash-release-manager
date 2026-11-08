@@ -899,7 +899,8 @@ def main():
         # The details as typed into the add / edit form (nothing saved).
         result = _post(sidecar_url, "/download-clients/check", {
             "type": args.get("type", "sabnzbd"), "url": args.get("url", ""), "api_key": args.get("api_key", ""),
-            "username": args.get("username", ""), "password": args.get("password", ""),
+            "username": args.get("username", ""), "password": args.get("password", ""), "category": args.get("category", ""),
+            "remote_path": args.get("remote_path", ""), "local_path": args.get("local_path", ""),
         }, timeout=30)
     elif mode == "indexer_search_run":
         # A real Whisparr /release round trip per pending release, same

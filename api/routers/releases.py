@@ -212,6 +212,8 @@ def download_progress():
             # Gone from the client's live queue: finished (or post-
             # processing) and not picked up by an import run yet.
             result[scene_id] = {"phase": "waiting_import"}
+            if release.get("import_error_code") == "source_missing":  # the import looked and did not find the file: say why it still waits
+                result[scene_id]["import_error"] = release.get("import_error_detail")
         else:
             result[scene_id] = {
                 "phase": "downloading",

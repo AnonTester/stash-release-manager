@@ -19,10 +19,12 @@ def check(name, cond):  # noqa: E302
 calls = []
 class FakeSab:  # noqa: E302
     def __init__(self, url, api_key): calls.append(("sab", url, api_key))
+    def complete_dir(self): return ""
     def ping(self):
         if "bad" in calls[-1][1]: raise RuntimeError("SABnzbd said: API Key Incorrect")
 class FakeQbt:  # noqa: E302
-    def __init__(self, url, username, password): calls.append(("qbt", url, username, password))
+    def __init__(self, url, username, password, category=""): calls.append(("qbt", url, username, password))
+    def completed_folder(self): return ""
     def ping(self):
         if calls[-1][2] == "wrong": raise RuntimeError("qBittorrent login failed")
         return "v5.0.1"
@@ -31,11 +33,12 @@ dc.SabnzbdClient, dc.QbittorrentClient = FakeSab, FakeQbt
 db = Database(os.path.join(tempfile.mkdtemp(), "t.sqlite3"))
 dc.init_download_clients_router(db)
 body = dc.DownloadClientCheckBody
+core = lambda r: {k: v for k, v in r.items() if k != "folder"}  # the completed-folder part has its own test (test_download_folder_check.py)
 
 check("no client saved at all: a qBittorrent form is still checked with the typed details",
-      dc.check_entered(body(type="qbittorrent", url="http://qb:8080", username="u", password="p")) == {"ok": True, "version": "v5.0.1"}
+      core(dc.check_entered(body(type="qbittorrent", url="http://qb:8080", username="u", password="p"))) == {"ok": True, "version": "v5.0.1"}
       and calls[-1] == ("qbt", "http://qb:8080", "u", "p"))
-check("sabnzbd form uses the typed url and key", dc.check_entered(body(type="sabnzbd", url="http://sab:8080", api_key="k")) == {"ok": True}
+check("sabnzbd form uses the typed url and key", core(dc.check_entered(body(type="sabnzbd", url="http://sab:8080", api_key="k"))) == {"ok": True}
       and calls[-1] == ("sab", "http://sab:8080", "k"))
 check("a failure comes back as a plain message, HTTP 200", dc.check_entered(body(type="qbittorrent", url="http://qb", username="wrong")) ==
       {"ok": False, "error": "qBittorrent login failed"})
@@ -46,6 +49,6 @@ check("nothing was saved by the checks", download_client_repo.list_all(db) == []
 
 # saved client: unchanged behaviour
 cid = download_client_repo.create(db, "QB", "qbittorrent", "torrent", 25, True, "http://qb:8080", "", "u", "p", "", {})
-check("saved qBittorrent client check still works", dc.check_client(cid) == {"ok": True, "version": "v5.0.1"})
+check("saved qBittorrent client check still works", core(dc.check_client(cid)) == {"ok": True, "version": "v5.0.1"})
 print("\nALL OK" if not FAILS else f"\n{len(FAILS)} FAILED")
 sys.exit(1 if FAILS else 0)
