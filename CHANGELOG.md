@@ -6,6 +6,9 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.253.19
+- **A torrent in qBittorrent's error state now says why** (Activity > Downloading & importing, and the History line). qBittorrent only gives the reason in its log, so the monitor reads it from there: "qBittorrent cannot write to <folder> (permission denied) -- give the qBittorrent user write access to that folder, then resume the torrent"; likewise for a full disk, a read-only folder or any other file error. Before, every case read "qBittorrent reports an error for this torrent". When the log has nothing (qBittorrent was restarted), the note points at Tools > Log. Sidecar only.
+
 ## 0.253.18
 - **The open / closed state of the filter panel and of the Catalog tools is remembered** in the browser, like the other panels. Plugin only.
 

@@ -121,7 +121,25 @@ PAUSED_STATES = {"pausedDL", "pausedUP", "stoppedDL", "stoppedUP"}
 WAITING_STATES = {"queuedDL", "queuedUP", "checkingDL", "checkingUP", "checkingResumeData", "allocating", "moving"}
 
 
-def classify(torrent, prev, now, cfg):
+def error_text(raw, found=None):
+    """The note for a torrent in qBittorrent's error state. `found` = what the client's log says ({"reason", "folder"}) or None."""
+    if raw == "missingFiles":
+        return "files missing on disk -- recheck or fix the path in qBittorrent"
+    if not found or not found.get("reason"):
+        return "qBittorrent reports an error for this torrent -- its log (Tools > Log) says why"
+    reason, where = found["reason"], found.get("folder") or "its download folder"
+    low = reason.lower()
+    if "permission denied" in low:
+        return (f"qBittorrent cannot write to {where} (permission denied) -- give the qBittorrent user write access to that folder, "
+                "then resume the torrent")
+    if "no space" in low:
+        return f"the disk qBittorrent writes to ({where}) is full -- free some space, then resume the torrent"
+    if "read-only" in low:
+        return f"{where} is read-only for qBittorrent -- fix the mount or the folder, then resume the torrent"
+    return f"qBittorrent cannot write its files to {where}: {reason} -- fix that, then resume the torrent"
+
+
+def classify(torrent, prev, now, cfg, error_found=None):
     """What to make of one torrent right now. `torrent` = the client's dict or None (not in the client), `prev` = the stored row (dict) or None
     (first sight). Returns {state, detail, progress, max_progress, last_progress_change_at, stalled_since, stalled_s, done, action} where action
     is 'switch' (look for another torrent now) or 'none'.
@@ -160,9 +178,7 @@ def classify(torrent, prev, now, cfg):
     status = qbittorrent_client.status_of(torrent)
     raw = torrent.get("state") or ""
     if status == "error":
-        text = ("files missing on disk -- recheck or fix the path in qBittorrent" if raw == "missingFiles"
-                else "qBittorrent reports an error for this torrent")
-        return dead(ERROR, text, confirmed=seen_before(ERROR))
+        return dead(ERROR, error_text(raw, error_found), confirmed=seen_before(ERROR))
     if progress >= 1 or (status in ("seeding", "done") and progress >= 1):
         out.update(state=OK, detail="", done=True)
         return out
@@ -321,7 +337,13 @@ def run(db, hooks, now=None, client_factory=None):
             seen_keys.add((client_id, job_id))
             torrent = torrents.get(job_id)
             prev = get_row(db, client_id, job_id)
-            verdict = classify(torrent, prev, now, cfg)
+            found = None
+            if torrent is not None and qbittorrent_client.status_of(torrent) == "error" and (torrent.get("state") or "") != "missingFiles":
+                try:
+                    found = client.error_reason(torrent) if hasattr(client, "error_reason") else None
+                except Exception:
+                    logger.debug("torrent health: could not read the error reason", exc_info=True)
+            verdict = classify(torrent, prev, now, cfg, error_found=found)
             summary["checked"] += 1
             if verdict["done"]:
                 if prev:
