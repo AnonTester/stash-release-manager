@@ -1141,7 +1141,9 @@
         if (!li) return;
         if (info.satisfied) { li.remove(); return; }
         const actionBtn = li.querySelector('.srw-whisparr-action');
-        if (info.whisparr_exists || info.whisparr_has_file || info.whisparr_file_mismatch) li.querySelectorAll('.srw-whisparr-add-only').forEach((x) => x.remove());
+        const rel = releases.find((x) => x.scene_stashdb_id === sceneId);
+        const onWishlist = Boolean(rel && rel.status === 'sent_to_whisparr'); // tracked by Whisparr but not on the wishlist (v0.253.16): Add stays, the logo searches
+        if ((info.whisparr_exists && onWishlist) || info.whisparr_has_file || info.whisparr_file_mismatch) li.querySelectorAll('.srw-whisparr-add-only').forEach((x) => x.remove());
         if (info.in_library) {
           const label = info.quality ? `In Library — ${info.quality}` : 'In Library';
           const badge = el('span', { className: 'srw-release-in-library', textContent: label });
@@ -1186,9 +1188,13 @@
               : 'Downloaded (Whisparr) — awaiting Stash rescan',
           }));
         } else if (info.whisparr_exists && actionBtn) {
-          actionBtn.textContent = 'Search now';
-          actionBtn.classList.remove('srw-btn-primary');
-          actionBtn.classList.add('srw-btn-whisparr');
+          if (!onWishlist) {
+            window.SRW.markInWhisparr(actionBtn);
+          } else {
+            actionBtn.textContent = 'Search now';
+            actionBtn.classList.remove('srw-btn-primary');
+            actionBtn.classList.add('srw-btn-whisparr');
+          }
         }
       });
       window.SRW.resolveSceneLinks(listWrap);

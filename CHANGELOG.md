@@ -6,6 +6,10 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.253.16
+- **Scenes Whisparr already tracks but that are not on the wishlist** now have **Add** and the Whisparr logo as their search button (before: only a teal "Search now"). Cards that are on the wishlist keep their buttons.
+- **The bulk buttons follow the rows' rule:** Add n / Add + search n act on the selected scenes the row offers them for; the button shows that number, its tooltip the rest, and the notice after the run how many were skipped. Scenes on the wishlist get only Dismiss in the bar. Plugin only.
+
 ## 0.253.15
 - **A selection can do in bulk what one row does alone:** on the lists whose rows have Add / Add + search / Dismiss, the bar offers **Add n**, **Add + search n** and **Dismiss n** for a selection (nothing with an empty selection); scenes are sent one after the other with the same question first.
 - **One Dismiss button:** the bar's Dismiss, the classic bar, the Calendar's "Dismiss N shown" and the movies use the row's outline-red Dismiss.

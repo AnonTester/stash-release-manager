@@ -2510,3 +2510,8 @@ a.srw-btn { text-decoration: none; display: inline-block; text-align: center; }
 .srw-bulk-menu-item:hover:not(:disabled) { background: rgba(255, 255, 255, 0.12); }
 .srw-bulk-menu-item:disabled { opacity: 0.45; cursor: default; }
 .srw-bulk-menu-bar .srw-bulk-count { white-space: nowrap; }
+
+/* A scene Whisparr tracks (no file) that is not on the wishlist (v0.253.16): the logo is the search button */
+.srw-whisparr-logo { width: 1.25em; height: 1.25em; vertical-align: middle; }
+.srw-btn-icon .srw-whisparr-logo { margin: 0 0.1em; }
+.srw-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }

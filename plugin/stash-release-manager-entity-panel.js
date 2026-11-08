@@ -355,7 +355,9 @@
     }
     const { el } = window.SRW;
     const actionBtn = li.querySelector('.srw-whisparr-action');
-    if (info.whisparr_exists || info.whisparr_has_file || info.whisparr_file_mismatch) li.querySelectorAll('.srw-whisparr-add-only').forEach((x) => x.remove());
+    // On the wishlist already (or with a file): no Add. Tracked by Whisparr but NOT on the wishlist (v0.253.16): Add stays, the search button is the logo.
+    const onWishlist = Boolean(release && release.status === 'sent_to_whisparr');
+    if ((info.whisparr_exists && onWishlist) || info.whisparr_has_file || info.whisparr_file_mismatch) li.querySelectorAll('.srw-whisparr-add-only').forEach((x) => x.remove());
     if (info.in_library) {
       const label = info.quality ? `In Library — ${info.quality}` : 'In Library';
       const badge = el('span', { className: 'srw-release-in-library', textContent: label });
@@ -398,9 +400,13 @@
           : 'Downloaded (Whisparr) — awaiting Stash rescan',
       }));
     } else if (info.whisparr_exists && actionBtn) {
-      actionBtn.textContent = 'Search now';
-      actionBtn.classList.remove('srw-btn-primary');
-      actionBtn.classList.add('srw-btn-whisparr');
+      if (onWishlist) {
+        actionBtn.textContent = 'Search now';
+        actionBtn.classList.remove('srw-btn-primary');
+        actionBtn.classList.add('srw-btn-whisparr');
+      } else {
+        window.SRW.markInWhisparr(actionBtn); // known to Whisparr, not on the wishlist: the logo searches, Add puts it on the wishlist
+      }
     }
     return false;
   }
@@ -1084,8 +1090,9 @@
       // not a bulk one) and whisparr_has_file (nothing to send/search
       // for, it's just awaiting a Stash rescan) -- and ThePornDB
       // releases, which this hand-off has never supported.
+      // The scenes a row offers Add / Add + search for (v0.253.16): not on the wishlist already, no file in Whisparr; ThePornDB scenes can be added too.
       const eligibleForBulk = missing.filter((r) => {
-        if (r.provider === 'theporndb') return false;
+        if (r.status === 'sent_to_whisparr' || r.status === 'import_failed') return false;
         const info = statusById[r.scene_stashdb_id];
         return !(info && (info.whisparr_file_mismatch || info.whisparr_has_file));
       });
