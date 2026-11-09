@@ -25,8 +25,8 @@ def finish_row(row):
     convert.finish(_db, _get_stash_client(), _to_local, _recycle, row)
 
 
-def claim_job(worker):
-    return convert.claim_next(_db, worker, _to_local)
+def claim_job(worker, auto=False):
+    return convert.claim_next(_db, worker, _to_local, auto=auto)
 
 
 def resume():

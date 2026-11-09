@@ -25,13 +25,13 @@ def wants_worker(db):
 
 
 @router.get("/next")
-def next_job(worker: str = "worker"):
+def next_job(worker: str = "worker", auto: int = 0):
     """The oldest waiting encode, claimed for `worker`, or {"job": null}. Paths are the sidecar's own (/downloads/...): the worker maps them."""
     worker = (worker or "worker")[:40]
     encode_queue.mark_worker_seen(worker)
     job = encode_queue.claim_remote(worker) if wants_worker(_db) else None
     if job is None:  # Convert jobs (Maintenance > Convert) always go to a worker, whatever "Where to encode" says for the downloads
-        convert_job = convert_api.claim_job(worker)
+        convert_job = convert_api.claim_job(worker, auto=bool(auto))
         if convert_job is not None:
             return {"job": {**convert_job, "maps": convert_api.worker_maps()}}
         return {"job": None, **({} if wants_worker(_db) else {"reason": "encode_target is not 'worker'"})}

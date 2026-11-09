@@ -93,6 +93,11 @@ check("an expired lease puts the row back into the queue", convert.claim_next(db
 convert.cancel(db, [job2["job_id"]])
 convert.worker_done(db, job2["job_id"], "w9", True, None, lambda r: None)  # not running any more -> refused, no change
 check("done after a cancel is refused", convert.rows(db) and next(x for x in convert.rows(db) if x["id"] == job2["job_id"])["status"] == "wanted")
+# ---- auto mode (the widget's "work through the whole list")
+check("without auto a wanted row is not claimed", convert.claim_next(db, "w5", to_local) is None)
+ja = convert.claim_next(db, "w5", to_local, auto=True)
+check("auto: the next wanted row is claimed", ja is not None and next(x for x in convert.rows(db) if x["id"] == ja["job_id"])["status"] == "running")
+convert.cancel(db, [ja["job_id"]])
 
 # ---- a failure reported by the worker
 err = convert.worker_done(db, job["job_id"], "w1", False, "ffmpeg broke", lambda r: None)

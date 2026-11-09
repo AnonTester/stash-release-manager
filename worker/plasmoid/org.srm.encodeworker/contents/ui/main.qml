@@ -21,6 +21,10 @@ PlasmoidItem {
         && (now - status.updated_at) < Math.max(45, (status.interval || 30) * 2 + 15)
     readonly property bool encoding: alive && status.state === "encoding"
     readonly property bool byHand: alive && serviceState !== "active"   // running, but not as our service: the widget cannot stop it
+    readonly property bool autoQueue: alive && status.auto_queue === true   // the worker's own switch file, see srm_encode_worker.auto_queue_file()
+    // a finished job is shown for 20 s only; a failure stays until the next job
+    readonly property bool showLast: status !== null && status.last_result !== null && status.last_result !== undefined
+        && (!status.last_result.ok || (now - status.last_result.at) < 20)
     readonly property real percent: encoding && status.percent !== null ? Math.max(0, Math.min(100, status.percent)) : 0
 
     function fmtLeft(s) {
@@ -68,6 +72,11 @@ PlasmoidItem {
     }
     function poll() {
         exec.connectSource("systemctl --user is-active " + service + "; cat \"${XDG_RUNTIME_DIR:-/tmp/srm-$(id -u)}/srm-encode-worker/status.json\" 2>/dev/null")
+    }
+    function setAutoQueue(on) {
+        const f = "\"${XDG_CONFIG_HOME:-$HOME/.config}/srm-encode-worker/auto-queue\""
+        busy = true
+        exec.connectSource(on ? "mkdir -p \"$(dirname " + f + ")\" && touch " + f + "; echo done-auto" : "rm -f " + f + "; echo done-auto")
     }
     function control(verb) {
         busy = true
@@ -120,7 +129,7 @@ PlasmoidItem {
             opacity: 0.7; Layout.fillWidth: true
         }
         PlasmaComponents3.Label {
-            visible: root.status !== null && root.status.last_result !== null && root.status.last_result !== undefined
+            visible: root.showLast
             Layout.fillWidth: true; wrapMode: Text.Wrap; opacity: 0.85
             color: root.status && root.status.last_result && !root.status.last_result.ok ? Kirigami.Theme.negativeTextColor : Kirigami.Theme.textColor
             text: root.status && root.status.last_result ? "Last: " + root.status.last_result.file + " — " + root.status.last_result.text + " (" + root.fmtAgo(root.status.last_result.at) + ")" : ""
@@ -131,6 +140,14 @@ PlasmoidItem {
             wrapMode: Text.Wrap; Layout.fillWidth: true; color: Kirigami.Theme.neutralTextColor
         }
 
+        PlasmaComponents3.CheckBox {
+            id: autoBox
+            text: "Work through the whole Convert list (queue)"
+            enabled: !root.busy && root.alive
+            checked: root.autoQueue
+            onToggled: root.setAutoQueue(checked)
+            Connections { target: root; function onAutoQueueChanged() { autoBox.checked = root.autoQueue } }
+        }
         Item { Layout.fillHeight: true }
         RowLayout {
             Layout.fillWidth: true

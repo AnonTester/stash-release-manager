@@ -158,12 +158,16 @@ def dismiss(db, ids, restore=False):
 
 # ---------- the worker side ----------
 
-def claim_next(db, worker, to_local):
-    """The oldest queued row, marked as running for `worker`; None when nothing waits. `to_local` maps Stash's path to the sidecar's own."""
+def claim_next(db, worker, to_local, auto=False):
+    """The oldest queued row, marked as running for `worker`; None when nothing waits. `to_local` maps Stash's path to the sidecar's own.
+    `auto` (the widget's "work through the whole list" switch): when nothing is queued, the next 'wanted' row of the list is taken (failed and
+    dismissed rows never are, so a broken file cannot loop)."""
     now = time.time()
     with db.connect() as conn:
         conn.execute("UPDATE convert_candidate SET status = 'queued', worker = NULL WHERE status = 'running' AND beat_at < ?", (now - LEASE_SECONDS,))
         row = conn.execute("SELECT * FROM convert_candidate WHERE status = 'queued' ORDER BY queued_at, id LIMIT 1").fetchone()
+        if row is None and auto:
+            row = conn.execute("SELECT * FROM convert_candidate WHERE status = 'wanted' ORDER BY id LIMIT 1").fetchone()
         if row is None:
             return None
         conn.execute("UPDATE convert_candidate SET status = 'running', worker = ?, beat_at = ?, started_at = datetime('now'), percentage = 0 WHERE id = ?",
