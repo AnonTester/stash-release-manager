@@ -11,7 +11,7 @@
   // rule and the bug it caused when this drifted). Change this if you
   // install under a different folder name.
   // Must equal `version:` in stash-release-manager.yml (scripts/test_plugin_version.py checks it).
-  const PLUGIN_VERSION = '0.256.2';
+  const PLUGIN_VERSION = '0.257.0';
   const PLUGIN_ID = 'stash-release-manager';
   const PLUGIN_NAME = 'StashReleaseManager';
 
@@ -986,15 +986,57 @@
       : { add: 'faHeart', remove: 'faHeartCrack', addLabel: 'Add to favorites', removeLabel: 'Remove from favorites', on: 'favorite', badge: 'faHeart' };
   }
 
+  // Page icons (0.257.0): while a Release Manager page is open the browser tab shows the Release Manager icon (favicon, Apple touch icon, a
+  // manifest for "add to home screen" on Android); Stash's own link tags are put back as soon as the page is left (Stash is a single-page app).
+  const GITHUB_URL = 'https://github.com/northwindlab/stash-release-manager/';
+  const ICON_BASE = `/plugin/${PLUGIN_ID}/assets/icons/`;
+  let iconsInstalled = null;
+  function installPageIcons() {
+    if (iconsInstalled || !document.head) return;
+    const wanted = [
+      { rel: 'icon', type: 'image/svg+xml', sizes: 'any', href: `${ICON_BASE}icon.svg` },
+      { rel: 'icon', type: 'image/png', sizes: '256x256', href: `${ICON_BASE}icon-256.png` },
+      { rel: 'apple-touch-icon', sizes: '256x256', href: `${ICON_BASE}icon-256.png` },
+      { rel: 'manifest', href: `${ICON_BASE}manifest.webmanifest` },
+    ];
+    const removed = [];
+    document.head.querySelectorAll('link[rel="icon"], link[rel="shortcut icon"], link[rel="apple-touch-icon"], link[rel="manifest"]').forEach((n) => {
+      removed.push({ node: n, parent: n.parentNode, next: n.nextSibling });
+      n.remove();
+    });
+    const added = wanted.map((attrs) => {
+      const link = document.createElement('link');
+      Object.entries(attrs).forEach(([k, v]) => link.setAttribute(k, v));
+      link.setAttribute('data-srw-icon', '1');
+      document.head.appendChild(link);
+      return link;
+    });
+    const timer = setInterval(() => {
+      if (document.querySelector('.srw-page-header')) return;
+      clearInterval(timer);
+      added.forEach((n) => n.remove());
+      removed.forEach((r) => { if (r.parent) r.parent.insertBefore(r.node, r.next && r.next.parentNode === r.parent ? r.next : null); });
+      iconsInstalled = null;
+    }, 1000);
+    iconsInstalled = timer;
+  }
+
   function buildPageHeader(activeKey) {
     applyThemeColors();
+    installPageIcons();
     const pluginPath = `/plugins/${PLUGIN_ID}`;
     const links = PAGES.map((p) => el('a', {
       className: `nav-item nav-link${p.key === activeKey ? ' active' : ''}`,
       href: pluginPath + p.path,
     }, [icon(p.icon), p.label, p.key === 'activity' ? activityBadge() : null]));
     const header = el('div', { className: 'srw-page-header' }, [
-      el('div', { className: 'srw-page-title-row' }, [el('h2', { textContent: 'Release Manager' }), buildHealthPill()]),
+      el('div', { className: 'srw-page-title-row' }, [
+        el('h2', {}, [el('a', { className: 'srw-page-title-link', href: pluginPath, title: 'Release Manager: back to the main page' }, [
+          el('img', { className: 'srw-page-title-icon', src: `${ICON_BASE}icon.svg`, alt: '' }),
+          'Release Manager',
+        ])]),
+        buildHealthPill(),
+      ]),
       el('nav', { className: 'nav nav-tabs srw-main-tabs', role: 'tablist' }, links),
     ]);
     applyActivityCount();
@@ -1015,7 +1057,10 @@
     };
     const stash = mk('Stash');
     const sidecar = mk('Sidecar');
-    const sidecarLabel = sidecar.node.querySelector('.srw-status-label');
+    // "Sidecar" opens the project page on GitHub (the click does not also trigger the health check).
+    const sidecarLabel = el('a', { className: 'srw-status-label srw-status-link', href: GITHUB_URL, target: '_blank', rel: 'noopener noreferrer', textContent: 'Sidecar', title: 'Open the Release Manager project page on GitHub' });
+    sidecarLabel.addEventListener('click', (e) => e.stopPropagation());
+    sidecar.node.querySelector('.srw-status-label').replaceWith(sidecarLabel);
     const dev = mk('Development mode: no background jobs');
     dev.node.hidden = true;
     const pill = el('div', { className: 'srw-health-pill', title: 'Click to check again' }, [stash.node, sidecar.node, dev.node]);

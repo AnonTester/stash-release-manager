@@ -6,6 +6,9 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.257.0
+- **Release Manager icon**: the pages show it as the browser tab icon (SVG favicon, 256 px PNG as Apple touch icon, a manifest for "add to home screen" on Android) while one is open, and in front of the "Release Manager" title. The icon and the title link back to the main page (the header keeps its height), and "Sidecar" in the version info opens the project page on GitHub. The Violentmonkey userscript shows the icon too (`@icon`; script version 0.257.0, served by the sidecar).
+
 ## 0.256.2
 - **The safety check's "Check again" button on Settings > Import & Naming shows its text** again (it was only a clipboard icon). Plugin only.
 
