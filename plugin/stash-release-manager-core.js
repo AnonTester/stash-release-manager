@@ -11,7 +11,7 @@
   // rule and the bug it caused when this drifted). Change this if you
   // install under a different folder name.
   // Must equal `version:` in stash-release-manager.yml (scripts/test_plugin_version.py checks it).
-  const PLUGIN_VERSION = '0.258.2';
+  const PLUGIN_VERSION = '0.258.3';
   const PLUGIN_ID = 'stash-release-manager';
   const PLUGIN_NAME = 'StashReleaseManager';
 
@@ -1907,6 +1907,11 @@
   }
 
   // The facts of a result as small chips (indexer, torrent swarm, quality, size, age); `quality` is the label already worked out by the caller.
+  // "480p", or "480p (540p in the name)" when the name stated a standard-definition height the profile counts as its 480p class
+  function resolutionText(resolution, namedHeight) {
+    return namedHeight && namedHeight !== resolution ? `${resolution}p (${namedHeight}p in the name)` : `${resolution}p`;
+  }
+
   function resultChips(c, quality) {
     const chips = [c.indexer || 'unknown indexer'];
     if (c.protocol === 'torrent') chips.push(`torrent${c.seeders != null ? ` · ${c.seeders} seeders` : ''}${c.peers != null ? ` · ${c.peers} peers` : ''}`);
@@ -2178,11 +2183,10 @@
     return wrap;
 
     function buildLogRow(c) {
-        const qualityLabel = c.vr ? 'VR' : (c.resolution ? `${c.resolution}p` : 'unknown quality');
-        const sizeGb = c.size ? `${(c.size / 1e9).toFixed(2)} GB` : 'unknown size';
+        const qualityLabel = c.vr ? 'VR' : (c.resolution ? resolutionText(c.resolution, c.named_height) : 'unknown quality');
         const swarm = c.protocol === 'torrent'
           ? ` (torrent${c.seeders != null ? `, ${c.seeders} seeders` : ''}${c.peers != null ? `, ${c.peers} peers` : ''})` : '';
-        const quality = c.vr ? 'VR' : (c.resolution ? `${c.resolution}p` : (c.est_resolution ? `~${c.est_resolution}p (estimated)` : 'unknown quality'));
+        const quality = c.vr ? 'VR' : (c.resolution ? resolutionText(c.resolution, c.named_height) : (c.est_resolution ? `~${c.est_resolution}p (estimated)` : 'unknown quality'));
         const rowStatus = el('span', { className: 'srw-key-status' });
         // Grab = this result instead of what is running (a running torrent is removed with its data), same as the Manual search's Grab
         const grab = el('button', {
@@ -2195,6 +2199,7 @@
               if (result.error) { rowStatus.textContent = ` error: ${result.error}`; notify(`Grab failed: ${r.title || ''}`, result.error, 'error'); return; }
               if (!result.grab) { rowStatus.textContent = ` not grabbed: ${String(result.result || 'refused').replace(/_/g, ' ')}`; return; }
               rowStatus.textContent = ' grabbed';
+              grab.remove(); // grabbed: nothing left to click (a second Grab would start the same download again)
               notify(`Grabbed: ${r.title || ''}`, `${c.title} (${c.indexer || 'indexer'}) -- sent to the download client.`, 'success');
               if (onGrabbed) await onGrabbed();
             } catch (err) { rowStatus.textContent = ` error: ${err.message}`; }
@@ -2254,10 +2259,9 @@
       const resultsWrap = el('div');
 
       function buildResultRow(candidate) {
-        const sizeGb = candidate.size ? `${(candidate.size / 1e9).toFixed(2)} GB` : 'unknown size';
         const quality = (candidate.quality && candidate.quality.quality) || {};
         // a name without a resolution: the sidecar judges one from the scene's length and the size (est_resolution), marked with "~"
-        const qualityLabel = quality.source === 'vr' ? 'VR' : (quality.resolution ? `${quality.resolution}p`
+        const qualityLabel = quality.source === 'vr' ? 'VR' : (quality.resolution ? resolutionText(quality.resolution, candidate.named_height)
           : (candidate.est_resolution ? `~${candidate.est_resolution}p (estimated)` : 'unknown quality'));
         const rowStatus = el('span', { className: 'srw-key-status' });
         // One grab button: `grab` = the caller's own grab (null = the default grab of this panel), `ask` = the confirm text
@@ -2280,6 +2284,7 @@
                   return;
                 }
                 rowStatus.textContent = ' grabbed';
+                actionsBox.querySelectorAll('button').forEach((btn) => btn.remove()); // grabbed: no Grab button is left to click again
                 notify(`Grabbed: ${r.title || ''}`, `${candidate.title} (${candidate.indexer || 'indexer'}) -- sent to the download client.`, 'success');
                 if (onGrabbed) await onGrabbed();
               } catch (err) {
@@ -2288,6 +2293,14 @@
             });
           },
         });
+        const actionsBox = el('div', { className: 'srw-result-actions' });
+        actionsBox.append(...[
+          grabButton('Grab', 'srw-btn srw-btn-primary', null, `Download "${candidate.title}" for "${r.title}"?`),
+          opts && opts.grabAsScene ? grabButton('Grab as one scene', 'srw-btn', opts.grabAsScene,
+            `Download "${candidate.title}" as ONE SCENE of "${r.title}"? It joins the movie's group; the movie stays on the wishlist for the other parts.`,
+            'The file is only a part of the movie: it is added to its group and the movie stays wanted for the other parts') : null,
+          rowStatus,
+        ].filter(Boolean));
         return el('div', { className: 'srw-manual-search-result srw-result-row' }, [
           el('div', { className: 'srw-result-main' }, [
             el('div', { className: 'srw-result-head' }, [releaseTitleNode(candidate.title, candidate.infoUrl)]),
@@ -2299,13 +2312,7 @@
                 title: `${candidate.tried} (blocklist of this scene)` }) : null,
             ]),
           ]),
-          el('div', { className: 'srw-result-actions' }, [
-            grabButton('Grab', 'srw-btn srw-btn-primary', null, `Download "${candidate.title}" for "${r.title}"?`),
-            opts && opts.grabAsScene ? grabButton('Grab as one scene', 'srw-btn', opts.grabAsScene,
-              `Download "${candidate.title}" as ONE SCENE of "${r.title}"? It joins the movie's group; the movie stays on the wishlist for the other parts.`,
-              'The file is only a part of the movie: it is added to its group and the movie stays wanted for the other parts') : null,
-            rowStatus,
-          ]),
+          actionsBox,
         ]);
       }
 
