@@ -11,7 +11,7 @@
   // rule and the bug it caused when this drifted). Change this if you
   // install under a different folder name.
   // Must equal `version:` in stash-release-manager.yml (scripts/test_plugin_version.py checks it).
-  const PLUGIN_VERSION = '0.258.3';
+  const PLUGIN_VERSION = '0.258.4';
   const PLUGIN_ID = 'stash-release-manager';
   const PLUGIN_NAME = 'StashReleaseManager';
 
@@ -1907,6 +1907,14 @@
   }
 
   // The facts of a result as small chips (indexer, torrent swarm, quality, size, age); `quality` is the label already worked out by the caller.
+  // A release size: GB with two decimals from 1 GB, MB below ("0.09 GB" tells nothing), KB for the tiny ones
+  function sizeText(bytes) {
+    if (!bytes) return 'unknown size';
+    if (bytes >= 999.5e6) return `${(bytes / 1e9).toFixed(2)} GB`;
+    if (bytes >= 1e6) return `${Math.round(bytes / 1e6)} MB`;
+    return `${Math.max(1, Math.round(bytes / 1e3))} KB`;
+  }
+
   // "480p", or "480p (540p in the name)" when the name stated a standard-definition height the profile counts as its 480p class
   function resolutionText(resolution, namedHeight) {
     return namedHeight && namedHeight !== resolution ? `${resolution}p (${namedHeight}p in the name)` : `${resolution}p`;
@@ -1915,7 +1923,7 @@
   function resultChips(c, quality) {
     const chips = [c.indexer || 'unknown indexer'];
     if (c.protocol === 'torrent') chips.push(`torrent${c.seeders != null ? ` · ${c.seeders} seeders` : ''}${c.peers != null ? ` · ${c.peers} peers` : ''}`);
-    chips.push(quality, c.size ? `${(c.size / 1e9).toFixed(2)} GB` : 'unknown size', ageWords(c.age));
+    chips.push(quality, sizeText(c.size), ageWords(c.age));
     return el('span', { className: 'srw-chips' }, chips.map((t) => el('span', { className: 'srw-chip', textContent: t })));
   }
 
@@ -3463,7 +3471,7 @@
   window.SRW = {
     PLUGIN_ID, PLUGIN_NAME,
     getContentScope, resetContentScope, scopeAllows,
-    getSettings, runOp, sidecarWsUrl, stashUrl, imageSrc, coverImage, copyText,
+    getSettings, runOp, sidecarWsUrl, stashUrl, imageSrc, coverImage, copyText, sizeText,
     getRoute, onNavigate, initNavigationWatcher,
     el, waitForElement, entityIcon, buildPageHeader,
     watchKind, keepResult, recallResult, forgetResult, keptNote, searchStatusLabel, setBusy, openModal, sceneSubtitle, iconButton, busyIcon, ageWords, ageWarning, confirmInline, buildManagedList, buildSearchActions, whenNoOpenPanel, buildManualSearch, getSearchCapabilities,
