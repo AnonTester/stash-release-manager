@@ -1142,6 +1142,31 @@ class StashClient:
                     logger.exception("alias lookup failed (ignored)")
         return out
 
+    def local_entity_ids_by_stash_ids(self, kind, pairs, endpoint_of, chunk=30):
+        """{(provider, stash id): local id} for the performers or studios ('performer' / 'studio') of this Stash that carry the given stash-box
+        ids (v0.256.0) -- ONE request per `chunk` ids (aliased findPerformers / findStudios). `endpoint_of(provider)` gives the stash-box endpoint
+        the local entry is tagged with (None = unknown provider, skipped). Only entries WITH a picture count: Stash answers an entry without one
+        with a placeholder (`image_path` ends in `default=true`), and then the stash-box's own picture is the better one to show."""
+        import json as _json
+        plural, fields = ("performers", "performers") if kind == "performer" else ("studios", "studios")
+        find, flt = ("findPerformers", "performer_filter") if kind == "performer" else ("findStudios", "studio_filter")
+        out, todo = {}, []
+        for prov, sid in pairs:
+            endpoint = endpoint_of(prov)
+            if endpoint:
+                todo.append((prov, sid, endpoint))
+        for i in range(0, len(todo), chunk):
+            part = todo[i:i + chunk]
+            body = "\n".join(
+                f's{n}: {find}({flt}: {{stash_id_endpoint: {{endpoint: {_json.dumps(ep)}, stash_id: {_json.dumps(sid)}, modifier: EQUALS}}}}, '
+                f'filter: {{per_page: 1}}) {{ {fields} {{ id image_path }} }}' for n, (prov, sid, ep) in enumerate(part))
+            data = self._graphql("query {\n" + body + "\n}", {})
+            for n, (prov, sid, ep) in enumerate(part):
+                found = ((data.get(f"s{n}") or {}).get(plural)) or []
+                if found and found[0].get("image_path") and "default=true" not in found[0]["image_path"]:
+                    out[(prov, sid)] = str(found[0]["id"])
+        return out
+
     def find_scene_by_stashdb_id(self, stashdb_id, endpoint=None):
         """The local scene (if any) already carrying this exact
         StashDB stash_id -- pre-flight check before retagging a

@@ -1,7 +1,8 @@
 // ==UserScript==
 // @name         StashReleaseManager for stash-box sites
 // @namespace    stash-release-manager
-// @version      0.251.0
+// @version      0.257.0
+// @icon         __SRM_URL__/userscript/icon-256.png
 // @description  On scene pages and scene cards: Send to wishlist (or as an upgrade of the file Stash has), Send and search, Open in Stash, Copy Stash-ID, plus a status colour. On performer and studio pages: Watch / Unwatch.
 // @match        https://stashdb.org/*
 // @grant        GM_xmlhttpRequest

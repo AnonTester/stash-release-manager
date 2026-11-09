@@ -6,6 +6,46 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.258.0
+- **KDE widget: queue mode, and the last result fades.** (a) A finished encode ("Last: ... done") disappears from the widget after 20 s (a failure stays until the next job). (b) New switch "Work through the whole Convert list (queue)": while it is on, the worker takes the next *wanted* row of Maintenance > Convert whenever nothing is queued, one after the other (failed and dismissed rows are never taken). The switch is the file `~/.config/srm-encode-worker/auto-queue`. Sidecar: `GET /encode-worker/next?auto=1`; the sidecar needs a rebuild for this.
+
+## 0.257.0
+(Contributed by AnonTester from his fork: 0.253.19 - 0.257.0, taken over together; his entries follow unchanged.)
+- **Release Manager icon**: the pages show it as the browser tab icon (SVG favicon, 256 px PNG as Apple touch icon, a manifest for "add to home screen" on Android) while one is open, and in front of the "Release Manager" title. The icon and the title link back to the main page (the header keeps its height), and "Sidecar" in the version info opens the project page on GitHub. The Violentmonkey userscript shows the icon too (`@icon`; script version 0.257.0, served by the sidecar).
+
+## 0.256.2
+- **The safety check's "Check again" button on Settings > Import & Naming shows its text** again (it was only a clipboard icon). Plugin only.
+
+## 0.256.1
+- **Studio logos that are SVG files are cached too.** ffmpeg cannot read SVG, so about one studio logo in five (StashDB serves many as SVG) was not cached and fell back to the stash-box's own address. An SVG is now kept as it is (up to 512 KB) and shown from the cache; the type is recognised from the file itself.
+
+## 0.256.0
+- **Performer pictures and studio logos are cached, scaled and replaced by Stash's own, like the scene covers.** They were loaded straight from the stash-box's CDN (Search page > Performers / Studios), unscaled, uncached and, on an https page, exposed to mixed content. Now: a performer or studio that is in Stash shows Stash's picture (a Stash entry that only has Stash's placeholder keeps showing the stash-box picture); any other gets the stash-box picture fetched once by the sidecar, scaled (performers 240 px wide, studio logos fitted into 256 px and kept as PNG so a transparent logo stays transparent) and kept under `/data/covers`, delivered through the plugin's normal calls. The Search page's scene cards use the same path (Stash's screenshot for a scene in the library).
+- The sidecar never takes a picture address from the browser: it uses the addresses the stash-box sent with the search results (kept 30 days in a small table) or asks the stash-box for that one item. Performer and studio pictures nobody looked at for 30 days are removed by the daily sweep; the scene covers of 0.254.0 moved to `covers/scene/`.
+- New `POST /covers` (`kind`: scene, performer, studio); plugin backend mode `covers`; `/releases/covers` stays for scenes.
+
+## 0.255.1
+- **Pictures load the same way behind a reverse proxy as on the direct address.** Reviewed every place the plugin loads a cover, a logo or an icon: Stash's own pictures are always loaded from the address the page was opened with, the cached scene covers and the Whisparr / action icons are inline data (no address at all), and the browser never needs the sidecar's own address for a picture. Two gaps closed: (1) the saved cover of a deleted group (Movies wishlist suggestions) was loaded straight from the sidecar's address, which an https page cannot do; it now comes through the plugin's normal calls like the scene covers. (2) A picture address from a provider that starts with `http://` (movie posters, the Search page's cards, a scene's fallback image) is loaded as `https://` on an https page instead of being blocked as mixed content.
+- New `GET /films/{id}/seed-cover-data`; plugin backend mode `films_seed_cover`.
+
+## 0.255.0
+- **Settings > Connections is one page again, with the overview as the page.** The four sub-tabs are gone. The overview (Stash, the stash-boxes, the download clients, Prowlarr, Whisparr: what each points to and whether it answers) is the main page; **Edit / Set up** and the **Add** buttons open the connection's settings in a window (Stash, StashDB, ThePornDB, an added stash-box, a download client with its folder pair and Check, Prowlarr, Whisparr), Remove is in that window too. Closing the window refreshes the overview.
+- Under the overview, **More settings**: Update keys from Stash (and the import of the other stash-boxes, only when there is something to import), the **torrent option "after seeding"** (one global setting for all torrent clients, shown only while a qBittorrent client exists), the SABnzbd history lookup (only with a SABnzbd client) and what is set for Whisparr (quality profiles, safety sweep, blocklist sync, import status; greyed out under "No Whisparr").
+- Plugin only; the setup guide is unchanged.
+
+## 0.254.1
+- **The same grid layout on every Settings tab** (General, Search & Quality, Import & Naming, Jobs, and the setup guide): label in one column, the field in the next, its Save button and "saved" text right behind it, the hint of a setting under the field. Number, date and drop-down fields are only as wide as they need, paths and the naming formats are wide (the Movie File Format field was cut off), checkbox settings keep their Save next to them; on a narrow screen label and field stack. Sections have the same spacing everywhere. Plugin only.
+- The Movie search settings had one long label holding two fields ("New movies (released within the last [60] days ... after (days): [1]"); they are two rows now.
+- The naming preview no longer shows a stray line "null" under the examples.
+
+## 0.254.0
+- **Every scene row has a cover again** (Releases > On Wishlist / Imported / Dismissed / Added late, the Calendar, the Studio and Performer panels, Activity > Downloading & importing / Imported / Wishlist). Until now a cover was only drawn while the release row still held the stash-box's image address, and that address was deleted as soon as the scene was in Stash (to keep the database small): upgrades, backlog additions and everything imported showed no cover. Pages are paged now, so the cover loads that this was meant to avoid are no longer a problem.
+- **Where the cover comes from:** a scene that is in Stash shows Stash's own cover. Any other scene shows its stash-box cover (StashDB, ThePornDB, an added stash-box), which the sidecar fetches once, cuts to a small JPEG (320 px wide, about 10-20 KB) and keeps under `/data/covers`; the browser gets it through the plugin's normal calls, so it works on an https Stash page too. As soon as the scene is in Stash the cached copy is deleted; copies of scenes without a release row are swept daily. A scene whose stash-box has no image (or blocks it) is asked about again after a day, not on every view.
+- New `POST /releases/covers`; plugin backend mode `releases_covers`.
+
+## 0.253.19
+- **A torrent in qBittorrent's error state now says why** (Activity > Downloading & importing, and the History line). qBittorrent only gives the reason in its log, so the monitor reads it from there: "qBittorrent cannot write to <folder> (permission denied) -- give the qBittorrent user write access to that folder, then resume the torrent"; likewise for a full disk, a read-only folder or any other file error. Before, every case read "qBittorrent reports an error for this torrent". When the log has nothing (qBittorrent was restarted), the note points at Tools > Log. Sidecar only.
+
 ## 0.253.18
 - **The open / closed state of the filter panel and of the Catalog tools is remembered** in the browser, like the other panels. Plugin only.
 

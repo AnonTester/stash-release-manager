@@ -343,6 +343,25 @@ class ThePornDBClient:
         scene = data.get("data", data)
         return scene.get("image") if scene else None
 
+    def fetch_performer_image(self, performer_id):
+        """The profile picture address of one performer (v0.256.0, scene_covers.py), or None."""
+        resp = self._get(f"/performers/{performer_id}")
+        if resp.status_code == 404:
+            return None
+        resp.raise_for_status()
+        data = resp.json()
+        return (data.get("data", data) or {}).get("image")
+
+    def fetch_studio_image(self, studio_id):
+        """The logo address of one site / studio (its uuid, v0.256.0, scene_covers.py), or None."""
+        resp = self._get(f"/sites/{studio_id}")
+        if resp.status_code == 404:
+            return None
+        resp.raise_for_status()
+        data = resp.json()
+        site = data.get("data", data) or {}
+        return site.get("poster") or site.get("logo")
+
     def scene_durations(self, scene_ids):
         """{scene id: seconds or None}, one request per scene (ThePornDB has no lookup by many ids; v0.209.0)."""
         out = {}

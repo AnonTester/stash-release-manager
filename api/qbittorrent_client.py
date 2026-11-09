@@ -13,6 +13,7 @@ Details that matter:
 - Errors are re-raised WITHOUT the request URL (an indexer link can carry an API key), same rule as newznab_client.py."""
 import base64
 import hashlib
+import os
 import re
 from urllib.parse import parse_qs, urljoin, urlparse
 
@@ -169,6 +170,26 @@ class QbittorrentClient:
                 return path
         return self._call("GET", "app/preferences").json().get("save_path") or ""
 
+    def error_reason(self, torrent):
+        """Why qBittorrent put a torrent in the error state. The torrent itself carries no reason; it is only in the client's log ("File error
+        alert ... Reason: "<6 hex of the hash> file_open (<path>) error: Permission denied""). Returns {"reason", "folder", "path"} from the newest
+        such entry for this torrent, or None (log empty after a restart, nothing found, client does not answer)."""
+        short = str((torrent or {}).get("hash") or "")[:6].lower()
+        if not short:
+            return None
+        try:
+            entries = self._call("GET", "log/main", params={"normal": "false", "info": "false", "warning": "false",
+                                                             "critical": "true", "last_known_id": -1}).json()
+        except Exception:
+            return None
+        for entry in reversed(entries or []):
+            found = parse_file_error(entry.get("message") or "", short)
+            if found:
+                content = (torrent or {}).get("content_path") or ""
+                folder = os.path.dirname(content.rstrip("/")) if content else os.path.dirname(os.path.dirname(found["path"]))
+                return {**found, "folder": folder or os.path.dirname(found["path"])}
+        return None
+
     def webapi_version(self):
         return self._call("GET", "app/webapiVersion").text.strip()
 
@@ -285,6 +306,19 @@ class QbittorrentClient:
 
     def delete(self, info_hash, delete_files=False):
         self._call("POST", "torrents/delete", data={"hashes": info_hash, "deleteFiles": "true" if delete_files else "false"})
+
+
+_FILE_ERROR = re.compile(r'Reason: "(?P<hash>[0-9a-f]{6}) \w+ \((?P<path>.*)\) error: (?P<reason>[^"]+)"\s*$', re.S)
+
+
+def parse_file_error(message, short_hash):
+    """{"reason", "path"} from one log line of a file error alert for the torrent whose hash starts with `short_hash`, else None."""
+    if "File error alert" not in message:
+        return None
+    m = _FILE_ERROR.search(message)
+    if not m or m.group("hash").lower() != short_hash:
+        return None
+    return {"reason": m.group("reason").strip(), "path": m.group("path")}
 
 
 def status_of(torrent):

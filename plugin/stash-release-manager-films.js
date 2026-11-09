@@ -41,7 +41,7 @@
         const meta = [m.year, m.studio_name, m.duration_min ? `${Math.round(m.duration_min)} min` : null,
           (m.performers || []).length ? `${m.performers.length} performers` : null].filter(Boolean).join(' — ');
         results.appendChild(el('div', { className: 'srw-manual-search-result' }, [
-          m.image_url ? el('img', { className: 'srw-film-thumb srw-film-thumb-sm', src: m.image_url, loading: 'lazy', alt: '' }) : null,
+          m.image_url ? el('img', { className: 'srw-film-thumb srw-film-thumb-sm', src: window.SRW.imageSrc(m.image_url), loading: 'lazy', alt: '' }) : null,
           el('span', { className: 'srw-release-title', textContent: m.title }),
           el('span', { className: 'srw-review-candidate-meta', textContent: meta }),
           m.on_list ? el('span', { className: 'srw-unverified-badge', textContent: 'already on the list' })
@@ -59,7 +59,6 @@
     const root = el('div', { className: 'srw-films' });
     let films = [];
     const counts = el('span', { hidden: true }); // text changes -> the tab labels follow (buildPaneTabs `watch`)
-    let sidecarUrl = ''; // for the saved seed covers (<img> may load them across origins)
     const views = {};
     const panes = {};
     const status = el('span', { className: 'srw-key-status' });
@@ -122,14 +121,19 @@
       // its original shop page (AdultDVDEmpire, ...) open instead; a group that still exists opens in Stash.
       const seedGroup = f.source === 'empty-group' && f.stash_group_id;
       const seedHref = seedGroup ? `/groups/${f.stash_group_id}` : ((f.seed && f.seed.urls && f.seed.urls[0]) || null);
-      const seedCoverSrc = f.source === 'deleted-group' ? `${sidecarUrl}/films/${f.id}/seed-cover` : (seedGroup ? `/group/${f.stash_group_id}/frontimage` : null);
+      // The saved cover of a deleted group comes through the plugin's own call as a data: URL (not from the sidecar's address: the browser may not
+      // reach it, or may refuse it from an https page); a group that still exists has its cover in Stash.
+      const seedCoverSrc = seedGroup ? `/group/${f.stash_group_id}/frontimage` : null;
+      const seedCoverSaved = f.source === 'deleted-group';
       const seedTitle = seedGroup ? 'Open the group in Stash (new tab)' : 'Open the original page of this seed (new tab) -- the group itself was deleted from Stash';
       const mkLink = (href, child, title) => (href ? el('a', { href, target: '_blank', rel: 'noopener noreferrer', title }, [child]) : child);
       const seedLine = (text) => {
         let cover = null;
-        if (seedCoverSrc && sidecarUrl !== null) {
-          cover = el('img', { className: 'srw-film-thumb srw-film-thumb-sm', src: seedCoverSrc, loading: 'lazy', alt: '' });
+        if (seedCoverSrc || seedCoverSaved) {
+          cover = el('img', { className: 'srw-film-thumb srw-film-thumb-sm', loading: 'lazy', alt: '' });
           cover.addEventListener('error', () => cover.remove());
+          if (seedCoverSrc) cover.src = seedCoverSrc;
+          else window.SRW.runOp('films_seed_cover', { id: f.id }).then((r) => { if (r && r.data) cover.src = r.data; else cover.remove(); }).catch(() => cover.remove());
         }
         return el('div', { className: 'srw-hint srw-seed-line' }, [cover ? mkLink(seedHref, cover, seedTitle) : null, mkLink(seedHref, el('span', { textContent: text }), seedTitle)]);
       };
@@ -301,7 +305,7 @@
       }
       li = el('li', { className: f.tpdb_id ? 'srw-release-item srw-release-item-theporndb srw-film-row' : 'srw-release-item srw-film-row' }, [
         selectBox, // the tick box of the bulk Dismiss bar (new movies)
-        f.image_url ? mkLink(f.tpdb_url, el('img', { className: 'srw-film-thumb', src: f.image_url, loading: 'lazy', alt: '' }), 'Open this movie on ThePornDB (new tab)')
+        f.image_url ? mkLink(f.tpdb_url, el('img', { className: 'srw-film-thumb', src: window.SRW.imageSrc(f.image_url), loading: 'lazy', alt: '' }), 'Open this movie on ThePornDB (new tab)')
           : el('span', { className: 'srw-film-thumb srw-film-thumb-empty', textContent: '🎬' }),
         el('div', { className: 'srw-row-info' }, [
           el('div', {}, [el('span', { className: 'srw-release-title', textContent: f.title }),
@@ -590,7 +594,7 @@
       const link = el(f.tpdb_url ? 'a' : 'span', Object.assign({ className: 'srw-cal-pill-link',
         title: `${f.title}${f.year ? ` (${f.year})` : ''} — ${f.studio_name || '?'} (${stateLabel}) [ThePornDB]${f.duration_min ? ` — ${Math.round(f.duration_min)} min` : ''}` },
         f.tpdb_url ? { href: f.tpdb_url, target: '_blank', rel: 'noopener noreferrer' } : {}), [
-        f.image_url ? el('img', { className: 'srw-cal-avatar srw-cal-avatar-movie', src: f.image_url, alt: '', loading: 'lazy' }) : null,
+        f.image_url ? el('img', { className: 'srw-cal-avatar srw-cal-avatar-movie', src: window.SRW.imageSrc(f.image_url), alt: '', loading: 'lazy' }) : null,
         el('span', { className: 'srw-cal-pill-text' }, [
           el('span', { className: 'srw-cal-pill-title', textContent: f.title }),
           el('span', { className: 'srw-cal-pill-studio', textContent: f.studio_name || '' }),
@@ -739,7 +743,7 @@
     );
 
     root.append(tabs, newPane, ...TABS.map(([k]) => panes[k]), groupsPane, counts);
-    window.SRW.getSettings().then((st) => { sidecarUrl = (st && st.sidecarUrl) || ''; }).catch(() => {}).finally(() => { load(); trackSeed(status, () => load()); });
+    load(); trackSeed(status, () => load());
     window.SRW.runOp('settings_get_all').then((st) => { if (st && !st.error) window.SRW_Releases.loadFilterPresets(st); }).catch(() => {})
       .finally(() => barBuilders.forEach((build) => build()));
     root.reload = load;

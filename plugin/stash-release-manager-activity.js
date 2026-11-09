@@ -818,7 +818,7 @@
   function movieThumb(f) {
     if (!f.image_url) return null;
     const { el } = window.SRW;
-    const img = el('img', { className: 'srw-release-thumb srw-movie-cover', src: f.image_url, alt: '', loading: 'lazy' });
+    const img = el('img', { className: 'srw-release-thumb srw-movie-cover', src: window.SRW.imageSrc(f.image_url), alt: '', loading: 'lazy' });
     // The cover opens the movie's Group in Stash; a movie without a Group (nothing was grouped yet) has nothing to open and says so (v0.243.16).
     const wrap = f.stash_group_id
       ? el('a', { className: 'srw-release-thumb-link', href: `/groups/${f.stash_group_id}`, target: '_blank', rel: 'noopener noreferrer', title: 'Open the group in Stash (new tab)' }, [img])
@@ -998,7 +998,7 @@
         () => window.SRW.runOp('releases_review_candidate_reject', { provider: r.provider, scene_stashdb_id: r.scene_stashdb_id }),
         c.title, null,
         () => window.SRW.runOp('releases_review_candidate_restore', { provider: r.provider, scene_stashdb_id: r.scene_stashdb_id }),
-      ), reviewThumb(r.image_url, sceneUrl(r.provider, r.scene_stashdb_id))));
+      ), window.SRW.buildReleaseThumb(r)));
     });
     filmsReview.forEach((f) => { // movies: the automatic movie search found a plausible release (Reject = never this release for this movie)
       const c = f.review_candidate || {};

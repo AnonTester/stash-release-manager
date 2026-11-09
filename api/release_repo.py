@@ -1217,3 +1217,17 @@ def studio_release_counts(db):
             else:
                 by_name[r["studio_name"]] = by_name.get(r["studio_name"], 0) + r["n"]
     return by_id, by_name
+
+
+def image_url_for_scene(db, provider, scene_id):
+    """The stored provider image URL of a scene (any of its rows), or None -- the starting point of the cover cache (scene_covers.py)."""
+    with db.connect() as conn:
+        row = conn.execute("SELECT image_url FROM release WHERE provider = ? AND scene_stashdb_id = ? "
+                           "AND image_url IS NOT NULL AND image_url != '' LIMIT 1", (provider, scene_id)).fetchone()
+    return row[0] if row else None
+
+
+def scene_keys(db):
+    """{(provider, scene id)} of every scene that has a release row (the cover cache keeps nothing else)."""
+    with db.connect() as conn:
+        return {(r[0], r[1]) for r in conn.execute("SELECT DISTINCT provider, scene_stashdb_id FROM release")}

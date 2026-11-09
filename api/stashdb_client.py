@@ -583,6 +583,23 @@ class StashDBClient:
             return None
         return (scene.get("images") or [{}])[0].get("url")
 
+    def _fetch_entity_image(self, query_name, entity_id):
+        resp = self._post({"query": f"query($id: ID!) {{ {query_name}(id: $id) {{ id images {{ url }} }} }}", "variables": {"id": entity_id}})
+        resp.raise_for_status()
+        data = resp.json()
+        if data.get("errors"):
+            raise RuntimeError(str(data["errors"]))
+        item = (data.get("data") or {}).get(query_name)
+        return ((item or {}).get("images") or [{}])[0].get("url")
+
+    def fetch_performer_image(self, performer_id):
+        """The profile picture address of one performer on this stash-box (v0.256.0, scene_covers.py), or None."""
+        return self._fetch_entity_image("findPerformer", performer_id)
+
+    def fetch_studio_image(self, studio_id):
+        """The logo address of one studio on this stash-box (v0.256.0, scene_covers.py), or None."""
+        return self._fetch_entity_image("findStudio", studio_id)
+
     def find_scenes_by_fingerprints(self, fingerprint_sets):
         """`fingerprint_sets` is a list of lists of {"hash", "algorithm"}
         dicts -- one inner list per file/scene being looked up (a file

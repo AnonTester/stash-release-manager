@@ -161,3 +161,11 @@ def script(request: Request):
     text = text.replace("__SRM_URL__", base).replace("__SRM_HOST__", request.url.hostname or "")
     return Response(text, media_type="text/javascript; charset=utf-8",
                     headers={"Cache-Control": "no-cache"})
+
+
+@router.get("/icon-256.png")
+def icon():
+    """The Release Manager icon, named by the script's @icon line (shown in the userscript manager)."""
+    with open(os.path.join(os.path.dirname(_SCRIPT), "icon-256.png"), "rb") as f:
+        data = f.read()
+    return Response(data, media_type="image/png", headers={"Cache-Control": "public, max-age=86400"})

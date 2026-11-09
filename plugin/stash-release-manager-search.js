@@ -375,12 +375,16 @@
 
     // Same box for every card (v0.205.2): a missing or broken image becomes a grey placeholder of the same size, so the text and the
     // buttons of cards in one row start at the same height. The buttons sit in a footer pushed to the bottom of the card.
-    function cardImage(url, landscape = false, contain = false) {
+    // `item` = {kind, id} of a performer, studio or scene: its picture comes from Stash (when it is in Stash) or from the sidecar's cache of the
+    // stash-box picture (v0.256.0); `url` is the stash-box address the result carried, used only when the sidecar has nothing.
+    function cardImage(url, landscape = false, contain = false, item = null) {
       const cls = `srw-search-card-image${landscape ? ' srw-search-card-image-scene' : ''}${contain ? ' srw-search-card-image-contain' : ''}`;
       const box = () => el('div', { className: `${cls} srw-search-card-noimage` });
-      if (!url) return box();
-      const img = el('img', { src: url, className: cls, alt: '', loading: 'lazy' });
+      if (!url && !item) return box();
+      const img = el('img', { className: cls, alt: '', loading: 'lazy' });
       img.addEventListener('error', () => img.replaceWith(box()));
+      if (item) window.SRW.coverImage(img, { kind: item.kind, provider, id: item.id, fallback: url || '', onNone: () => img.replaceWith(box()) });
+      else img.src = window.SRW.imageSrc(url);
       return img;
     }
     // The image and the title open the item's page on the provider's own website in a new tab (`source_url` comes with the result).
@@ -422,7 +426,7 @@
 
     function buildEntityCard(entity, entityType) {
       const card = el('div', { className: 'srw-search-card' });
-      card.appendChild(linked(cardImage(entity.image_url, false, entityType === 'studio'), entity.source_url)); // a studio logo is shown whole, not cropped
+      card.appendChild(linked(cardImage(entity.image_url, false, entityType === 'studio', { kind: entityType, id: entity.id }), entity.source_url)); // a studio logo is shown whole, not cropped
       const icon = window.SRW.entityIcon(entityType);
       card.appendChild(linked(el('div', { className: 'srw-search-card-title' }, [icon, ' ' + entity.name]), entity.source_url));
       if (entity.is_favorite) {
@@ -514,7 +518,7 @@
 
     function buildSceneCard(scene) {
       const card = el('div', { className: 'srw-search-card' });
-      const imageLink = linked(cardImage(scene.image_url, true), scene.source_url); // scenes are landscape (3/2), people and studios portrait (2/3)
+      const imageLink = linked(cardImage(scene.image_url, true, false, { kind: 'scene', id: scene.id }), scene.source_url); // scenes are landscape (3/2), people and studios portrait (2/3)
       card.appendChild(imageLink);
       const badge = el('span', { className: 'srw-search-card-badge' });
       const titleLink = linked(el('div', { className: 'srw-search-card-title', textContent: scene.title || '(untitled)' }), scene.source_url);

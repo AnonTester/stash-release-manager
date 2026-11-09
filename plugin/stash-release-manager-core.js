@@ -11,7 +11,7 @@
   // rule and the bug it caused when this drifted). Change this if you
   // install under a different folder name.
   // Must equal `version:` in stash-release-manager.yml (scripts/test_plugin_version.py checks it).
-  const PLUGIN_VERSION = '0.253.18';
+  const PLUGIN_VERSION = '0.258.0';
   const PLUGIN_ID = 'stash-release-manager';
   const PLUGIN_NAME = 'StashReleaseManager';
 
@@ -210,6 +210,19 @@
     } catch (e) { return url; }
   }
 
+  // The address to load a picture from (v0.255.1), whichever way the page was opened. Stash's own picture links lose the host Stash knows itself by
+  // (stashUrl); a provider's http:// address is turned into https:// on an https page (the browser refuses or silently upgrades such mixed
+  // content, and the provider's CDNs answer on https); data: / blob: / same-site paths stay as they are. Pictures that come from the sidecar are
+  // data: URLs (covers) and never need its address.
+  function imageSrc(url) {
+    if (typeof url !== 'string' || !url) return url;
+    if (/^(data|blob):/i.test(url) || url.startsWith('/')) return url;
+    const own = stashUrl(url);
+    if (own !== url) return own;
+    if (window.location.protocol === 'https:' && /^http:\/\//i.test(url)) return url.replace(/^http:/i, 'https:');
+    return url;
+  }
+
   function sceneUrl(provider, sceneStashdbId) {
     if (provider === 'theporndb') return `https://theporndb.net/scenes/${sceneStashdbId}`;
     if (provider === 'stashdb') return `https://stashdb.org/scenes/${sceneStashdbId}`;
@@ -275,21 +288,63 @@
     }, [icon, el('span', { className: 'srw-local-entity-name', textContent: name })]);
   }
 
-  // The scene's own preview image, linking to the same scene page the
-  // title does. `image_url` is only ever set for a release not yet
-  // confirmed in-library (see routers/releases.py's library_status()
-  // docstring on why it's cleared once satisfied), so this naturally
-  // stops showing once a scene's already imported.
+  // Pictures of scenes, performers and studios (scenes v0.254.0, performers and studios v0.256.0). An item that is in Stash shows Stash's own
+  // picture; any other the stash-box picture that the sidecar fetched once, scaled and keeps (a data: URL; see api/scene_covers.py). The pictures
+  // of one render are asked for together, one request per batch, at the next tick.
+  const STASH_PICTURE = { scene: (id) => `/scene/${id}/screenshot`, performer: (id) => `/performer/${id}/image`, studio: (id) => `/studio/${id}/image` };
+  const coverQueue = [];
+  let coverTimer = null;
+  function queueCover(entry) {
+    coverQueue.push(entry);
+    if (!coverTimer) coverTimer = setTimeout(flushCovers, 0);
+  }
+  async function flushCovers() {
+    coverTimer = null;
+    const entries = coverQueue.splice(0, coverQueue.length);
+    if (!entries.length) return;
+    const keyOf = (e) => `${e.kind}:${e.provider}:${e.id}`;
+    const unique = new Map(entries.map((e) => [keyOf(e), { kind: e.kind, provider: e.provider, id: e.id }]));
+    let covers = {};
+    for (let round = 0; round < 6; round++) {
+      const ask = [...unique.entries()].filter(([k]) => !covers[k] || covers[k].pending).map(([, v]) => v);
+      if (!ask.length) break;
+      try {
+        const res = await runOp('covers', { items: ask });
+        if (res && res.error) break;
+        covers = { ...covers, ...((res && res.covers) || {}) };
+      } catch (e) { break; }
+      if (!Object.values(covers).some((c) => c && c.pending)) break;
+    }
+    entries.forEach((e) => {
+      const c = covers[keyOf(e)];
+      if (c && c.stash) { if (e.link && e.kind === 'scene') e.link.href = `/scenes/${c.stash}`; e.img.src = STASH_PICTURE[e.kind](c.stash); return; }
+      if (c && c.data) { e.img.src = c.data; return; }
+      if (e.fallback) { e.img.src = imageSrc(e.fallback); return; }
+      e.onNone();
+    });
+  }
+
+  // Gives an existing <img> the picture of an item: `kind` 'scene' | 'performer' | 'studio', the stash-box `provider` and the item's `id` there.
+  // `fallback` = the address the page already has (used only when the sidecar has none), `onNone()` runs when there is no picture at all.
+  function coverImage(img, { kind, provider, id, fallback = '', link = null, onNone = () => img.remove() }) {
+    if (!id) { if (fallback) img.src = imageSrc(fallback); else onNone(); return img; }
+    queueCover({ img, kind, provider: provider || 'stashdb', id: String(id), fallback, link, onNone });
+    return img;
+  }
+
+  // The scene's cover, linking to the same scene page the title does.
   function buildReleaseThumb(r) {
-    if (!r.image_url) return null;
-    const img = el('img', { className: 'srw-release-thumb', src: r.image_url, alt: '', loading: 'lazy' });
+    const scene = r.scene_stashdb_id;
+    if (!scene && !r.image_url) return null;
+    const img = el('img', { className: 'srw-release-thumb', alt: '', loading: 'lazy' });
     const link = el('a', {
       className: 'srw-release-thumb-link',
-      href: sceneUrl(r.provider, r.scene_stashdb_id),
+      href: sceneUrl(r.provider, scene),
       target: '_blank', rel: 'noopener noreferrer',
     }, [img]);
-    // A hotlinked image that is blocked or gone (some source-site CDNs) leaves no broken-image icon behind.
+    // A cover that is blocked or gone leaves no broken-image icon behind.
     img.addEventListener('error', () => link.remove());
+    coverImage(img, { kind: 'scene', provider: r.provider || 'stashdb', id: scene, fallback: r.image_url || '', link, onNone: () => link.remove() });
     return link;
   }
 
@@ -931,15 +986,57 @@
       : { add: 'faHeart', remove: 'faHeartCrack', addLabel: 'Add to favorites', removeLabel: 'Remove from favorites', on: 'favorite', badge: 'faHeart' };
   }
 
+  // Page icons (0.257.0): while a Release Manager page is open the browser tab shows the Release Manager icon (favicon, Apple touch icon, a
+  // manifest for "add to home screen" on Android); Stash's own link tags are put back as soon as the page is left (Stash is a single-page app).
+  const GITHUB_URL = 'https://github.com/northwindlab/stash-release-manager/';
+  const ICON_BASE = `/plugin/${PLUGIN_ID}/assets/icons/`;
+  let iconsInstalled = null;
+  function installPageIcons() {
+    if (iconsInstalled || !document.head) return;
+    const wanted = [
+      { rel: 'icon', type: 'image/svg+xml', sizes: 'any', href: `${ICON_BASE}icon.svg` },
+      { rel: 'icon', type: 'image/png', sizes: '256x256', href: `${ICON_BASE}icon-256.png` },
+      { rel: 'apple-touch-icon', sizes: '256x256', href: `${ICON_BASE}icon-256.png` },
+      { rel: 'manifest', href: `${ICON_BASE}manifest.webmanifest` },
+    ];
+    const removed = [];
+    document.head.querySelectorAll('link[rel="icon"], link[rel="shortcut icon"], link[rel="apple-touch-icon"], link[rel="manifest"]').forEach((n) => {
+      removed.push({ node: n, parent: n.parentNode, next: n.nextSibling });
+      n.remove();
+    });
+    const added = wanted.map((attrs) => {
+      const link = document.createElement('link');
+      Object.entries(attrs).forEach(([k, v]) => link.setAttribute(k, v));
+      link.setAttribute('data-srw-icon', '1');
+      document.head.appendChild(link);
+      return link;
+    });
+    const timer = setInterval(() => {
+      if (document.querySelector('.srw-page-header')) return;
+      clearInterval(timer);
+      added.forEach((n) => n.remove());
+      removed.forEach((r) => { if (r.parent) r.parent.insertBefore(r.node, r.next && r.next.parentNode === r.parent ? r.next : null); });
+      iconsInstalled = null;
+    }, 1000);
+    iconsInstalled = timer;
+  }
+
   function buildPageHeader(activeKey) {
     applyThemeColors();
+    installPageIcons();
     const pluginPath = `/plugins/${PLUGIN_ID}`;
     const links = PAGES.map((p) => el('a', {
       className: `nav-item nav-link${p.key === activeKey ? ' active' : ''}`,
       href: pluginPath + p.path,
     }, [icon(p.icon), p.label, p.key === 'activity' ? activityBadge() : null]));
     const header = el('div', { className: 'srw-page-header' }, [
-      el('div', { className: 'srw-page-title-row' }, [el('h2', { textContent: 'Release Manager' }), buildHealthPill()]),
+      el('div', { className: 'srw-page-title-row' }, [
+        el('h2', {}, [el('a', { className: 'srw-page-title-link', href: pluginPath, title: 'Release Manager: back to the main page' }, [
+          el('img', { className: 'srw-page-title-icon', src: `${ICON_BASE}icon.svg`, alt: '' }),
+          'Release Manager',
+        ])]),
+        buildHealthPill(),
+      ]),
       el('nav', { className: 'nav nav-tabs srw-main-tabs', role: 'tablist' }, links),
     ]);
     applyActivityCount();
@@ -960,7 +1057,10 @@
     };
     const stash = mk('Stash');
     const sidecar = mk('Sidecar');
-    const sidecarLabel = sidecar.node.querySelector('.srw-status-label');
+    // "Sidecar" opens the project page on GitHub (the click does not also trigger the health check).
+    const sidecarLabel = el('a', { className: 'srw-status-label srw-status-link', href: GITHUB_URL, target: '_blank', rel: 'noopener noreferrer', textContent: 'Sidecar', title: 'Open the Release Manager project page on GitHub' });
+    sidecarLabel.addEventListener('click', (e) => e.stopPropagation());
+    sidecar.node.querySelector('.srw-status-label').replaceWith(sidecarLabel);
     const dev = mk('Development mode: no background jobs');
     dev.node.hidden = true;
     const pill = el('div', { className: 'srw-health-pill', title: 'Click to check again' }, [stash.node, sidecar.node, dev.node]);
@@ -1608,7 +1708,7 @@
         cb.addEventListener('change', () => setIgnoreRenamers(cb.checked));
         parts.push(el('label', { className: 'srw-provider-filter-item', title: 'Only for this browser session' }, [cb, ' I know: continue anyway (this browser session)']));
       }
-      if (!compact) parts.push(el('div', { className: 'srw-toolbar' }, [iconButton('button', 'faClipboardCheck', 'Check again', { className: 'srw-btn', onClick: load }), status]));
+      if (!compact) parts.push(el('div', { className: 'srw-toolbar' }, [el('button', { type: 'button', className: 'srw-btn', textContent: 'Check again', onClick: load }), status]));
       box.replaceChildren(...parts);
     }
     if (!compact) box.appendChild(status);
@@ -3356,7 +3456,7 @@
   window.SRW = {
     PLUGIN_ID, PLUGIN_NAME,
     getContentScope, resetContentScope, scopeAllows,
-    getSettings, runOp, sidecarWsUrl, stashUrl, copyText,
+    getSettings, runOp, sidecarWsUrl, stashUrl, imageSrc, coverImage, copyText,
     getRoute, onNavigate, initNavigationWatcher,
     el, waitForElement, entityIcon, buildPageHeader,
     watchKind, keepResult, recallResult, forgetResult, keptNote, searchStatusLabel, setBusy, openModal, sceneSubtitle, iconButton, busyIcon, ageWords, ageWarning, confirmInline, buildManagedList, buildSearchActions, whenNoOpenPanel, buildManualSearch, getSearchCapabilities,

@@ -77,6 +77,51 @@
   // Greying out settings that do nothing under the chosen Whisparr scope: see SRW.createScopeStateRegistry() in core.js (shared with Maintenance).
   const createScopeStateRegistry = () => window.SRW.createScopeStateRegistry();
 
+  // One grid row per field (v0.254.1): a label with its field, the Save button and the "saved" text that follow it are put into one
+  // `.srw-setting-row` (label | field | buttons | status), so every Settings tab, the connection forms and the setup guide line up the same way
+  // whichever builder made them. Runs over a subtree now and over everything added to the page later (lists and modals are built after the
+  // page); nodes only move, so their listeners stay. A label whose next sibling is not a button (a form with its buttons below) is left alone.
+  function groupSettingRows(root) {
+    const parents = [root, ...root.querySelectorAll('*')].filter((n) => n.children && [...n.children].some((c) => c.tagName === 'LABEL'));
+    parents.forEach((parent) => {
+      if (parent.classList.contains('srw-setting-row')) return;
+      [...parent.children].forEach((label) => {
+        if (label.tagName !== 'LABEL' || label.parentNode !== parent) return;
+        const next = label.nextElementSibling;
+        if (!next || next.tagName !== 'BUTTON' || !label.querySelector('input, select, textarea')) return;
+        const row = document.createElement('div');
+        row.className = 'srw-setting-row';
+        if (label.querySelector('input[type="checkbox"], input[type="radio"]')) row.classList.add('srw-setting-row-check');
+        parent.insertBefore(row, label);
+        row.appendChild(label);
+        const actions = document.createElement('span');
+        actions.className = 'srw-setting-actions';
+        row.appendChild(actions);
+        let node = row.nextElementSibling;
+        while (node && ((node.tagName === 'BUTTON' && !node.classList.contains('srw-btn-danger')) || node.classList.contains('srw-key-status'))) {
+          const following = node.nextElementSibling;
+          actions.appendChild(node);
+          node = following;
+        }
+      });
+    });
+  }
+
+  let rowObserver = null;
+  function watchSettingRows(container) {
+    if (rowObserver) rowObserver.disconnect();
+    container.classList.add('srw-form-grid');
+    groupSettingRows(container);
+    rowObserver = new MutationObserver((mutations) => {
+      if (!container.isConnected && !document.querySelector('.srw-modal')) { rowObserver.disconnect(); return; }
+      mutations.forEach((m) => m.addedNodes.forEach((n) => {
+        if (n.nodeType !== 1 || n.classList.contains('srw-setting-row')) return;
+        if (n.closest('.srw-form-grid, .srw-modal')) groupSettingRows(n);
+      }));
+    });
+    rowObserver.observe(document.body, { childList: true, subtree: true });
+  }
+
   async function render(container) {
     const { el } = window.SRW;
     container.innerHTML = '';
@@ -153,8 +198,7 @@
     panels.general.appendChild(buildTransferSection());
 
     // Connections: every program with its URL/key/check and the settings that exist only because of it.
-    const wantedSub = ((location.hash || '').slice(1).split('/')[1]) || '';
-    panels.connections = await buildConnectionsArea(settings, effective, secretPlaceholder, scopeState, wantedSub);
+    panels.connections = await buildConnectionsArea(settings, effective, secretPlaceholder, scopeState);
 
     panels.search_quality = el('div');
     const searchBackendSection = await buildSearchBackendSection();
@@ -222,6 +266,7 @@
     if (wantedRaw === 'watchlist') { window.location.replace('/plugins/stash-release-manager/watchlist'); return; } // moved to its own page (v0.147.0)
     const wanted = OLD_TAB_KEYS[wantedRaw] || wantedRaw;
     showTab(SETTINGS_TABS.some((t) => t.key === wanted) ? wanted : SETTINGS_TABS[0].key);
+    watchSettingRows(tabContent);
 
   }
 
@@ -421,16 +466,21 @@
   // `_migrate_release_is_vr()` for how a release gets flagged as VR in
   // the first place (StashDB's own "Virtual Reality" tag; a studio-name
   // fallback for ThePornDB, which has no equivalent tag).
-  async function buildWhisparrConnectionSection(settings, effective, secretPlaceholder, onFieldSaved) {
+  // `part`: 'connection' = the URL / key only (the Edit / Add modal), 'settings' = what is set for Whisparr besides that (quality profiles,
+  // safety sweep, blocklist sync, import status: shown under the Connections overview), 'all' = both.
+  async function buildWhisparrConnectionSection(settings, effective, secretPlaceholder, onFieldSaved, part = 'all') {
     const { el } = window.SRW;
     const section = el('div', { className: 'srw-settings-section' }, [
-      el('h4', { textContent: 'Whisparr' }),
+      el('h4', { textContent: part === 'settings' ? 'Whisparr settings' : 'Whisparr' }),
     ]);
-    buildConnectionPair(section, {
-      url: { key: 'whisparr_url', value: settings.whisparr_url, placeholder: effective.whisparr_url || 'http://localhost:6969' },
-      apiKey: { key: 'whisparr_api_key', value: settings.whisparr_api_key, placeholder: secretPlaceholder(effective.whisparr_api_key_set) },
-      check: { name: 'Whisparr', key: 'whisparr' }, onSaved: onFieldSaved,
-    });
+    if (part !== 'settings') {
+      buildConnectionPair(section, {
+        url: { key: 'whisparr_url', value: settings.whisparr_url, placeholder: effective.whisparr_url || 'http://localhost:6969' },
+        apiKey: { key: 'whisparr_api_key', value: settings.whisparr_api_key, placeholder: secretPlaceholder(effective.whisparr_api_key_set) },
+        check: { name: 'Whisparr', key: 'whisparr' }, onSaved: onFieldSaved,
+      });
+    }
+    if (part === 'connection') return section;
 
     section.appendChild(el('p', { className: 'srw-subsection-heading', textContent: 'Quality profiles' }));
     section.appendChild(el('p', {
@@ -737,7 +787,7 @@
   // not-yet-built "Whisparr-scope Settings" item).
   // StashDB/ThePornDB moved out to their own "Metadata Providers" tab
   // (2026-09-21, see BUILTIN_METADATA_PROVIDER_TYPES/
-  // buildMetadataProvidersSection() below) -- they're metadata/discovery
+  // buildStashBoxChooser() / buildConnectionBox()) -- they're metadata/discovery
   // sources, conceptually distinct from Whisparr/Prowlarr here, which
   // are hand-off/search backends.
   const CONNECTION_TYPES = [
@@ -782,18 +832,18 @@
   }
   function writeConnCache(c) { try { window.localStorage.setItem(CONN_CACHE_KEY, JSON.stringify(c)); } catch (e) { /* no storage */ } }
 
-  function buildConnectionsOverview(settings, effective, goTo) {
+  function buildConnectionsOverview(settings, effective, actions) {
     const { el } = window.SRW;
     const wrap = el('div');
     const list = el('div');
     const age = el('span', { className: 'srw-hint' });
     const again = el('button', { type: 'button', className: 'srw-btn', textContent: 'Check again', onClick: () => paint(true) });
     wrap.append(
-      el('p', { className: 'srw-hint', textContent: 'What this program is connected to, and whether it answers. Edit opens the connection’s own tab; the keys are never shown here.' }),
+      el('p', { className: 'srw-hint', textContent: 'What this program is connected to, and whether it answers. Edit and Add open the connection’s settings in a window; the keys are never shown here.' }),
       el('div', { className: 'srw-toolbar' }, [
-        el('button', { type: 'button', className: 'srw-btn srw-btn-primary', textContent: 'Add a stash-box', onClick: () => goTo('stashboxes', true) }),
-        el('button', { type: 'button', className: 'srw-btn srw-btn-primary', textContent: 'Add a download client', onClick: () => goTo('clients', true) }),
-        el('button', { type: 'button', className: 'srw-btn srw-btn-primary', textContent: 'Add Prowlarr / Whisparr', onClick: () => goTo('search', true) }),
+        el('button', { type: 'button', className: 'srw-btn srw-btn-primary', textContent: 'Add a stash-box', onClick: () => actions.addStashBox() }),
+        el('button', { type: 'button', className: 'srw-btn srw-btn-primary', textContent: 'Add a download client', onClick: () => actions.addClient() }),
+        el('button', { type: 'button', className: 'srw-btn srw-btn-primary', textContent: 'Add Prowlarr / Whisparr', onClick: () => actions.addOther() }),
         again, age,
       ]),
       list,
@@ -805,38 +855,38 @@
       el('span', { className: 'srw-conn-status', 'data-state': state, textContent: text }),
       edit,
     ]);
-    const editBtn = (label, tab, entry) => el('button', { type: 'button', className: 'srw-btn srw-btn-sm', textContent: label, onClick: () => goTo(tab, false, entry) });
+    const editBtn = (label, kind, item) => el('button', { type: 'button', className: 'srw-btn srw-btn-sm', textContent: label, onClick: () => actions.edit(kind, item) });
     const group = (title, rows) => el('div', { className: 'srw-conn-group' }, [el('h4', { textContent: title }), ...rows]);
     const answer = (c) => (!c ? ['none', 'not checked'] : c.ok ? ['ok', 'answers'] : ['error', c.error || 'does not answer']);
 
     function render(data) {
       const c = (data.checks && !data.checks.error) ? data.checks : {};
-      const stashRow = (key, name, url, tab) => {
-        if (!url) return row(name, '', 'none', 'not set up', editBtn('Set up', tab, key));
+      const stashRow = (key, name, url, kind, item) => {
+        if (!url) return row(name, '', 'none', 'not set up', editBtn('Set up', kind, item));
         const [state, text] = answer(c[key]);
-        return row(name, url, state, text, editBtn('Edit', tab, key));
+        return row(name, url, state, text, editBtn('Edit', kind, item));
       };
       const groups = [];
       const [stashState, stashText] = answer(c.stash);
       groups.push(group('Stash', [row('Stash', effective.stash_url || '', effective.stash_url ? stashState : 'none', effective.stash_url ? stashText : 'not set up',
-        el('a', { className: 'srw-btn srw-btn-sm', href: '/plugins/stash-release-manager/setup', textContent: 'Edit', title: 'The setup guide’s Stash step' }))]));
+        editBtn(effective.stash_url ? 'Edit' : 'Set up', 'stash', null))]));
       groups.push(group('Stash-boxes', [
-        stashRow('stashdb', 'StashDB', effective.stashdb_url, 'stashboxes'),
-        stashRow('theporndb', 'ThePornDB', effective.theporndb_url, 'stashboxes'),
-        ...(Array.isArray(data.providers) ? data.providers : []).map((p) => stashRow(p.key, p.name, p.url, 'stashboxes')),
+        stashRow('stashdb', 'StashDB', effective.stashdb_url, 'builtin', 'stashdb'),
+        stashRow('theporndb', 'ThePornDB', effective.theporndb_url, 'builtin', 'theporndb'),
+        ...(Array.isArray(data.providers) ? data.providers : []).map((p) => stashRow(p.key, p.name, p.url, 'provider', p)),
       ]));
       const clientRows = (Array.isArray(data.clients) ? data.clients : []).map((cl) => {
         const res = (data.clientChecks || {})[cl.id] || { error: 'not checked' };
         const folder = res.folder;
         const state = res.error ? 'error' : (folder && folder.ok === false ? 'warn' : 'ok');
         const text = res.error ? res.error : `answers${folder && folder.message ? ` — ${folder.ok === false ? '⚠ ' : ''}${folder.message}` : ''}`;
-        return row(cl.name, `${cl.type}${cl.enabled ? '' : ', disabled'}`, state, text, editBtn('Edit', 'clients', `client-${cl.id}`));
+        return row(cl.name, `${cl.type}${cl.enabled ? '' : ', disabled'}`, state, text, editBtn('Edit', 'client', cl));
       });
       groups.push(group('Download clients', clientRows.length ? clientRows
-        : [row('No download client', '', 'warn', 'nothing can be downloaded yet', editBtn('Set up', 'clients'))]));
+        : [row('No download client', '', 'warn', 'nothing can be downloaded yet', editBtn('Set up', 'newclient', null))]));
       groups.push(group('Search and Whisparr', [
-        stashRow('prowlarr', 'Prowlarr', effective.prowlarr_url, 'search'),
-        stashRow('whisparr', 'Whisparr (optional)', effective.whisparr_url, 'search'),
+        stashRow('prowlarr', 'Prowlarr', effective.prowlarr_url, 'other', 'prowlarr'),
+        stashRow('whisparr', 'Whisparr (optional)', effective.whisparr_url, 'other', 'whisparr'),
       ]));
       list.replaceChildren(...groups);
       const mins = Math.floor((Date.now() - data.at) / 60000);
@@ -866,130 +916,166 @@
     return { node: wrap, refresh: () => paint(false) };
   }
 
-  // The Connections area (v0.253.0): sub-tabs Overview, Stash-boxes, Download clients, Search & Whisparr instead of one long stack.
-  async function buildConnectionsArea(settings, effective, secretPlaceholder, scopeState, wantedSub) {
-    const { el } = window.SRW;
-    const panes = { overview: el('div'), stashboxes: el('div'), clients: el('div'), search: el('div') };
-    panes.stashboxes.appendChild(await buildMetadataProvidersSection(settings, effective, secretPlaceholder));
-    const connectionsSection = await buildConnectionsSection(settings, effective, secretPlaceholder);
-    panes.search.appendChild(connectionsSection);
-    const whisparrBox = [...connectionsSection.querySelectorAll('.srw-settings-section')].find((x) => (x.querySelector(':scope > h4') || {}).textContent === 'Whisparr');
-    if (whisparrBox) {
-      scopeState.add(wrapSubsection(whisparrBox, 'Quality profiles'), ['no_whisparr'], 'Not used: with “No Whisparr” nothing is handed to Whisparr.');
-      scopeState.add(wrapSubsection(whisparrBox, 'Import status'), ['no_whisparr'], 'Not used: with “No Whisparr” there is nothing in Whisparr to check.');
-    }
-    let overview = null;
-    panes.clients.appendChild(await buildDownloadClientsSection(() => overview && overview.refresh()));
-    const order = [['overview', 'Overview'], ['stashboxes', 'Stash-boxes'], ['clients', 'Download clients'], ['search', 'Search & Whisparr']];
-    const tabKey = 'srw:connections-tab';
-    try { window.localStorage.removeItem(tabKey); } catch (e) { /* no storage */ } // always starts on the overview (or the tab the address names)
-    const tabRow = window.SRW.buildPaneTabs(order.map(([key, label]) => ({ key, label, pane: panes[key], onShow: key === 'overview' ? () => overview && overview.refresh() : null })),
-      tabKey, order.some(([k]) => k === wantedSub) ? wantedSub : 'overview');
-    // Switches to the tab; `openAdd` opens its add form, `entry` scrolls to that connection's own box and flashes it.
-    function goTo(key, openAdd, entry) {
-      const i = order.findIndex(([k]) => k === key);
-      const btn = tabRow.querySelectorAll('button')[i];
-      if (btn) btn.click();
-      if (openAdd) {
-        const trigger = panes[key].querySelector('.srw-add-trigger') || panes[key].querySelector('select');
-        if (trigger) { trigger.scrollIntoView({ block: 'center' }); if (trigger.tagName === 'BUTTON') trigger.click(); else trigger.focus(); }
-      } else if (entry) {
-        const target = [...panes[key].querySelectorAll('[data-conn-key]')].find((n) => n.dataset.connKey === entry);
-        if (target) {
-          target.scrollIntoView({ block: 'start', behavior: 'smooth' });
-          target.classList.add('srw-conn-flash');
-          setTimeout(() => target.classList.remove('srw-conn-flash'), 2500);
-        }
-      }
-    }
-    overview = buildConnectionsOverview(settings, effective, goTo);
-    panes.overview.appendChild(overview.node);
-    const root = el('div', { className: 'srw-form-grid' }, [tabRow, panes.overview, panes.stashboxes, panes.clients, panes.search]);
-    return root;
+  // Keeps the page's own copy of the settings in step after a save (the connection forms call this through `onSaved`).
+  function syncLocal(settings, effective, key, value) {
+    settings[key] = value;
+    if (key.endsWith('_url')) effective[key] = value;
+    else if (key.endsWith('_api_key')) effective[`${key}_set`] = !!value;
   }
 
-  async function buildConnectionsSection(settings, effective, secretPlaceholder) {
-    const { el, buildManagedList, confirmInline } = window.SRW;
-    const section = el('div');
+  // One connection's own settings (URL / key / check, for a stash-box also its colour) with "Remove connection" -- the content of its Edit window.
+  // `ctx` = {settings, effective, secretPlaceholder, done}; `done()` closes the window.
+  async function buildConnectionBox(type, ctx, { colour = false } = {}) {
+    const { el, confirmInline } = window.SRW;
+    const { settings, effective, secretPlaceholder } = ctx;
+    const box = await type.build(settings, effective, secretPlaceholder, (key, value) => syncLocal(settings, effective, key, value), 'connection');
+    if (colour) buildProviderColorField(box, type.key);
+    const removeStatus = el('span', { className: 'srw-key-status' });
+    box.appendChild(el('button', {
+      className: 'srw-btn srw-btn-danger', textContent: 'Remove connection',
+      onClick: (e) => {
+        confirmInline(e.currentTarget, `Remove the ${type.label} connection?`, async () => {
+          for (const key of type.settingsKeys) {
+            await window.SRW.runOp('settings_set', { key, value: '' });
+            settings[key] = '';
+          }
+          // Re-fetch the real, server-resolved state instead of assuming "cleared here" = "not configured": a value that is also in api/.env
+          // keeps the connection configured for the sidecar even after this page's own override is cleared (confirmed live 2026-09-20).
+          Object.assign(effective, await window.SRW.runOp('settings_get_effective_connections'));
+          if (type.isConfigured(effective)) removeStatus.textContent = ' cleared here, but still active via api/.env -- edit .env directly to fully remove it';
+          else ctx.done();
+        }, { danger: true });
+      },
+    }));
+    box.appendChild(removeStatus);
+    return box;
+  }
 
-    // Both `settings`/`effective` were fetched once up front in render()
-    // (see its own comment on why) -- kept in sync here by mutating them
-    // directly after a save/remove instead of re-fetching, same pattern
-    // buildQualityProfilesSection's VR checkbox already used.
-    function updateLocalState(key, value) {
-      settings[key] = value;
-      if (key.endsWith('_url')) effective[key] = value;
-      else if (key.endsWith('_api_key')) effective[`${key}_set`] = !!value;
+  // "Add a stash-box": the built-in ones that are not set up yet, or a new stash-box provider (its own form).
+  async function buildStashBoxChooser(ctx) {
+    const { el } = window.SRW;
+    const unconfigured = BUILTIN_METADATA_PROVIDER_TYPES.filter((t) => !t.isConfigured(ctx.effective));
+    if (!unconfigured.length) return buildNewGenericProviderForm(ctx.done);
+    const wrap = el('div', { className: 'srw-settings-section' });
+    const NEW = '__new__';
+    const select = el('select', {}, [
+      ...unconfigured.map((t) => el('option', { value: t.key, textContent: t.label })),
+      el('option', { value: NEW, textContent: '+ Add a new stash-box provider...' }),
+    ]);
+    wrap.appendChild(el('label', {}, ['Add: ', select]));
+    wrap.appendChild(el('button', {
+      className: 'srw-btn srw-btn-primary', textContent: 'Continue',
+      onClick: async () => {
+        if (select.value === NEW) { wrap.replaceWith(buildNewGenericProviderForm(ctx.done)); return; }
+        wrap.replaceWith(await buildConnectionBox(unconfigured.find((t) => t.key === select.value), ctx, { colour: true }));
+      },
+    }));
+    return wrap;
+  }
+
+  // "Add Prowlarr / Whisparr": whichever of the two is not set up yet.
+  async function buildOtherChooser(ctx) {
+    const { el } = window.SRW;
+    const unconfigured = CONNECTION_TYPES.filter((t) => !t.isConfigured(ctx.effective));
+    if (!unconfigured.length) return el('p', { className: 'srw-hint', textContent: 'Prowlarr and Whisparr are both set up already; use their Edit buttons.' });
+    const wrap = el('div', { className: 'srw-settings-section' });
+    const select = el('select', {}, unconfigured.map((t) => el('option', { value: t.key, textContent: t.label })));
+    wrap.appendChild(el('label', {}, ['Add: ', select]));
+    wrap.appendChild(el('button', {
+      className: 'srw-btn srw-btn-primary', textContent: 'Continue',
+      onClick: async () => { wrap.replaceWith(await buildConnectionBox(unconfigured.find((t) => t.key === select.value), ctx)); },
+    }));
+    return wrap;
+  }
+
+  // Settings > Connections (v0.255.0): ONE page. The overview (what is connected, does it answer) on top; Edit and Add open the connection's
+  // settings in a window; under it the settings of this area that are not part of one connection (keys from Stash, the global torrent option,
+  // the SABnzbd lookup, what is set for Whisparr).
+  async function buildConnectionsArea(settings, effective, secretPlaceholder, scopeState) {
+    const { el, openModal } = window.SRW;
+    let overview = null;
+    let modal = null;
+    const more = el('div');
+    const ctx = { settings, effective, secretPlaceholder, done: () => { if (modal) modal.close(); } };
+
+    function show(title, node) {
+      modal = openModal(title, el('div', { className: 'srw-form-grid srw-conn-modal' }, [node]), {
+        size: 'modal-lg',
+        onClose: () => { modal = null; overview.refresh(); paintMore(); },
+      });
     }
-
-    function onFieldSaved(key, value) {
-      updateLocalState(key, value);
-      refresh();
-    }
-
-    async function buildEntry(type) {
-      const box = await type.build(settings, effective, secretPlaceholder, onFieldSaved);
-      box.dataset.connKey = type.key; // the overview's Edit scrolls to it
-      const removeStatus = el('span', { className: 'srw-key-status' });
-      box.appendChild(el('button', {
-        className: 'srw-btn srw-btn-danger', textContent: 'Remove connection',
-        onClick: (e) => {
-          confirmInline(e.currentTarget, `Remove the ${type.label} connection?`, async () => {
-            for (const key of type.settingsKeys) {
-              await window.SRW.runOp('settings_set', { key, value: '' });
-              settings[key] = '';
-            }
-            // Re-fetch the real server-resolved state instead of
-            // assuming "cleared here" == "not configured" -- this
-            // project's established override-falls-back-to-env pattern
-            // (get_setting_value()) means a value also present in
-            // api/.env keeps the connection "configured" from the
-            // sidecar's own point of view even after this page's own
-            // override is cleared, exactly what a page reload would
-            // also show. Surfacing that immediately (rather than
-            // showing "removed" only for it to silently reappear next
-            // reload) avoids a misleading UI state -- confirmed live
-            // 2026-09-20 this actually happens for every connection in
-            // a setup where every value originally came from .env.
-            const fresh = await window.SRW.runOp('settings_get_effective_connections');
-            Object.assign(effective, fresh);
-            if (type.isConfigured(effective)) {
-              removeStatus.textContent = ' cleared here, but still active via api/.env -- edit .env directly to fully remove it';
-              setTimeout(refresh, 4000);
-            } else {
-              refresh();
-            }
-          }, { danger: true });
-        },
-      }));
-      box.appendChild(removeStatus);
+    const clientHooks = { changed: async () => ctx.done() };
+    const stashBox = () => {
+      const box = el('div', { className: 'srw-settings-section' }, [
+        el('p', { className: 'srw-hint', textContent: 'The address this program reaches Stash by. Stash’s API key and the keys of its stash-boxes are read from Stash itself.' }),
+      ]);
+      buildConnectionField(box, {
+        label: 'Stash URL', key: 'stash_url', value: effective.stash_url || '', placeholder: window.location.origin,
+        onSaved: (key, value) => syncLocal(settings, effective, key, value),
+      });
+      buildCheckConnection(box, 'Stash', 'stash');
       return box;
-    }
+    };
+    const typeOf = (list, key) => list.find((t) => t.key === key);
+    const actions = {
+      addStashBox: async () => show('Add a stash-box', await buildStashBoxChooser(ctx)),
+      addClient: () => show('Add a download client', buildClientForm(null, clientHooks)),
+      addOther: async () => show('Add Prowlarr / Whisparr', await buildOtherChooser(ctx)),
+      async edit(kind, item) {
+        if (kind === 'stash') show('Stash', stashBox());
+        else if (kind === 'builtin') { const t = typeOf(BUILTIN_METADATA_PROVIDER_TYPES, item); show(`${t.label}`, await buildConnectionBox(t, ctx, { colour: true })); }
+        else if (kind === 'other') { const t = typeOf(CONNECTION_TYPES, item); show(`${t.label}`, await buildConnectionBox(t, ctx)); }
+        else if (kind === 'provider') show(item.name, buildGenericProviderEntry(item, ctx.done));
+        else if (kind === 'client') show(item.name, buildClientRow(item, clientHooks));
+        else if (kind === 'newclient') actions.addClient();
+      },
+    };
+    overview = buildConnectionsOverview(settings, effective, actions);
 
-    async function buildAdder() {
-      const unconfigured = CONNECTION_TYPES.filter((t) => !t.isConfigured(effective));
-      if (unconfigured.length === 0) return null;
-      const wrap = el('div', { className: 'srw-settings-section' });
-      const select = el('select', {}, unconfigured.map((t) => el('option', { value: t.key, textContent: t.label })));
-      wrap.appendChild(el('label', {}, ['Add connection: ', select]));
-      wrap.appendChild(el('button', {
-        className: 'srw-btn srw-btn-primary', textContent: 'Add',
-        onClick: async () => {
-          const type = unconfigured.find((t) => t.key === select.value);
-          wrap.replaceWith(await buildEntry(type));
+    // Under the overview.
+    let stashReport = null;
+    const syncFromStash = async (args) => { stashReport = await window.SRW.runOp('stash_sync', args || {}); return stashReport; };
+    let moreSeq = 0;
+    async function paintMore() {
+      const mine = ++moreSeq;
+      const parts = [el('h3', { className: 'srw-conn-more-title', textContent: 'More settings' })];
+      await syncFromStash();
+      parts.push(buildStashBoxImport({
+        getReport: () => stashReport, sync: syncFromStash, compact: true,
+        onChange: async () => {
+          Object.assign(effective, await window.SRW.runOp('settings_get_effective_connections'));
+          Object.assign(settings, await window.SRW.runOp('settings_get_all'));
+          await window.SRW.resetProviders();
+          overview.refresh();
+          paintMore();
         },
       }));
-      return wrap;
+      const clients = await window.SRW.runOp('download_clients_list').catch(() => []);
+      const list = Array.isArray(clients) ? clients : [];
+      if (list.some((c) => c.type === 'qbittorrent')) {
+        const block = el('div', { className: 'srw-settings-section' });
+        await fillTorrentOptions(block);
+        parts.push(block);
+      }
+      if (list.some((c) => c.type === 'sabnzbd')) {
+        const block = el('div', { className: 'srw-settings-section' });
+        fillSabnzbdLookup(block);
+        parts.push(block);
+      }
+      if (effective.whisparr_url) {
+        const wsettings = await buildWhisparrConnectionSection(settings, effective, secretPlaceholder, (key, value) => syncLocal(settings, effective, key, value), 'settings');
+        const q = wrapSubsection(wsettings, 'Quality profiles');
+        const imp = wrapSubsection(wsettings, 'Import status');
+        if (q) scopeState.add(q, ['no_whisparr'], 'Not used: with “No Whisparr” nothing is handed to Whisparr.');
+        if (imp) scopeState.add(imp, ['no_whisparr'], 'Not used: with “No Whisparr” there is nothing in Whisparr to check.');
+        parts.push(wsettings);
+      }
+      if (mine !== moreSeq) return;
+      more.replaceChildren(...parts);
+      scopeState.apply(effective.whisparr_url ? (settings.whisparr_scope_preset || 'bookkeeping_only') : 'no_whisparr');
     }
-
-    const { refresh } = buildManagedList(section, {
-      emptyMessage: 'No connections configured yet.',
-      fetchItems: async () => CONNECTION_TYPES.filter((t) => t.isConfigured(effective)),
-      buildEntry: (type) => buildEntry(type),
-      buildAdder: () => buildAdder(),
-    });
-    await refresh();
-    return section;
+    await paintMore();
+    return el('div', { className: 'srw-form-grid' }, [overview.node, more]);
   }
 
   // The stash-boxes configured in Stash (Settings > Metadata Providers > Stash-box endpoints), v0.186.0. StashDB's and ThePornDB's keys are
@@ -1260,122 +1346,301 @@
     return wrap;
   }
 
-  async function buildMetadataProvidersSection(settings, effective, secretPlaceholder) {
-    const { el, buildManagedList, confirmInline } = window.SRW;
-    const section = el('div');
-
-    function updateLocalState(key, value) {
-      settings[key] = value;
-      if (key.endsWith('_url')) effective[key] = value;
-      else if (key.endsWith('_api_key')) effective[`${key}_set`] = !!value;
-    }
-
-    function onFieldSaved(key, value) {
-      updateLocalState(key, value);
-      refresh();
-    }
-
-    async function buildBuiltinEntry(type) {
-      const box = await type.build(settings, effective, secretPlaceholder, onFieldSaved);
-      buildProviderColorField(box, type.key);
-      const removeStatus = el('span', { className: 'srw-key-status' });
-      box.appendChild(el('button', {
-        className: 'srw-btn srw-btn-danger', textContent: 'Remove connection',
-        onClick: (e) => {
-          confirmInline(e.currentTarget, `Remove the ${type.label} connection?`, async () => {
-            for (const key of type.settingsKeys) {
-              await window.SRW.runOp('settings_set', { key, value: '' });
-              settings[key] = '';
-            }
-            // Same "re-fetch the real state, don't assume" reasoning as
-            // buildConnectionsSection()'s own Remove handler -- a value
-            // also present in api/.env keeps this "configured" even
-            // after clearing this page's own override.
-            const fresh = await window.SRW.runOp('settings_get_effective_connections');
-            Object.assign(effective, fresh);
-            if (type.isConfigured(effective)) {
-              removeStatus.textContent = ' cleared here, but still active via api/.env -- edit .env directly to fully remove it';
-              setTimeout(refresh, 4000);
-            } else {
-              refresh();
-            }
-          }, { danger: true });
-        },
-      }));
-      box.appendChild(removeStatus);
-      return box;
-    }
-
-    async function buildEntry(item) {
-      const node = item.kind === 'builtin' ? await buildBuiltinEntry(item.type) : buildGenericProviderEntry(item.provider, refresh);
-      node.dataset.connKey = item.kind === 'builtin' ? item.type.key : item.provider.key; // the overview's Edit scrolls to it
-      return node;
-    }
-
-    async function buildAdderForm() {
-      const unconfiguredBuiltins = BUILTIN_METADATA_PROVIDER_TYPES.filter((t) => !t.isConfigured(effective));
-      if (unconfiguredBuiltins.length === 0) return buildNewGenericProviderForm(refresh);
-      const wrap = el('div', { className: 'srw-settings-section' });
-      const NEW_PROVIDER_VALUE = '__new__';
-      const select = el('select', {}, [
-        ...unconfiguredBuiltins.map((t) => el('option', { value: t.key, textContent: t.label })),
-        el('option', { value: NEW_PROVIDER_VALUE, textContent: '+ Add a new stash-box provider...' }),
-      ]);
-      wrap.appendChild(el('label', {}, ['Add: ', select]));
-      wrap.appendChild(el('button', {
-        className: 'srw-btn srw-btn-primary', textContent: 'Add',
-        onClick: async () => {
-          if (select.value === NEW_PROVIDER_VALUE) {
-            wrap.replaceWith(buildNewGenericProviderForm(refresh));
-            return;
-          }
-          const type = unconfiguredBuiltins.find((t) => t.key === select.value);
-          wrap.replaceWith(await buildBuiltinEntry(type));
-        },
-      }));
-      return wrap;
-    }
-
-    // The add button and the Stash import / "Update keys" row sit at the top of the tab (v0.253.1), the list of stash-boxes below.
-    const adderSlot = el('div');
-    const importSlot = el('div');
-    const listSection = el('div');
-    section.append(adderSlot, importSlot, listSection);
-    const renderAdder = () => adderSlot.replaceChildren(collapsedAdder('Add a stash-box…', buildAdderForm));
-    async function refresh() { await refreshList(); renderAdder(); }
-    const { refresh: refreshList } = buildManagedList(listSection, {
-      emptyMessage: 'No metadata providers configured yet.',
-      fetchItems: async () => {
-        const builtins = BUILTIN_METADATA_PROVIDER_TYPES
-          .filter((t) => t.isConfigured(effective))
-          .map((type) => ({ kind: 'builtin', type }));
-        let generics = [];
-        try {
-          const result = await window.SRW.runOp('metadata_providers_list');
-          if (Array.isArray(result)) generics = result.map((provider) => ({ kind: 'generic', provider }));
-        } catch (e) { /* shown as empty */ }
-        return [...builtins, ...generics];
-      },
-      buildEntry: (item) => buildEntry(item),
+  // Torrents (v0.135.0): the *arr "Remove Completed" option, off by default. One global setting (remove_completed_downloads) for every torrent client.
+  async function fillTorrentOptions(torrentsBlock) {
+    const { el } = window.SRW;
+    const settingsNow = await window.SRW.runOp('settings_get_all').catch(() => ({}));
+    const removeBox = el('input', { type: 'checkbox' });
+    removeBox.checked = String((settingsNow && settingsNow.remove_completed_downloads) || 'false') === 'true';
+    const removeStatus = el('span', { className: 'srw-key-status' });
+    removeBox.addEventListener('change', async () => {
+      const r = await window.SRW.runOp('settings_set', { key: 'remove_completed_downloads', value: removeBox.checked ? 'true' : 'false' });
+      removeStatus.textContent = r && r.error ? ` error: ${r.error}` : ' saved';
     });
-    await refresh();
-    // Stash-boxes configured in Stash: offered at the top (v0.186.0).
-    let stashReport = null;
-    const syncFromStash = async (args) => { stashReport = await window.SRW.runOp('stash_sync', args || {}); return stashReport; };
-    await syncFromStash();
-    importSlot.appendChild(buildStashBoxImport({
-      getReport: () => stashReport,
-      compact: true,
-      sync: syncFromStash,
-      onChange: async () => {
-        Object.assign(effective, await window.SRW.runOp('settings_get_effective_connections'));
-        Object.assign(settings, await window.SRW.runOp('settings_get_all'));
-        await window.SRW.resetProviders();
-        refresh();
+    torrentsBlock.appendChild(el('p', { className: 'srw-subsection-heading', textContent: 'Torrents: after seeding' }));
+    torrentsBlock.appendChild(el('label', {}, [removeBox, ' Remove a finished torrent (with its files) from the client once its seeding goal is reached']));
+    torrentsBlock.appendChild(removeStatus);
+    torrentsBlock.appendChild(el('p', { className: 'srw-hint', textContent: 'Off by default, like the *arr applications. Only torrents this program grabbed and imported are touched, and only when qBittorrent itself reports the seed ratio / seed time limit as reached (torrent paused or stopped). The library keeps its own copy (hard link or copy).' }));
+  }
+
+  // SABnzbd history lookup: a diagnostic, not a setting; shown only while a SABnzbd client exists.
+  function fillSabnzbdLookup(sabBlock) {
+    const { el } = window.SRW;
+    // SABnzbd history lookup -- finds where a completed job actually
+    // landed on disk (its "storage" path), for tracking down a
+    // download that never made it into the import pipeline. Added
+    // 2026-09-19 for the Milestone 2 cutover investigation, kept here
+    // (against whichever usenet client the backend resolves, see
+    // main.py's get_sabnzbd_client()) since it's still generically
+    // useful.
+    sabBlock.appendChild(el('p', { className: 'srw-subsection-heading', textContent: 'SABnzbd history lookup' }));
+    const searchInput = el('input', { type: 'text', placeholder: 'Job name (optional, filters server-side)' });
+    const resultsWrap = el('div');
+    sabBlock.appendChild(el('label', {}, ['Search: ', searchInput]));
+    sabBlock.appendChild(el('button', {
+      className: 'srw-btn srw-btn-primary', textContent: 'Look up',
+      onClick: async (e) => {
+        e.target.disabled = true;
+        resultsWrap.textContent = ' looking up...';
+        try {
+          const rows = await window.SRW.runOp('sabnzbd_history', { search: searchInput.value || undefined });
+          resultsWrap.innerHTML = '';
+          if (rows && rows.error) {
+            resultsWrap.textContent = `Error: ${rows.error}`;
+          } else if (!Array.isArray(rows) || rows.length === 0) {
+            resultsWrap.textContent = 'No matching history entries.';
+          } else {
+            const ul = el('ul', { className: 'srw-sabnzbd-history' });
+            rows.forEach((r) => {
+              ul.appendChild(el('li', {}, [
+                el('strong', { textContent: r.name || '(unnamed)' }),
+                el('br'),
+                el('span', { className: 'srw-hint', textContent: `status: ${r.status || '?'}` }),
+                el('br'),
+                el('span', { className: 'srw-hint', textContent: `storage: ${r.storage || '(none)'}` }),
+              ]));
+            });
+            resultsWrap.appendChild(ul);
+          }
+        } catch (err) {
+          resultsWrap.textContent = `Error: ${err.message}`;
+        } finally {
+          e.target.disabled = false;
+        }
       },
     }));
-    return section;
+    sabBlock.appendChild(resultsWrap);
   }
+
+  // The download-client row (name, Check, Enable, Delete) with its settings form under it, and the form alone (add / edit); `hooks.changed()` runs
+  // after a save, enable/disable or delete. Used by the client list of the setup guide and by the Connections modals.
+  function buildClientRow(client, hooks) {
+    const { el } = window.SRW;
+    const status = el('span', { className: 'srw-key-status' });
+    const row = el('div', { className: 'srw-dc-row' }, [
+      el('strong', { textContent: `${client.name} ` }),
+      el('span', { className: 'srw-hint', textContent: `(${client.type}, ${client.protocol}, priority ${client.priority}${client.enabled ? '' : ', disabled'}) ` }),
+      el('button', {
+        className: 'srw-btn', textContent: 'Check',
+        onClick: async (e) => {
+          e.target.disabled = true;
+          status.textContent = ' checking...';
+          try {
+            const result = await window.SRW.runOp('download_clients_check', { id: client.id });
+            status.textContent = checkText(result);
+            status.dataset.warn = result.folder && result.folder.ok === false ? '1' : '';
+          } catch (err) {
+            status.textContent = ` error: ${err.message}`;
+          } finally {
+            e.target.disabled = false;
+          }
+        },
+      }),
+      client.type === 'sabnzbd' ? el('button', {
+        className: 'srw-btn', textContent: 'Clean history',
+        title: 'Remove the finished, fully imported downloads of this program from the client\'s history (asks first, counts before)',
+        onClick: async (e) => {
+          const btn = e.currentTarget;
+          btn.disabled = true;
+          status.textContent = ' counting...';
+          const probe = await window.SRW.runOp('download_clients_clean_history', { id: client.id, dry_run: true });
+          btn.disabled = false;
+          if (probe.error) { status.textContent = ` error: ${probe.error}`; return; }
+          status.textContent = '';
+          if (!probe.found) { status.textContent = ' nothing to clean up'; return; }
+          window.SRW.confirmInline(btn, `Remove ${probe.found} finished download(s) of this program from the history of "${client.name}"? (e.g. ${probe.sample.slice(0, 2).join(', ')}) The files are not touched.`, async () => {
+            status.textContent = ' cleaning...';
+            const res = await window.SRW.runOp('download_clients_clean_history', { id: client.id, dry_run: false });
+            status.textContent = res.error ? ` error: ${res.error}` : ` ${res.removed} removed${res.errors && res.errors.length ? `, ${res.errors.length} failed (${res.errors[0]})` : ''}`;
+          });
+        },
+      }) : null,
+      el('button', {
+        className: 'srw-btn', textContent: client.enabled ? 'Disable' : 'Enable',
+        onClick: async () => {
+          await window.SRW.runOp('download_clients_update', { id: client.id, ...client, enabled: !client.enabled });
+          await hooks.changed();
+        },
+      }),
+      el('button', {
+        className: 'srw-btn srw-btn-danger', textContent: 'Delete',
+        onClick: (e) => {
+          window.SRW.confirmInline(e.currentTarget, `Delete download client "${client.name}"?`, async () => {
+            await window.SRW.runOp('download_clients_delete', { id: client.id });
+            await hooks.changed();
+          }, { danger: true });
+        },
+      }),
+      status,
+    ]);
+    // The client's settings are open under its line (v0.253.0), not behind an "Edit" button; its check (with the completed-folder line) runs
+    // when the card appears, so a folder the sidecar cannot see is visible without a click.
+    queueMicrotask(() => { const b = row.querySelector('button'); if (b && b.textContent === 'Check') b.click(); });
+    return el('div', { className: 'srw-dc-card' }, [row, buildClientForm(client, hooks)]);
+  }
+
+  // Client form (v0.133.0): the type decides the protocol; qBittorrent carries the *arr-style client settings with their defaults
+  // (category = app name, initial state Start, content layout Default, priorities Default, not sequential).
+  // "Completed folder visible" / the reason it is not: the folder part of a client check (api/download_folder_check.py).
+  const folderText = (r) => (r && r.folder && r.folder.message ? (r.folder.ok === false ? `⚠ ${r.folder.message}` : r.folder.message) : '');
+  const checkText = (r) => {
+    if (r.error) return ` error: ${r.error}`;
+    const folder = folderText(r);
+    return ` ok${r.version ? ` (qBittorrent ${r.version})` : ''}${folder ? ` — ${folder}` : ''}`;
+  };
+
+  function buildClientForm(existing, hooks) {
+    const { el } = window.SRW;
+    const opts = { initial_state: 'start', recent_priority: 'default', older_priority: 'default', sequential: false, first_last: false,
+      content_layout: 'default', post_import_category: '', ...((existing && existing.options) || {}) };
+    const nameInput = el('input', { type: 'text', placeholder: 'Name', value: existing ? existing.name : '' });
+    const typeSelect = el('select', {}, [
+      el('option', { value: 'sabnzbd', textContent: 'SABnzbd (Usenet)' }),
+      el('option', { value: 'qbittorrent', textContent: 'qBittorrent (Torrent)' }),
+    ]);
+    typeSelect.value = existing ? existing.type : 'sabnzbd';
+    const priorityInput = el('input', {
+      type: 'number', min: '1', step: '1', placeholder: 'Priority', style: 'width: 5rem',
+      value: existing ? existing.priority : '25',
+    });
+    const urlInput = el('input', { type: 'text', placeholder: 'URL (e.g. http://downloads.example:8080)', value: existing ? existing.url : '' });
+    const apiKeyInput = el('input', {
+      type: 'password', autocomplete: 'off', placeholder: 'API key',
+      value: existing ? existing.api_key : '',
+    });
+    const userInput = el('input', { type: 'text', autocomplete: 'off', placeholder: 'User name', value: existing ? existing.username : '' });
+    const passInput = el('input', { type: 'password', autocomplete: 'new-password', placeholder: 'Password', value: existing ? existing.password : '' });
+    const categoryInput = el('input', {
+      type: 'text', placeholder: 'Category (optional)', value: existing ? existing.category : '',
+    });
+    const select = (items, value) => { const sel = el('select', {}, items.map(([v, t]) => el('option', { value: v, textContent: t }))); sel.value = value; return sel; };
+    const stateSel = select([['start', 'Start'], ['force_start', 'Force start'], ['pause', 'Pause']], opts.initial_state);
+    const recentSel = select([['default', 'Default'], ['first', 'First'], ['last', 'Last']], opts.recent_priority);
+    const olderSel = select([['default', 'Default'], ['first', 'First'], ['last', 'Last']], opts.older_priority);
+    const layoutSel = select([['default', 'Default (qBittorrent setting)'], ['original', 'Original'], ['subfolder', 'Create subfolder']], opts.content_layout);
+    const seqBox = el('input', { type: 'checkbox' }); seqBox.checked = !!opts.sequential;
+    const flBox = el('input', { type: 'checkbox' }); flBox.checked = !!opts.first_last;
+    const postCat = el('input', { type: 'text', placeholder: 'Post-import category (optional)', value: opts.post_import_category || '' });
+    const remotePath = el('input', { type: 'text', placeholder: '/downloads/complete', value: opts.remote_path || '' });
+    const localPath = el('input', { type: 'text', placeholder: '/downloads', value: opts.local_path || '' });
+    const formStatus = el('span', { className: 'srw-key-status' });
+    const removeBox = el('input', { type: 'checkbox' }); removeBox.checked = opts.remove_completed !== false;
+    const usenetPart = el('div', {}, [el('label', {}, ['API key: ', apiKeyInput]), el('br'),
+      el('label', {}, [removeBox, ' Remove completed downloads from the history']),
+      el('p', { className: 'srw-hint', textContent: 'Like the *arr applications: once a download is imported for good, its entry is removed from SABnzbd\'s history (only ones this program downloaded; the files are not touched). The release name is kept here, so the same release is never fetched twice.' })]);
+    const torrentPart = el('div', {}, [
+      el('label', {}, ['User name: ', userInput]), el('br'),
+      el('label', {}, ['Password: ', passInput]), el('br'),
+      el('label', {}, ['Initial state: ', stateSel]), el('br'),
+      el('label', {}, ['Recent priority: ', recentSel]), el('label', {}, [' Older priority: ', olderSel]), el('br'),
+      el('label', {}, ['Content layout: ', layoutSel]), el('br'),
+      el('label', {}, [seqBox, ' Sequential order']), el('label', {}, [' ', flBox, ' First and last first']), el('br'),
+      el('label', {}, ['Post-import category: ', postCat]), el('br'),
+      el('label', {}, ['Completed downloads folder, as qBittorrent calls it: ', remotePath]), el('br'),
+      el('label', {}, ['... as this program sees it: ', localPath]), el('br'),
+      el('p', { className: 'srw-hint', textContent: 'Required: this program can only import what it can see. Mount the folder qBittorrent puts finished downloads in (its default save path) into this container and enter it twice: the path in qBittorrent (e.g. /downloads/complete) and the path of the same folder in this container (e.g. /downloads). Like the *arr remote path mappings. Both empty = the downloads pair of Settings > File Import. “Test connection” and “Check” tell whether the folder can be seen.' }),
+      el('p', { className: 'srw-hint', textContent: 'Like the *arr applications: the downloaded files are hard-linked (else copied) into the library and the torrent keeps seeding; qBittorrent\'s own seeding limits (or the indexer\'s seed ratio / seed time) decide when it stops.' }),
+    ]);
+    const syncType = () => {
+      const torrent = typeSelect.value === 'qbittorrent';
+      usenetPart.hidden = torrent;
+      torrentPart.hidden = !torrent;
+      if (!existing && !categoryInput.value) categoryInput.placeholder = torrent ? 'Category (default: srm)' : 'Category (optional)';
+    };
+    typeSelect.addEventListener('change', syncType);
+    syncType();
+
+    // The form's values in one place, used by Add / Save and by the Test button.
+    const collectBody = () => {
+      const torrent = typeSelect.value === 'qbittorrent';
+      return {
+        name: nameInput.value, type: typeSelect.value, protocol: torrent ? 'torrent' : 'usenet',
+        priority: parseInt(priorityInput.value, 10) || 25, url: urlInput.value.trim(),
+        api_key: torrent ? '' : apiKeyInput.value, username: torrent ? userInput.value : '', password: torrent ? passInput.value : '',
+        category: categoryInput.value || (torrent ? 'srm' : ''),
+        options: torrent ? { initial_state: stateSel.value, recent_priority: recentSel.value, older_priority: olderSel.value,
+          content_layout: layoutSel.value, sequential: seqBox.checked, first_last: flBox.checked, post_import_category: postCat.value,
+          remote_path: remotePath.value.trim(), local_path: localPath.value.trim() } : { remove_completed: removeBox.checked },
+        enabled: existing ? existing.enabled : true,
+      };
+    };
+
+    // Prefill from Prowlarr's own download clients (Prowlarr hides the API key/password, so those are typed in).
+    const prowlarrRow = el('div', { hidden: true });
+    if (!existing) {
+      window.SRW.runOp('download_clients_from_prowlarr').then((list) => {
+        if (!Array.isArray(list) || !list.length) return;
+        const pick = el('select', {}, list.map((c, i) => el('option', { value: String(i), textContent: `${c.name} (${c.type}, ${c.url})` })));
+        const note = el('span', { className: 'srw-key-status' });
+        prowlarrRow.appendChild(el('label', {}, ['Take over from Prowlarr: ', pick]));
+        prowlarrRow.appendChild(el('button', {
+          type: 'button', className: 'srw-btn', textContent: 'Prefill',
+          onClick: () => {
+            const c = list[Number(pick.value)];
+            nameInput.value = c.name; typeSelect.value = c.type; syncType();
+            urlInput.value = c.url; userInput.value = c.username || '';
+            note.textContent = ' prefilled -- now enter the API key (or password): Prowlarr does not reveal it. Check that the address is reachable from this program (a container name from Prowlarr\'s network may not be).';
+            (c.type === 'sabnzbd' ? apiKeyInput : passInput).focus();
+          },
+        }));
+        prowlarrRow.appendChild(note);
+        prowlarrRow.appendChild(el('br'));
+        prowlarrRow.hidden = false;
+      }).catch(() => {});
+    }
+
+    const form = el('div', { className: 'srw-dc-form' }, [
+      prowlarrRow,
+      el('label', {}, ['Name: ', nameInput]), el('br'),
+      el('label', {}, ['Type: ', typeSelect]), el('br'),
+      el('label', {}, ['Priority: ', priorityInput]), el('br'),
+      el('label', {}, ['URL: ', urlInput]), el('br'),
+      usenetPart, torrentPart,
+      el('label', {}, ['Category: ', categoryInput]), el('br'),
+      el('button', {
+        className: 'srw-btn srw-btn-primary', textContent: existing ? 'Save' : 'Add client',
+        onClick: async () => {
+          const body = collectBody();
+          if (!body.name || !body.url) {
+            formStatus.textContent = ' name and URL are required';
+            return;
+          }
+          try {
+            const res = existing ? await window.SRW.runOp('download_clients_update', { id: existing.id, ...body })
+              : await window.SRW.runOp('download_clients_create', body);
+            if (res && res.error) { formStatus.textContent = ` error: ${res.error}`; return; }
+            await hooks.changed();
+          } catch (err) {
+            formStatus.textContent = ` error: ${err.message}`;
+          }
+        },
+      }),
+      // Checks what is typed into this form, saved or not (the per-client "Check" above only knows the saved clients).
+      el('button', {
+        className: 'srw-btn', textContent: 'Test connection', title: 'Checks the details entered above (nothing is saved)',
+        onClick: async (e) => {
+          const body = collectBody();
+          if (!body.url) { formStatus.textContent = ' enter the URL first'; return; }
+          e.target.disabled = true;
+          formStatus.textContent = ' checking...';
+          try {
+            const r = await window.SRW.runOp('download_clients_test', {
+              type: body.type, url: body.url, api_key: body.api_key, username: body.username, password: body.password,
+              category: body.category, remote_path: (body.options || {}).remote_path || '', local_path: (body.options || {}).local_path || '',
+            });
+            formStatus.textContent = checkText(r || {});
+          } catch (err) {
+            formStatus.textContent = ` error: ${err.message}`;
+          } finally {
+            e.target.disabled = false;
+          }
+        },
+      }),
+      formStatus,
+    ]);
+    return form;
+  }
+
 
   // Added 2026-09-19 while investigating a Milestone 2 completed
   // download that vanished from Whisparr's own `/queue` before this
@@ -1421,8 +1686,9 @@
       torrentsBlock.hidden = !clientsNow.some((c) => c.type === 'qbittorrent');
       sabBlock.hidden = !clientsNow.some((c) => c.type === 'sabnzbd');
     };
-    const renderAdder = () => adderSlot.replaceChildren(collapsedAdder('Add a download client…', () => buildClientForm(null)));
+    const renderAdder = () => adderSlot.replaceChildren(collapsedAdder('Add a download client…', () => buildClientForm(null, hooks)));
     async function refresh() { await refreshList(); renderAdder(); applyVisibility(); }
+    const hooks = { changed: async () => { await refresh(); if (onChanged) onChanged(); } };
 
     listSection.appendChild(el('p', { className: 'srw-subsection-heading', textContent: 'Your download clients' }));
     const { refresh: refreshList } = buildManagedList(listSection, {
@@ -1432,297 +1698,14 @@
         clientsNow = Array.isArray(result) ? result : [];
         return clientsNow;
       },
-      buildEntry: (client) => buildClientRow(client),
+      buildEntry: (client) => buildClientRow(client, hooks),
     });
 
-    function buildClientRow(client) {
-      const status = el('span', { className: 'srw-key-status' });
-      const row = el('div', { className: 'srw-dc-row' }, [
-        el('strong', { textContent: `${client.name} ` }),
-        el('span', { className: 'srw-hint', textContent: `(${client.type}, ${client.protocol}, priority ${client.priority}${client.enabled ? '' : ', disabled'}) ` }),
-        el('button', {
-          className: 'srw-btn', textContent: 'Check',
-          onClick: async (e) => {
-            e.target.disabled = true;
-            status.textContent = ' checking...';
-            try {
-              const result = await window.SRW.runOp('download_clients_check', { id: client.id });
-              status.textContent = checkText(result);
-              status.dataset.warn = result.folder && result.folder.ok === false ? '1' : '';
-            } catch (err) {
-              status.textContent = ` error: ${err.message}`;
-            } finally {
-              e.target.disabled = false;
-            }
-          },
-        }),
-        client.type === 'sabnzbd' ? el('button', {
-          className: 'srw-btn', textContent: 'Clean history',
-          title: 'Remove the finished, fully imported downloads of this program from the client\'s history (asks first, counts before)',
-          onClick: async (e) => {
-            const btn = e.currentTarget;
-            btn.disabled = true;
-            status.textContent = ' counting...';
-            const probe = await window.SRW.runOp('download_clients_clean_history', { id: client.id, dry_run: true });
-            btn.disabled = false;
-            if (probe.error) { status.textContent = ` error: ${probe.error}`; return; }
-            status.textContent = '';
-            if (!probe.found) { status.textContent = ' nothing to clean up'; return; }
-            window.SRW.confirmInline(btn, `Remove ${probe.found} finished download(s) of this program from the history of "${client.name}"? (e.g. ${probe.sample.slice(0, 2).join(', ')}) The files are not touched.`, async () => {
-              status.textContent = ' cleaning...';
-              const res = await window.SRW.runOp('download_clients_clean_history', { id: client.id, dry_run: false });
-              status.textContent = res.error ? ` error: ${res.error}` : ` ${res.removed} removed${res.errors && res.errors.length ? `, ${res.errors.length} failed (${res.errors[0]})` : ''}`;
-            });
-          },
-        }) : null,
-        el('button', {
-          className: 'srw-btn', textContent: client.enabled ? 'Disable' : 'Enable',
-          onClick: async () => {
-            await window.SRW.runOp('download_clients_update', { id: client.id, ...client, enabled: !client.enabled });
-            await refresh();
-            if (onChanged) onChanged();
-          },
-        }),
-        el('button', {
-          className: 'srw-btn srw-btn-danger', textContent: 'Delete',
-          onClick: (e) => {
-            window.SRW.confirmInline(e.currentTarget, `Delete download client "${client.name}"?`, async () => {
-              await window.SRW.runOp('download_clients_delete', { id: client.id });
-              await refresh();
-              if (onChanged) onChanged();
-            }, { danger: true });
-          },
-        }),
-        status,
-      ]);
-      // The client's settings are open under its line (v0.253.0), not behind an "Edit" button; its check (with the completed-folder line) runs
-      // when the card appears, so a folder the sidecar cannot see is visible without a click.
-      queueMicrotask(() => { const b = row.querySelector('button'); if (b && b.textContent === 'Check') b.click(); });
-      return el('div', { className: 'srw-dc-card', 'data-conn-key': `client-${client.id}` }, [row, buildClientForm(client)]);
-    }
-
-    // Client form (v0.133.0): the type decides the protocol; qBittorrent carries the *arr-style client settings with their defaults
-    // (category = app name, initial state Start, content layout Default, priorities Default, not sequential).
-    // "Completed folder visible" / the reason it is not: the folder part of a client check (api/download_folder_check.py).
-    const folderText = (r) => (r && r.folder && r.folder.message ? (r.folder.ok === false ? `⚠ ${r.folder.message}` : r.folder.message) : '');
-    const checkText = (r) => {
-      if (r.error) return ` error: ${r.error}`;
-      const folder = folderText(r);
-      return ` ok${r.version ? ` (qBittorrent ${r.version})` : ''}${folder ? ` — ${folder}` : ''}`;
-    };
-
-    function buildClientForm(existing) {
-      const opts = { initial_state: 'start', recent_priority: 'default', older_priority: 'default', sequential: false, first_last: false,
-        content_layout: 'default', post_import_category: '', ...((existing && existing.options) || {}) };
-      const nameInput = el('input', { type: 'text', placeholder: 'Name', value: existing ? existing.name : '' });
-      const typeSelect = el('select', {}, [
-        el('option', { value: 'sabnzbd', textContent: 'SABnzbd (Usenet)' }),
-        el('option', { value: 'qbittorrent', textContent: 'qBittorrent (Torrent)' }),
-      ]);
-      typeSelect.value = existing ? existing.type : 'sabnzbd';
-      const priorityInput = el('input', {
-        type: 'number', min: '1', step: '1', placeholder: 'Priority', style: 'width: 5rem',
-        value: existing ? existing.priority : '25',
-      });
-      const urlInput = el('input', { type: 'text', placeholder: 'URL (e.g. http://192.168.1.20:8080)', value: existing ? existing.url : '' });
-      const apiKeyInput = el('input', {
-        type: 'password', autocomplete: 'off', placeholder: 'API key',
-        value: existing ? existing.api_key : '',
-      });
-      const userInput = el('input', { type: 'text', autocomplete: 'off', placeholder: 'User name', value: existing ? existing.username : '' });
-      const passInput = el('input', { type: 'password', autocomplete: 'new-password', placeholder: 'Password', value: existing ? existing.password : '' });
-      const categoryInput = el('input', {
-        type: 'text', placeholder: 'Category (optional)', value: existing ? existing.category : '',
-      });
-      const select = (items, value) => { const sel = el('select', {}, items.map(([v, t]) => el('option', { value: v, textContent: t }))); sel.value = value; return sel; };
-      const stateSel = select([['start', 'Start'], ['force_start', 'Force start'], ['pause', 'Pause']], opts.initial_state);
-      const recentSel = select([['default', 'Default'], ['first', 'First'], ['last', 'Last']], opts.recent_priority);
-      const olderSel = select([['default', 'Default'], ['first', 'First'], ['last', 'Last']], opts.older_priority);
-      const layoutSel = select([['default', 'Default (qBittorrent setting)'], ['original', 'Original'], ['subfolder', 'Create subfolder']], opts.content_layout);
-      const seqBox = el('input', { type: 'checkbox' }); seqBox.checked = !!opts.sequential;
-      const flBox = el('input', { type: 'checkbox' }); flBox.checked = !!opts.first_last;
-      const postCat = el('input', { type: 'text', placeholder: 'Post-import category (optional)', value: opts.post_import_category || '' });
-      const remotePath = el('input', { type: 'text', placeholder: '/downloads/complete', value: opts.remote_path || '' });
-      const localPath = el('input', { type: 'text', placeholder: '/downloads', value: opts.local_path || '' });
-      const formStatus = el('span', { className: 'srw-key-status' });
-      const removeBox = el('input', { type: 'checkbox' }); removeBox.checked = opts.remove_completed !== false;
-      const usenetPart = el('div', {}, [el('label', {}, ['API key: ', apiKeyInput]), el('br'),
-        el('label', {}, [removeBox, ' Remove completed downloads from the history']),
-        el('p', { className: 'srw-hint', textContent: 'Like the *arr applications: once a download is imported for good, its entry is removed from SABnzbd\'s history (only ones this program downloaded; the files are not touched). The release name is kept here, so the same release is never fetched twice.' })]);
-      const torrentPart = el('div', {}, [
-        el('label', {}, ['User name: ', userInput]), el('br'),
-        el('label', {}, ['Password: ', passInput]), el('br'),
-        el('label', {}, ['Initial state: ', stateSel]), el('br'),
-        el('label', {}, ['Recent priority: ', recentSel]), el('label', {}, [' Older priority: ', olderSel]), el('br'),
-        el('label', {}, ['Content layout: ', layoutSel]), el('br'),
-        el('label', {}, [seqBox, ' Sequential order']), el('label', {}, [' ', flBox, ' First and last first']), el('br'),
-        el('label', {}, ['Post-import category: ', postCat]), el('br'),
-        el('label', {}, ['Completed downloads folder, as qBittorrent calls it: ', remotePath]), el('br'),
-        el('label', {}, ['... as this program sees it: ', localPath]), el('br'),
-        el('p', { className: 'srw-hint', textContent: 'Required: this program can only import what it can see. Mount the folder qBittorrent puts finished downloads in (its default save path) into this container and enter it twice: the path in qBittorrent (e.g. /downloads/complete) and the path of the same folder in this container (e.g. /downloads). Like the *arr remote path mappings. Both empty = the downloads pair of Settings > File Import. “Test connection” and “Check” tell whether the folder can be seen.' }),
-        el('p', { className: 'srw-hint', textContent: 'Like the *arr applications: the downloaded files are hard-linked (else copied) into the library and the torrent keeps seeding; qBittorrent\'s own seeding limits (or the indexer\'s seed ratio / seed time) decide when it stops.' }),
-      ]);
-      const syncType = () => {
-        const torrent = typeSelect.value === 'qbittorrent';
-        usenetPart.hidden = torrent;
-        torrentPart.hidden = !torrent;
-        if (!existing && !categoryInput.value) categoryInput.placeholder = torrent ? 'Category (default: srm)' : 'Category (optional)';
-      };
-      typeSelect.addEventListener('change', syncType);
-      syncType();
-
-      // The form's values in one place, used by Add / Save and by the Test button.
-      const collectBody = () => {
-        const torrent = typeSelect.value === 'qbittorrent';
-        return {
-          name: nameInput.value, type: typeSelect.value, protocol: torrent ? 'torrent' : 'usenet',
-          priority: parseInt(priorityInput.value, 10) || 25, url: urlInput.value.trim(),
-          api_key: torrent ? '' : apiKeyInput.value, username: torrent ? userInput.value : '', password: torrent ? passInput.value : '',
-          category: categoryInput.value || (torrent ? 'srm' : ''),
-          options: torrent ? { initial_state: stateSel.value, recent_priority: recentSel.value, older_priority: olderSel.value,
-            content_layout: layoutSel.value, sequential: seqBox.checked, first_last: flBox.checked, post_import_category: postCat.value,
-            remote_path: remotePath.value.trim(), local_path: localPath.value.trim() } : { remove_completed: removeBox.checked },
-          enabled: existing ? existing.enabled : true,
-        };
-      };
-
-      // Prefill from Prowlarr's own download clients (Prowlarr hides the API key/password, so those are typed in).
-      const prowlarrRow = el('div', { hidden: true });
-      if (!existing) {
-        window.SRW.runOp('download_clients_from_prowlarr').then((list) => {
-          if (!Array.isArray(list) || !list.length) return;
-          const pick = el('select', {}, list.map((c, i) => el('option', { value: String(i), textContent: `${c.name} (${c.type}, ${c.url})` })));
-          const note = el('span', { className: 'srw-key-status' });
-          prowlarrRow.appendChild(el('label', {}, ['Take over from Prowlarr: ', pick]));
-          prowlarrRow.appendChild(el('button', {
-            type: 'button', className: 'srw-btn', textContent: 'Prefill',
-            onClick: () => {
-              const c = list[Number(pick.value)];
-              nameInput.value = c.name; typeSelect.value = c.type; syncType();
-              urlInput.value = c.url; userInput.value = c.username || '';
-              note.textContent = ' prefilled -- now enter the API key (or password): Prowlarr does not reveal it. Check that the address is reachable from this program (a container name from Prowlarr\'s network may not be).';
-              (c.type === 'sabnzbd' ? apiKeyInput : passInput).focus();
-            },
-          }));
-          prowlarrRow.appendChild(note);
-          prowlarrRow.appendChild(el('br'));
-          prowlarrRow.hidden = false;
-        }).catch(() => {});
-      }
-
-      const form = el('div', { className: 'srw-dc-form' }, [
-        prowlarrRow,
-        el('label', {}, ['Name: ', nameInput]), el('br'),
-        el('label', {}, ['Type: ', typeSelect]), el('br'),
-        el('label', {}, ['Priority: ', priorityInput]), el('br'),
-        el('label', {}, ['URL: ', urlInput]), el('br'),
-        usenetPart, torrentPart,
-        el('label', {}, ['Category: ', categoryInput]), el('br'),
-        el('button', {
-          className: 'srw-btn srw-btn-primary', textContent: existing ? 'Save' : 'Add client',
-          onClick: async () => {
-            const body = collectBody();
-            if (!body.name || !body.url) {
-              formStatus.textContent = ' name and URL are required';
-              return;
-            }
-            try {
-              const res = existing ? await window.SRW.runOp('download_clients_update', { id: existing.id, ...body })
-                : await window.SRW.runOp('download_clients_create', body);
-              if (res && res.error) { formStatus.textContent = ` error: ${res.error}`; return; }
-              await refresh();
-              if (onChanged) onChanged();
-            } catch (err) {
-              formStatus.textContent = ` error: ${err.message}`;
-            }
-          },
-        }),
-        // Checks what is typed into this form, saved or not (the per-client "Check" above only knows the saved clients).
-        el('button', {
-          className: 'srw-btn', textContent: 'Test connection', title: 'Checks the details entered above (nothing is saved)',
-          onClick: async (e) => {
-            const body = collectBody();
-            if (!body.url) { formStatus.textContent = ' enter the URL first'; return; }
-            e.target.disabled = true;
-            formStatus.textContent = ' checking...';
-            try {
-              const r = await window.SRW.runOp('download_clients_test', {
-                type: body.type, url: body.url, api_key: body.api_key, username: body.username, password: body.password,
-                category: body.category, remote_path: (body.options || {}).remote_path || '', local_path: (body.options || {}).local_path || '',
-              });
-              formStatus.textContent = checkText(r || {});
-            } catch (err) {
-              formStatus.textContent = ` error: ${err.message}`;
-            } finally {
-              e.target.disabled = false;
-            }
-          },
-        }),
-        formStatus,
-      ]);
-      return form;
-    }
 
     await refresh();
 
-    // Torrents (v0.135.0): the *arr "Remove Completed" option, off by default.
-    const settingsNow = await window.SRW.runOp('settings_get_all').catch(() => ({}));
-    const removeBox = el('input', { type: 'checkbox' });
-    removeBox.checked = String((settingsNow && settingsNow.remove_completed_downloads) || 'false') === 'true';
-    const removeStatus = el('span', { className: 'srw-key-status' });
-    removeBox.addEventListener('change', async () => {
-      const r = await window.SRW.runOp('settings_set', { key: 'remove_completed_downloads', value: removeBox.checked ? 'true' : 'false' });
-      removeStatus.textContent = r && r.error ? ` error: ${r.error}` : ' saved';
-    });
-    torrentsBlock.appendChild(el('p', { className: 'srw-subsection-heading', textContent: 'Torrents: after seeding' }));
-    torrentsBlock.appendChild(el('label', {}, [removeBox, ' Remove a finished torrent (with its files) from the client once its seeding goal is reached']));
-    torrentsBlock.appendChild(removeStatus);
-    torrentsBlock.appendChild(el('p', { className: 'srw-hint', textContent: 'Off by default, like the *arr applications. Only torrents this program grabbed and imported are touched, and only when qBittorrent itself reports the seed ratio / seed time limit as reached (torrent paused or stopped). The library keeps its own copy (hard link or copy).' }));
-
-    // SABnzbd history lookup -- finds where a completed job actually
-    // landed on disk (its "storage" path), for tracking down a
-    // download that never made it into the import pipeline. Added
-    // 2026-09-19 for the Milestone 2 cutover investigation, kept here
-    // (against whichever usenet client the backend resolves, see
-    // main.py's get_sabnzbd_client()) since it's still generically
-    // useful.
-    sabBlock.appendChild(el('p', { className: 'srw-subsection-heading', textContent: 'SABnzbd history lookup' }));
-    const searchInput = el('input', { type: 'text', placeholder: 'Job name (optional, filters server-side)' });
-    const resultsWrap = el('div');
-    sabBlock.appendChild(el('label', {}, ['Search: ', searchInput]));
-    sabBlock.appendChild(el('button', {
-      className: 'srw-btn srw-btn-primary', textContent: 'Look up',
-      onClick: async (e) => {
-        e.target.disabled = true;
-        resultsWrap.textContent = ' looking up...';
-        try {
-          const rows = await window.SRW.runOp('sabnzbd_history', { search: searchInput.value || undefined });
-          resultsWrap.innerHTML = '';
-          if (rows && rows.error) {
-            resultsWrap.textContent = `Error: ${rows.error}`;
-          } else if (!Array.isArray(rows) || rows.length === 0) {
-            resultsWrap.textContent = 'No matching history entries.';
-          } else {
-            const ul = el('ul', { className: 'srw-sabnzbd-history' });
-            rows.forEach((r) => {
-              ul.appendChild(el('li', {}, [
-                el('strong', { textContent: r.name || '(unnamed)' }),
-                el('br'),
-                el('span', { className: 'srw-hint', textContent: `status: ${r.status || '?'}` }),
-                el('br'),
-                el('span', { className: 'srw-hint', textContent: `storage: ${r.storage || '(none)'}` }),
-              ]));
-            });
-            resultsWrap.appendChild(ul);
-          }
-        } catch (err) {
-          resultsWrap.textContent = `Error: ${err.message}`;
-        } finally {
-          e.target.disabled = false;
-        }
-      },
-    }));
-    sabBlock.appendChild(resultsWrap);
+    await fillTorrentOptions(torrentsBlock);
+    fillSabnzbdLookup(sabBlock);
     applyVisibility();
 
     return section;
@@ -2868,7 +2851,6 @@
       : el('input', { type: 'number', min, max, step });
     control.value = value;
     const status = el('span', { className: 'srw-key-status' });
-    if (hint) section.appendChild(el('p', { className: 'srw-hint', textContent: hint }));
     section.appendChild(el('label', {}, [`${label}: `, control]));
     section.appendChild(el('button', {
       className: 'srw-btn', textContent: 'Save',
@@ -2878,6 +2860,7 @@
       },
     }));
     section.appendChild(status);
+    if (hint) section.appendChild(el('p', { className: 'srw-hint srw-setting-hint', textContent: hint })); // under the field (v0.254.1)
   }
 
   // "Upgrade search" (v0.155.0): the automatic search for the candidates of Maintenance > Upgrade wanted -- a job, so its three settings live
@@ -3043,26 +3026,28 @@
     const filmStatus = el('span', { className: 'srw-key-status' });
     section.appendChild(el('p', { className: 'srw-hint', textContent: 'Searches the indexers for the movies on the Movies wishlist (1-3 requests per movie) and proposes the best plausible release in Activity > Needs review. Nothing is downloaded without your Accept. Where Whisparr searches (Settings > General > Workflow: “Whisparr searches + downloads, this sidecar imports” or “Full Whisparr management”) the movies registered in Whisparr are left to Whisparr; this search then covers only the others.' }));
     section.appendChild(el('label', {}, [filmEnabled, ' Search automatically']));
-    section.appendChild(el('br'));
     section.appendChild(el('label', {}, ['Run every (hours): ', filmInterval]));
-    section.appendChild(el('label', {}, [' Movies per run: ', filmPerRun]));
-    section.appendChild(el('label', {}, [' Ask the same movie again after (days): ', filmDays]));
-    section.appendChild(el('br'));
-    section.appendChild(el('label', {}, ['New movies (released within the last ', filmRecentDays, ' days or still to come) are asked again after (days): ', filmRecentMin]));
-    section.appendChild(el('button', {
-      className: 'srw-btn', textContent: 'Save',
-      onClick: async () => {
-        const pairs = [['film_search_enabled', filmEnabled.checked ? 'true' : 'false'], ['film_search_interval_hours', filmInterval.value],
-          ['film_search_per_run', filmPerRun.value], ['film_search_min_days', filmDays.value],
-          ['film_search_recent_days', filmRecentDays.value], ['film_search_recent_min_days', filmRecentMin.value]];
-        for (const [key, value] of pairs) {
-          const r = await window.SRW.runOp('settings_set', { key, value });
-          if (r && r.error) { filmStatus.textContent = ` error: ${r.error}`; return; }
-        }
-        filmStatus.textContent = ' saved';
-      },
-    }));
-    section.appendChild(filmStatus);
+    section.appendChild(el('label', {}, ['Movies per run: ', filmPerRun]));
+    section.appendChild(el('label', {}, ['Ask the same movie again after (days): ', filmDays]));
+    section.appendChild(el('label', {}, ['A movie is new for (days after its release, or still to come): ', filmRecentDays]));
+    section.appendChild(el('label', {}, ['A new movie is asked again after (days): ', filmRecentMin]));
+    const filmSave = el('div', { className: 'srw-setting-save' }, [
+      el('button', {
+        className: 'srw-btn', textContent: 'Save',
+        onClick: async () => {
+          const pairs = [['film_search_enabled', filmEnabled.checked ? 'true' : 'false'], ['film_search_interval_hours', filmInterval.value],
+            ['film_search_per_run', filmPerRun.value], ['film_search_min_days', filmDays.value],
+            ['film_search_recent_days', filmRecentDays.value], ['film_search_recent_min_days', filmRecentMin.value]];
+          for (const [key, value] of pairs) {
+            const r = await window.SRW.runOp('settings_set', { key, value });
+            if (r && r.error) { filmStatus.textContent = ` error: ${r.error}`; return; }
+          }
+          filmStatus.textContent = ' saved';
+        },
+      }),
+      filmStatus,
+    ]);
+    section.appendChild(filmSave);
 
     // v0.131.0: new movies of the watched ThePornDB studios -> Movies wishlist > Suggestions (api/film_feed.py). ONE feed request per run.
     section.appendChild(el('p', { className: 'srw-subsection-heading', textContent: 'New movies of watched studios (Movies wishlist > Suggestions)' }));
@@ -3587,7 +3572,7 @@
         + 'Illegal characters of file names are replaced by a space; a name longer than the file system allows has its title shortened.',
     }));
     const sceneFormatInput = el('input', { type: 'text', style: 'width: 100%;', value: settings.scene_naming_format || '' });
-    section.appendChild(el('label', {}, ['Scene Format: ', sceneFormatInput]));
+    section.appendChild(el('label', { className: 'srw-wide' }, ['Scene Format: ', sceneFormatInput]));
     section.appendChild(el('button', {
       className: 'srw-btn', textContent: 'Save',
       onClick: async () => {
@@ -3596,7 +3581,7 @@
     }));
 
     const folderFormatInput = el('input', { type: 'text', style: 'width: 100%;', value: settings.scene_folder_format || '' });
-    section.appendChild(el('label', {}, ['Scene Folder Format: ', folderFormatInput]));
+    section.appendChild(el('label', { className: 'srw-wide' }, ['Scene Folder Format: ', folderFormatInput]));
     section.appendChild(el('button', {
       className: 'srw-btn', textContent: 'Save',
       onClick: async () => {
@@ -3619,9 +3604,9 @@
       const r = await window.SRW.runOp('settings_set', { key, value: input.value });
       if (r.error) window.SRW.notify('Naming', r.error, 'error'); else window.SRW.notify('Naming', 'Saved.', 'success');
     };
-    section.appendChild(el('label', {}, ['Movie Folder Format: ', movieFolderInput]));
+    section.appendChild(el('label', { className: 'srw-wide' }, ['Movie Folder Format: ', movieFolderInput]));
     section.appendChild(el('button', { className: 'srw-btn', textContent: 'Save', onClick: saveMovieFormat('movie_folder_format', movieFolderInput) }));
-    section.appendChild(el('label', {}, ['Movie File Format: ', movieFileInput]));
+    section.appendChild(el('label', { className: 'srw-wide' }, ['Movie File Format: ', movieFileInput]));
     section.appendChild(el('button', { className: 'srw-btn', textContent: 'Save', onClick: saveMovieFormat('movie_naming_format', movieFileInput) }));
 
     // Example under the format fields (v0.193.0): what the formats, replacement rules and tag folders -- also unsaved edits -- produce. Writes nothing.
@@ -3634,11 +3619,11 @@
         const r = await window.SRW.runOp('settings_naming_preview', { folder_format: folderFormatInput.value, filename_format: sceneFormatInput.value,
           movie_folder_format: movieFolderInput.value, movie_filename_format: movieFileInput.value, ...previewExtra });
         if (r.error) { previewBox.textContent = `Example not available: ${r.error}`; return; }
-        previewBox.replaceChildren(el('div', { textContent: `Example: ${r.example}` }),
+        previewBox.replaceChildren(...[el('div', { textContent: `Example: ${r.example}` }),
           r.example_with_tag ? el('div', { textContent: `Example with the tag "${r.tag}": ${r.example_with_tag}` }) : null,
           el('div', { textContent: `Movie: ${r.movie_example}` }),
           el('div', { textContent: `Movie, scene 2 of several: ${r.movie_example_part}` }),
-          el('div', { textContent: `Movie without a year: ${r.movie_example_no_year}` }));
+          el('div', { textContent: `Movie without a year: ${r.movie_example_no_year}` })].filter(Boolean)); // (a null child would be shown as the text "null")
       }, 300);
     };
     sceneFormatInput.addEventListener('input', refreshPreview);
@@ -4403,6 +4388,7 @@
 
     const nav = el('div', { className: 'srw-subtabs srw-section-tabs' });
     const paneHost = el('div', { className: 'srw-settings-section srw-form-grid' });
+    watchSettingRows(paneHost);
     const footer = el('div', { className: 'srw-toolbar' });
     function paintNav() {
       nav.replaceChildren(...STEPS.map((st, i) => {

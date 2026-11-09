@@ -694,6 +694,23 @@ class LocalScenesRequest(BaseModel):
     scenes: list[dict]
 
 
+def _scene_covers():
+    from routers import covers as covers_router
+    return covers_router.get_covers()
+
+
+def sweep_scene_covers():
+    """Daily housekeeping (main.py): drops cached pictures nobody needs any more; returns the number of files removed."""
+    return _scene_covers().sweep()
+
+
+@router.post("/covers")
+def scene_covers_for(body: dict):
+    """The scene-only form of POST /covers ({"provider:id": ...}); the plugin asks /covers with a kind since v0.256.0."""
+    scenes = [(x.get("provider") or "stashdb", x.get("scene_stashdb_id")) for x in (body.get("scenes") or [])[:200] if x.get("scene_stashdb_id")]
+    return {"covers": _scene_covers().covers_for_scenes(scenes)}
+
+
 @router.post("/local-scenes")
 def local_scenes(body: LocalScenesRequest):
     """{"provider:scene id": local Stash scene id} for the scenes that are in the library (the "Open scene" buttons of one page of a list)."""

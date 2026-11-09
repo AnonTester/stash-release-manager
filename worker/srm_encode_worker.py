@@ -55,6 +55,11 @@ def default_status_path():
     return os.path.join(base, "srm-encode-worker", "status.json")
 
 
+def auto_queue_file():
+    """The widget's switch "work through the whole Convert list": a file that exists = on. Lives in the config dir so it survives a reboot."""
+    return os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"), "srm-encode-worker", "auto-queue")
+
+
 def call(base, path, body=None, timeout=30):
     data = None if body is None else json.dumps(body).encode()
     req = urllib.request.Request(base.rstrip("/") + path, data=data, headers={"Content-Type": "application/json"} if data else {})
@@ -206,7 +211,9 @@ def main():
     try:
         while not status.stopping:
             try:
-                job = call(args.sidecar, f"/encode-worker/next?worker={urllib.request.quote(args.name)}").get("job")
+                auto = os.path.exists(auto_queue_file())
+                status.set(auto_queue=auto)
+                job = call(args.sidecar, f"/encode-worker/next?worker={urllib.request.quote(args.name)}&auto={int(auto)}").get("job")
                 if job:
                     status.busy = True
                     try:

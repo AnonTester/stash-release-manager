@@ -101,6 +101,17 @@ CREATE TABLE IF NOT EXISTS backlog_overview (
     PRIMARY KEY (provider, entity_type, entity_stashdb_id)
 );
 
+-- The picture address a stash-box sent with a search result (performers, studios, scenes of the Search page), so the sidecar can cache the
+-- picture later without asking again (scene_covers.py); pruned after 30 days.
+CREATE TABLE IF NOT EXISTS image_hint (
+    kind       TEXT NOT NULL,
+    provider   TEXT NOT NULL,
+    entity_id  TEXT NOT NULL,
+    url        TEXT NOT NULL,
+    seen_at    TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (kind, provider, entity_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_release_status ON release(status);
 CREATE INDEX IF NOT EXISTS idx_release_created ON release(scene_created);
 

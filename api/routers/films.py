@@ -922,10 +922,7 @@ def group_name_undo(body: NameUndoBody):
 _SEED_IMAGES = "movie_groups_deleted_20261004_images"
 
 
-@router.get("/{film_id}/seed-cover")
-def seed_cover(film_id: int):
-    """The cover of the deleted group a suggestion came from (the group no longer exists in Stash; its cover was saved to data/ when it was
-    deleted). 404 when there is none."""
+def _seed_cover_bytes(film_id):
     film = film_repo.get(_db, film_id)
     ref = (film or {}).get("source_ref") or ""
     if not ref.startswith("deleted-group:"):
@@ -937,7 +934,24 @@ def seed_cover(film_id: int):
         data = fh.read()
     kind = ("image/png" if data[:4] == b"\x89PNG" else "image/gif" if data[:3] == b"GIF" else
             "image/webp" if data[:4] == b"RIFF" else "image/jpeg")
+    return data, kind
+
+
+@router.get("/{film_id}/seed-cover")
+def seed_cover(film_id: int):
+    """The cover of the deleted group a suggestion came from (the group no longer exists in Stash; its cover was saved to data/ when it was
+    deleted). 404 when there is none."""
+    data, kind = _seed_cover_bytes(film_id)
     return Response(content=data, media_type=kind, headers={"Cache-Control": "max-age=86400"})
+
+
+@router.get("/{film_id}/seed-cover-data")
+def seed_cover_data(film_id: int):
+    """The same cover as a data: URL, for the plugin's normal calls: the browser never needs to reach the sidecar's own address (a page behind
+    an https reverse proxy cannot load an image from an http address)."""
+    import base64
+    data, kind = _seed_cover_bytes(film_id)
+    return {"data": f"data:{kind};base64,{base64.b64encode(data).decode('ascii')}"}
 
 
 class CandidateBody(BaseModel):

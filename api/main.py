@@ -86,6 +86,7 @@ from recycle_bin import cleanup_recycle_bin
 
 from routers.watchlist import router as watchlist_router, init_watchlist_router
 from routers.history import router as history_router
+from routers.covers import router as covers_router, init_covers_router
 from routers.compare import router as compare_router, init_compare_router
 from routers.transfer import router as transfer_router, init_transfer_router
 from routers.setup import router as setup_router, init_setup_router
@@ -103,7 +104,7 @@ import scene_compare
 import scene_alias
 from routers.encode_worker import router as encode_worker_router, init_encode_worker_router
 from routers.convert_api import router as convert_router, init_convert_router, resume as convert_resume
-from routers.releases import router as releases_router, init_releases_router, download_progress as compute_download_progress
+from routers.releases import router as releases_router, init_releases_router, download_progress as compute_download_progress, sweep_scene_covers
 from routers.scan import router as scan_router, init_scan_router, set_progress as set_scan_progress
 from routers.settings import (
     router as settings_router, init_settings_router, DEFAULTS, get_setting_value,
@@ -1676,6 +1677,7 @@ init_file_import_router(
     on_scene_created=on_scene_created,
     on_download_complete=on_download_complete,
 )
+init_covers_router(db, get_stash_client, get_provider_client)
 init_search_router(db, get_stashdb_client, get_theporndb_client, get_stash_client, get_whisparr_client,
                     get_search_source, settings, get_provider_client=get_provider_client, readd=readd_library_scene)
 init_quality_profiles_router(db)
@@ -2190,6 +2192,12 @@ async def _history_prune_loop():
                 logger.info("history: pruned %d entr(y/ies) older than %d day(s)", removed, days)
         except Exception:
             logger.exception("history prune failed")
+        try:
+            gone = await asyncio.to_thread(sweep_scene_covers)
+            if gone:
+                logger.info("scene covers: %d cached file(s) of scenes without a release removed", gone)
+        except Exception:
+            logger.exception("scene cover sweep failed")
         await asyncio.sleep(24 * 3600)
 
 
@@ -2280,6 +2288,7 @@ app = FastAPI(title="StashReleaseManager", lifespan=lifespan)
 app.include_router(watchlist_router)
 app.include_router(userscript_router)
 app.include_router(releases_router)
+app.include_router(covers_router)
 app.include_router(encode_worker_router)
 app.include_router(convert_router)
 app.include_router(scan_router)
