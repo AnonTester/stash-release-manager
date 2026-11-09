@@ -11,7 +11,7 @@
   // rule and the bug it caused when this drifted). Change this if you
   // install under a different folder name.
   // Must equal `version:` in stash-release-manager.yml (scripts/test_plugin_version.py checks it).
-  const PLUGIN_VERSION = '0.258.4';
+  const PLUGIN_VERSION = '0.258.5';
   const PLUGIN_ID = 'stash-release-manager';
   const PLUGIN_NAME = 'StashReleaseManager';
 
@@ -2058,7 +2058,7 @@
 
   // A dialog in Stash's own modal markup (Bootstrap: .modal / .modal-dialog / .modal-content), so a theme restyles it like Stash's own dialogs
   // (v0.238.0). `title` is the heading, `node` the content; Escape, the x and a click beside the dialog close it. Returns {close, body}.
-  function openModal(title, node, { onClose = null, size = 'modal-xl', subtitle = null } = {}) {
+  function openModal(title, node, { onClose = null, size = 'modal-xl', subtitle = null, keepHeight = false } = {}) {
     applyThemeColors();
     const backdrop = el('div', { className: 'modal-backdrop fade show srw-modal-backdrop' });
     const closeBtn = el('button', { type: 'button', className: 'close', 'aria-label': 'Close' }, [el('span', { 'aria-hidden': 'true', textContent: '×' })]);
@@ -2089,6 +2089,17 @@
     document.body.append(backdrop, modal);
     // The dialog's own surface color (the theme's), for things that stick to the top of its scrolling body and need an opaque ground (the player bar).
     try { modal.style.setProperty('--srw-surface', getComputedStyle(dialog.querySelector('.modal-content')).backgroundColor); } catch (e) { /* the stylesheet's fallback */ }
+    // keepHeight: the dialog never gets lower than it has been (a result list that is filtered or paged would otherwise shrink and grow the
+    // dialog, which re-centres it and moves the filter box away from the mouse). It still grows when the content needs more, up to the window.
+    if (keepHeight && typeof ResizeObserver === 'function') {
+      const content = dialog.querySelector('.modal-content');
+      let floor = 0;
+      const ro = new ResizeObserver(() => {
+        const h = Math.ceil(content.getBoundingClientRect().height);
+        if (h > floor) { floor = h; content.style.minHeight = `${h}px`; }
+      });
+      ro.observe(content);
+    }
     return { close, body };
   }
 
@@ -2117,7 +2128,7 @@
       close,
       open(node) {
         panel = node;
-        modal = openModal(title, node, { subtitle, onClose: () => { if (panel === node) { panel = null; modal = null; } } });
+        modal = openModal(title, node, { subtitle, keepHeight: true, onClose: () => { if (panel === node) { panel = null; modal = null; } } });
       },
     };
   }

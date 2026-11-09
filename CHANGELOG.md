@@ -6,6 +6,9 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.258.5
+- **Fix: the Last search and Search… windows keep their height while the results are filtered or paged**, so the window no longer shrinks and grows (and moves the filter box away from the mouse). It still grows when more room is needed. Plugin only.
+
 ## 0.258.4
 - **Release sizes in the Last search list, the manual search and the review rows show MB below 1 GB** ("90 MB" instead of "0.09 GB"); from 1 GB it stays GB with two decimals. Plugin only.
 
