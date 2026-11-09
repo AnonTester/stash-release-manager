@@ -6,6 +6,9 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.258.2
+- **The plugin package now contains the `icons/` folder** (the packaging step had left it out). Packaging only.
+
 ## 0.258.1
 - **Fix: the plugin file lacked the `assets: /icons` entry of 0.257.0**, so the Release Manager icon files were not served. Restored.
 
