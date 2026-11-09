@@ -6,6 +6,9 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.258.1
+- **Fix: the plugin file lacked the `assets: /icons` entry of 0.257.0**, so the Release Manager icon files were not served. Restored.
+
 ## 0.258.0
 - **KDE widget: queue mode, and the last result fades.** (a) A finished encode ("Last: ... done") disappears from the widget after 20 s (a failure stays until the next job). (b) New switch "Work through the whole Convert list (queue)": while it is on, the worker takes the next *wanted* row of Maintenance > Convert whenever nothing is queued, one after the other (failed and dismissed rows are never taken). The switch is the file `~/.config/srm-encode-worker/auto-queue`. Sidecar: `GET /encode-worker/next?auto=1`; the sidecar needs a rebuild for this.
 
