@@ -1567,7 +1567,7 @@ def blocklist_download(db, release):
 
 def fix_wrong_download(db, stash_client, whisparr_client, provider, scene_stashdb_id, entity_type,
                         entity_stashdb_id, whisparr_root_folder_path, local_media_mount, recycle_bin_path,
-                        file_path=None):
+                        file_path=None, discard=False, stashdb_client=None, get_provider_client=None):
     """"Fix wrong download" retry action for a 'fingerprint_mismatch'
     'import_failed' release (2026-09-23) -- see project_roadmap_todo.md
     memory's "Import-failed reason + conditional Retry" entry for the
@@ -1615,6 +1615,25 @@ def fix_wrong_download(db, stash_client, whisparr_client, provider, scene_stashd
     release = release_repo.get_release(db, provider, scene_stashdb_id, entity_type, entity_stashdb_id)
     if release is None:
         raise ValueError(f"No release found for scene {scene_stashdb_id} / {entity_type} {entity_stashdb_id}")
+
+    # Is the "wrong" file one we want for ANOTHER scene (wishlist / upgrade list)? Then it is not thrown away unasked (v0.260.14): the answer
+    # stored at the mismatch is used, else the provider is asked now; `discard` (the "Discard anyway" click) skips this.
+    if not discard and not file_path and release.get("import_error_code") == "fingerprint_mismatch" and release.get("pending_import_path"):
+        try:
+            found = json.loads(release.get("mismatch_found") or "null")
+        except ValueError:
+            found = None
+        if not found:
+            try:
+                found = identify_wrong_file(db, stash_client, _provider_client(provider, stashdb_client, get_provider_client), provider,
+                                            scene_stashdb_id, release["pending_import_path"])
+            except Exception:
+                logger.exception("fix_wrong_download: looking up the wrong file failed for scene %s -- going on", scene_stashdb_id)
+                found = None
+        if found:
+            found = {**found, "list": _list_of_scene(db, provider, found.get("id"))}  # as it is NOW (the scene may have been imported meanwhile)
+        if found and found.get("list") in ("wishlist", "upgrade"):
+            return {"wanted_elsewhere": found, "status": release.get("status")}
 
     blocklisted_title = blocklist_download(db, release)
 

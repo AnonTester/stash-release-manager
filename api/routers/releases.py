@@ -583,7 +583,7 @@ def fix_mismatch(provider: str, entity_type: str, entity_stashdb_id: str, scene_
 
 
 @router.post("/{provider}/{entity_type}/{entity_stashdb_id}/{scene_stashdb_id}/fix-wrong-download")
-def fix_wrong_download(provider: str, entity_type: str, entity_stashdb_id: str, scene_stashdb_id: str):
+def fix_wrong_download(provider: str, entity_type: str, entity_stashdb_id: str, scene_stashdb_id: str, body: dict = None):
     """"Retry" action for an 'import_failed' release whose
     `import_error_code` is 'fingerprint_mismatch' -- this sidecar's own
     pipeline imported a file that turned out not to match StashDB's own
@@ -602,6 +602,7 @@ def fix_wrong_download(provider: str, entity_type: str, entity_stashdb_id: str, 
             get_setting_value(_db, "whisparr_root_folder_path", _settings.whisparr_root_folder_path),
             get_setting_value(_db, "local_media_mount", _settings.local_media_mount),
             get_setting_value(_db, "recycle_bin_path", DEFAULTS["recycle_bin_path"]),
+            discard=bool((body or {}).get("discard")), stashdb_client=_get_stashdb_client(), get_provider_client=_get_provider_client,
         )
     except ValueError as e:
         raise HTTPException(404, str(e))

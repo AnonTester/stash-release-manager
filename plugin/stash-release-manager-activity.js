@@ -566,19 +566,33 @@
       // sequence this triggers.
       if (showFixWrongDownload && r.import_error_code === 'fingerprint_mismatch') {
         const fixStatus = el('span', { className: 'srw-key-status' });
+        // The wrong file may be a scene we want (v0.260.14): then nothing is thrown away unasked -- the button says "Discard anyway".
+        let known = null;
+        try { known = r.mismatch_found ? JSON.parse(r.mismatch_found) : null; } catch (e) { known = null; }
+        const wantedElsewhere = Boolean(known && (known.list === 'wishlist' || known.list === 'upgrade'));
         const fixBtn = el('button', {
-          className: 'srw-btn srw-btn-primary', textContent: 'Fix wrong download',
+          className: wantedElsewhere ? 'srw-btn srw-btn-danger' : 'srw-btn srw-btn-primary',
+          textContent: wantedElsewhere ? 'Discard anyway' : 'Fix wrong download',
           onClick: (e) => {
             confirmInline(e.currentTarget,
-              `Move the wrong file for "${r.title}" to the recycle bin, blocklist that download, and put the scene back on the wishlist for a new search?`,
+              wantedElsewhere
+                ? `The file is "${known.title || known.id}", which is on your ${known.list === 'upgrade' ? 'upgrade list' : 'wishlist'}. Move it to the recycle bin anyway, blocklist the download and put "${r.title}" back on the wishlist?`
+                : `Move the wrong file for "${r.title}" to the recycle bin, blocklist that download, and put the scene back on the wishlist for a new search?`,
               async () => {
                 fixStatus.textContent = ' fixing...';
                 try {
                   const result = await window.SRW.runOp('releases_fix_wrong_download', {
                     provider: r.provider, entity_type: r.entity_type, entity_stashdb_id: r.entity_stashdb_id,
-                    scene_stashdb_id: r.scene_stashdb_id,
+                    scene_stashdb_id: r.scene_stashdb_id, discard: wantedElsewhere,
                   });
                   if (result.error) { fixStatus.textContent = ` error: ${result.error}`; return; }
+                  if (result.wanted_elsewhere) { // nothing was changed: the lookup found that we want this file for another scene
+                    const w = result.wanted_elsewhere;
+                    window.SRW.notify('Fix wrong download', `Not discarded: the file is "${w.title || w.id}", which is on your ${w.list === 'upgrade' ? 'upgrade list' : 'wishlist'}.`
+                      + (w.list === 'wishlist' ? ' Use it for that scene, or discard it anyway.' : ' Discard it anyway if you do not need it.'), 'error');
+                    if (onChanged) onChanged();
+                    return;
+                  }
                   if (onChanged) onChanged();
                 } catch (err) {
                   fixStatus.textContent = ` error: ${err.message}`;

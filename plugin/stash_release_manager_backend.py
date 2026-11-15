@@ -122,7 +122,7 @@ def main():
         # file, may also hit Whisparr's own blocklist endpoint).
         path = (f"/releases/{args.get('provider')}/{args.get('entity_type')}/"
                 f"{args.get('entity_stashdb_id')}/{args.get('scene_stashdb_id')}/fix-wrong-download")
-        result = _post(sidecar_url, path, {}, timeout=60)
+        result = _post(sidecar_url, path, {"discard": bool(args.get("discard"))}, timeout=90)
     elif mode == "muted_studios_list":
         result = _get(sidecar_url, "/muted-studios", timeout=30)
     elif mode == "muted_studios_children":

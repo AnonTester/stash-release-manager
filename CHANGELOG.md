@@ -6,6 +6,9 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.260.14
+- **"Fix wrong download" checks whether the "wrong" file is a scene you want.** Before the file is moved to the recycle bin and the download blocklisted, the stored answer (or a new lookup at the provider) tells which scene the file's hashes belong to; when that scene is on the wishlist or upgrade list nothing is discarded: the row says so, "Use for that scene" is offered (wishlist), and the Fix button turns into "Discard anyway" with a confirmation naming the scene. Other cases work as before. Plugin + sidecar (rebuild, Reload plugins).
+
 ## 0.260.13
 - **A restart while a worker's finished encode is being checked no longer makes the worker encode the file again.** The sidecar now records the pending check on disk before it starts it and removes the record when it ends; after a restart the import run finds the record, sees the encoded file is still there and runs the check again instead of queueing the whole encode a second time. A record of another download, or whose encoded file is gone, is dropped. Sidecar (rebuild).
 
