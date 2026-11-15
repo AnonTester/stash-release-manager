@@ -6,6 +6,9 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.260.12
+- **Rejecting one part of a split upload also rejects its other parts.** An exact blocklist entry now compares without a trailing part marker (`_part.2`, `pt2`, `cd1`, `disc 2`, `1of2`), so rejecting `..._part.1` no longer lets `..._part.2` come up next. Other encodes of the release are still not covered by an exact entry. At start-up the stored Needs-review candidates are checked against the scene's blocklist as well. Sidecar (rebuild).
+
 ## 0.260.11
 - **A scene on the wishlist is marked as such in Missing from Catalog / New releases, and offers no second Add.** The row used to lose its Add button only when Whisparr knew the scene (Whisparr is only a backup now). A row whose release is on the wishlist now gets a blue badge "On wishlist" and "Search now" instead of Add / Add + search; right after a click on Add the row changes the same way. Plugin only (Reload plugins, hard reload).
 

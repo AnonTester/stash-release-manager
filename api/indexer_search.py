@@ -1099,8 +1099,14 @@ _QUALITY_SUFFIX_RE = re.compile(r"\b(?:xxx|\d{3,4}p|x26[45]|h26[45]|hevc)\b")
 EXACT_PREFIX = "exact:"
 
 
+_PART_TAIL_RE = re.compile(r"\s(?:part|pt|cd|disc|disk)\s?\d{1,2}$|\s\d{1,2}\s?of\s?\d{1,2}$")
+
+
 def _exact_key(title):
-    return re.sub(r"[^a-z0-9]+", " ", (title or "").lower()).strip()
+    """The release name reduced to its words. A trailing part marker ("_part.1", "cd2", "1of2") is dropped: the parts of one upload are one decision
+    (v0.260.12 -- rejecting "..._part.1" must not offer "..._part.2" next)."""
+    key = re.sub(r"[^a-z0-9]+", " ", (title or "").lower()).strip()
+    return _PART_TAIL_RE.sub("", key)
 
 
 # Third and fourth kind (v0.231.0): "hash:<info hash>" / "link:<link without keys>" -- THIS torrent is unusable (dead, stalled, abandoned). Torrent

@@ -194,7 +194,7 @@ def sweep_review_candidates(db):
     removed = 0
     with db.connect() as conn:
         rows = [dict(r) for r in conn.execute(
-            """SELECT provider, scene_stashdb_id, title, scene_date, studio_name, cast_names, review_candidate FROM release
+            """SELECT provider, scene_stashdb_id, title, scene_date, studio_name, cast_names, review_candidate, review_rejected_titles FROM release
                WHERE status = 'sent_to_whisparr' AND download_job_id IS NULL AND last_search_result = 'needs_review'
                AND review_candidate IS NOT NULL AND provider = 'stashdb'""")]
     import json
@@ -204,6 +204,17 @@ def sweep_review_candidates(db):
         except (TypeError, ValueError):
             continue
         names = [n for n in (r["cast_names"] or "").split("|") if n]
+        if title:  # on the scene's own blocklist (e.g. the other part of a rejected two-part upload): not offered again
+            try:
+                blocked = indexer_search._is_rejected(title, indexer_search._split_rejected(json.loads(r["review_rejected_titles"] or "[]")))
+            except (TypeError, ValueError):
+                blocked = False
+            if blocked:
+                release_repo.set_review_candidate_for_scene(db, r["provider"], r["scene_stashdb_id"], None)
+                release_repo.set_search_result_for_scene(db, r["provider"], r["scene_stashdb_id"], indexer_search.RESULT_TITLE_MISMATCH_ONLY)
+                history.scene("info", "review", f"Possible match removed: {title} is on this scene's blocklist", r["provider"], r["scene_stashdb_id"])
+                removed += 1
+                continue
         if not title or not names:
             continue
         far = indexer_search._release_date_far_off(r["scene_date"], title, indexer_search.REVIEW_MAX_DAYS_ANY)
