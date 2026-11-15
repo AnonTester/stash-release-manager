@@ -1618,6 +1618,7 @@ def fix_wrong_download(db, stash_client, whisparr_client, provider, scene_stashd
 
     # Is the "wrong" file one we want for ANOTHER scene (wishlist / upgrade list)? Then it is not thrown away unasked (v0.260.14): the answer
     # stored at the mismatch is used, else the provider is asked now; `discard` (the "Discard anyway" click) skips this.
+    found = None
     if not discard and not file_path and release.get("import_error_code") == "fingerprint_mismatch" and release.get("pending_import_path"):
         try:
             found = json.loads(release.get("mismatch_found") or "null")
@@ -1636,6 +1637,18 @@ def fix_wrong_download(db, stash_client, whisparr_client, provider, scene_stashd
             return {"wanted_elsewhere": found, "status": release.get("status")}
 
     blocklisted_title = blocklist_download(db, release)
+
+    # The hashes and the fetch data of a wrong file are kept (v0.260.15) although the file goes: they live in Stash's scene record, which is
+    # destroyed below. A file that was identified as another scene is recorded for THAT scene already (identify_wrong_file); one that matches no
+    # known scene is recorded under the scene it was fetched for, with source 'wrong' (= a release that is NOT that scene's).
+    if not file_path and release.get("pending_import_path") and release.get("import_error_code") == "fingerprint_mismatch":
+        try:
+            identified = bool(found) or bool(json.loads(release.get("mismatch_found") or "null"))
+        except ValueError:
+            identified = False
+        if not identified:
+            known_release.record(db, stash_client, provider, scene_stashdb_id, release["pending_import_path"],
+                                 blocklisted_title or release.get("grabbed_title"), "wrong", _grab_info_of(db, provider, scene_stashdb_id))
 
     try:
         movie = whisparr_client.find_by_stash_id(scene_stashdb_id)

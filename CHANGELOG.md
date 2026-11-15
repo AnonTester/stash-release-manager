@@ -6,6 +6,9 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.260.15
+- **"Fix wrong download" keeps the hashes and fetch data of the file it discards.** A wrong file that matches no known scene is recorded in `known_release` (hashes, length, size, how it was fetched) under the scene it was fetched for, with source `wrong`, before its Stash scene record is destroyed. Still only collected. Sidecar (rebuild).
+
 ## 0.260.14
 - **"Fix wrong download" checks whether the "wrong" file is a scene you want.** Before the file is moved to the recycle bin and the download blocklisted, the stored answer (or a new lookup at the provider) tells which scene the file's hashes belong to; when that scene is on the wishlist or upgrade list nothing is discarded: the row says so, "Use for that scene" is offered (wishlist), and the Fix button turns into "Discard anyway" with a confirmation naming the scene. Other cases work as before. Plugin + sidecar (rebuild, Reload plugins).
 

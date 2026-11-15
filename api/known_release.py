@@ -1,7 +1,8 @@
 """Known releases (v0.260.1): which release name a file's hashes belong to. Collected where the hashes are known anyway -- a verified import (the release
 is the scene's) and a fingerprint mismatch whose file turned out to be another scene (the release is THAT scene's). Since v0.260.2 also how the release
 was fetched (indexer, protocol, download / info URL, size). Nothing reads the table yet; it is the base for "do we already know a release of this scene?"
-before an indexer is asked. The URLs can carry an indexer's API key: they stay in the database. Best-effort: collecting never fails an import."""
+before an indexer is asked. `source`: 'import' (verified import), 'mismatch' (the wrong file is another scene's release), 'wrong' (v0.260.15: a file
+that matches no known scene, discarded by "Fix wrong download" -- recorded under the scene it was fetched for, it is NOT that scene's release). The URLs can carry an indexer's API key: they stay in the database. Best-effort: collecting never fails an import."""
 import json
 import logging
 
