@@ -1144,6 +1144,7 @@
         const rel = releases.find((x) => x.scene_stashdb_id === sceneId);
         const onWishlist = Boolean(rel && rel.status === 'sent_to_whisparr'); // tracked by Whisparr but not on the wishlist (v0.253.16): Add stays, the logo searches
         if ((info.whisparr_exists && onWishlist) || info.whisparr_has_file || info.whisparr_file_mismatch) li.querySelectorAll('.srw-whisparr-add-only').forEach((x) => x.remove());
+        if (onWishlist && !info.whisparr_has_file && !info.whisparr_file_mismatch) window.SRW.markOnWishlist(li, actionBtn);
         if (info.in_library) {
           const label = info.quality ? `In Library — ${info.quality}` : 'In Library';
           const badge = el('span', { className: 'srw-release-in-library', textContent: label });

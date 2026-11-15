@@ -11,7 +11,7 @@
   // rule and the bug it caused when this drifted). Change this if you
   // install under a different folder name.
   // Must equal `version:` in stash-release-manager.yml (scripts/test_plugin_version.py checks it).
-  const PLUGIN_VERSION = '0.260.10';
+  const PLUGIN_VERSION = '0.260.11';
   const PLUGIN_ID = 'stash-release-manager';
   const PLUGIN_NAME = 'StashReleaseManager';
 
@@ -2956,6 +2956,22 @@
 
   // The row's action button of a scene that Whisparr tracks (no file) but that is not on the wishlist: the logo, with "Search now" as its words (tooltip and
   // screen reader; the text stays inside, the click handler reads it). `btn` = the row's `.srw-whisparr-action` button.
+  // A scene on the wishlist (release status 'sent_to_whisparr') is marked on its row in the lists that offer Add (Missing from Catalog, New releases): a
+  // badge, no second Add (v0.260.11). Decided by the scene's own status -- not by whether Whisparr knows it (Whisparr is only a backup now).
+  function markOnWishlist(li, actionBtn) {
+    if (!li) return;
+    li.querySelectorAll('.srw-whisparr-add-only').forEach((x) => x.remove());
+    if (!li.querySelector('.srw-release-on-wishlist')) {
+      rowMeta(li).appendChild(window.SRW.el('span', { className: 'srw-release-on-wishlist', textContent: 'On wishlist', title: 'This scene is on your wishlist -- it is searched by the schedule (or with Search now)' }));
+    }
+    const btn = actionBtn || li.querySelector('.srw-whisparr-action');
+    if (btn && /^Add/.test(btn.textContent || '')) {
+      btn.textContent = 'Search now';
+      btn.classList.remove('srw-btn-primary');
+      btn.classList.add('srw-btn-whisparr');
+    }
+  }
+
   function markInWhisparr(btn) {
     if (!btn) return;
     btn.textContent = '';
@@ -3497,7 +3513,7 @@
     getRoute, onNavigate, initNavigationWatcher,
     el, waitForElement, entityIcon, buildPageHeader,
     watchKind, keepResult, recallResult, forgetResult, keptNote, searchStatusLabel, setBusy, openModal, sceneSubtitle, iconButton, busyIcon, ageWords, ageWarning, confirmInline, buildManagedList, buildSearchActions, whenNoOpenPanel, buildManualSearch, getSearchCapabilities,
-    rememberOpen, storedOpen, storeOpen, statusesFor, buildFilterShell, iconToggle, applyThemeColors, bulkAddActions, markInWhisparr, icon, mismatchWarning, buildPagedList, buildPager, releaseTitleNode, notify, dismissedNotice, releaseDismissedNotice, dismissRelease, buildWishlistDismiss, buildFilmDismissButtons, notifyHandoff, buildAddOnlyButton,
+    rememberOpen, storedOpen, storeOpen, statusesFor, buildFilterShell, iconToggle, applyThemeColors, bulkAddActions, markInWhisparr, markOnWishlist, icon, mismatchWarning, buildPagedList, buildPager, releaseTitleNode, notify, dismissedNotice, releaseDismissedNotice, dismissRelease, buildWishlistDismiss, buildFilmDismissButtons, notifyHandoff, buildAddOnlyButton,
     sceneUrl, notifyReadd, loadMetadataProviderUrls, loadProviders, resetProviders, providerInfo, providerLabel, providerKeys, providerOn, providersAllOn, providersSelected, isLateAdditionNew, buildLateAdditionBadge,
     buildFilteredPagedList, markRowBusy, buildBulkDismissBar, buildSelect, buildSafetyPanel, ignoreRenamers, pairingOptionsFor, castOptionsFor, buildPairingBadge, localPageFetcher, releaseQueryArgs, filterLocally, isFilterActive,
     describeProgress, applyProgress, attachLive, buildLiveHint,

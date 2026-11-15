@@ -6,6 +6,9 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.260.11
+- **A scene on the wishlist is marked as such in Missing from Catalog / New releases, and offers no second Add.** The row used to lose its Add button only when Whisparr knew the scene (Whisparr is only a backup now). A row whose release is on the wishlist now gets a blue badge "On wishlist" and "Search now" instead of Add / Add + search; right after a click on Add the row changes the same way. Plugin only (Reload plugins, hard reload).
+
 ## 0.260.10
 - **Review: Identify Scene -- a scene with a wrong provider id can be corrected by its fingerprints in one step.** The fingerprint lookup is now also offered for a scene that carries a provider id: each exact match has the button "Use this for Scene, rename and move the file" -- the match's metadata and id replace the wrong ones, the scene leaves the Review list and the file is renamed / moved right away (fingerprint-verified Organize plan; if it cannot be organized the message says why). Matches that are already the scene's id or held by another local scene are disabled. Plugin + sidecar (rebuild, Reload plugins).
 

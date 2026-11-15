@@ -357,6 +357,7 @@
     const actionBtn = li.querySelector('.srw-whisparr-action');
     // On the wishlist already (or with a file): no Add. Tracked by Whisparr but NOT on the wishlist (v0.253.16): Add stays, the search button is the logo.
     const onWishlist = Boolean(release && release.status === 'sent_to_whisparr');
+    if (onWishlist && !info.whisparr_has_file && !info.whisparr_file_mismatch) window.SRW.markOnWishlist(li, actionBtn); // badge + no second Add, whatever Whisparr knows
     if ((info.whisparr_exists && onWishlist) || info.whisparr_has_file || info.whisparr_file_mismatch) li.querySelectorAll('.srw-whisparr-add-only').forEach((x) => x.remove());
     if (info.in_library) {
       const label = info.quality ? `In Library — ${info.quality}` : 'In Library';
@@ -537,7 +538,7 @@
       statusSpan.textContent = result.search_skipped ? 'on the wishlist, searched by the schedule'
         : (result.search_running ? 'searching in the background...' : window.SRW.searchStatusLabel(null, result.search_result));
     }
-    li.querySelectorAll('.srw-whisparr-add-only').forEach((x) => x.remove()); // it is on the wishlist now
+    window.SRW.markOnWishlist(li); // it is on the wishlist now: badge, no second Add
     try {
       const status = await window.SRW.runOp('releases_library_status', {
         scenes: [{ scene_stashdb_id: release.scene_stashdb_id, is_vr: !!release.is_vr }],
