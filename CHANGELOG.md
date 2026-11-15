@@ -6,6 +6,9 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.260.10
+- **Review: Identify Scene -- a scene with a wrong provider id can be corrected by its fingerprints in one step.** The fingerprint lookup is now also offered for a scene that carries a provider id: each exact match has the button "Use this for Scene, rename and move the file" -- the match's metadata and id replace the wrong ones, the scene leaves the Review list and the file is renamed / moved right away (fingerprint-verified Organize plan; if it cannot be organized the message says why). Matches that are already the scene's id or held by another local scene are disabled. Plugin + sidecar (rebuild, Reload plugins).
+
 ## 0.260.9
 - **Needs review: a release of an unrelated studio is not offered.** The studio a release name starts with (the longest run of 1-4 leading words that is exactly a stash-box studio name) must be the scene's own studio, its parent or site, or a studio with the same parent; otherwise the candidate is set aside and the next best is chosen (stored candidates get the same check at start-up). Never decided, the candidate stays: names starting with a platform name (new setting `studio_platform_names`, a short default list, for all scenes), with a studio the stash-box does not know, or with one of the scene's performers; also failed lookups. Only the Needs-review choice, not the automatic grab. Switch `studio_gate_enabled`. Plugin + sidecar (rebuild, Reload plugins).
 

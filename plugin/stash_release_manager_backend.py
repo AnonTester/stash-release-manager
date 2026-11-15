@@ -493,7 +493,7 @@ def main():
                        {"scene_id": args.get("scene_id"), "query": args.get("query")}, timeout=180)
     elif mode == "compare_adopt":
         result = _post(sidecar_url, f"/maintenance/compare/pair/{args.get('id')}/adopt",
-                       {k: args.get(k) for k in ("scene_id", "provider", "provider_id")}, timeout=180)
+                       {k: args.get(k) for k in ("scene_id", "provider", "provider_id", "organize")}, timeout=300)
     elif mode == "compare_reset_metadata":
         result = _post(sidecar_url, f"/maintenance/compare/pair/{args.get('id')}/reset-metadata", {"scene_id": args.get("scene_id")}, timeout=60)
     elif mode == "compare_frames":

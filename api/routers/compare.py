@@ -8,6 +8,8 @@ import scene_compare
 import upgrades
 import vr_check
 
+import logging
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/maintenance/compare", tags=["compare"])
 
 _db = None
@@ -137,7 +139,17 @@ def pair_search(pair_id: int, body: dict):
 def pair_adopt(pair_id: int, body: dict):
     if not body.get("scene_id") or not body.get("provider") or not body.get("provider_id"):
         raise HTTPException(400, "scene_id, provider and provider_id are required")
-    return _compare().adopt(pair_id, body["scene_id"], body["provider"], body["provider_id"])
+    result = _compare().adopt(pair_id, body["scene_id"], body["provider"], body["provider_id"])
+    if body.get("organize") and result.get("ok"):
+        # The id was replaced (v0.260.10): rename / move the file to the new scene's name right away -- fingerprint-verified plan, same as the Organize library page.
+        import file_importer
+        hook = file_importer.organize_scene_hook
+        try:
+            result["organized"] = hook(str(body["scene_id"])) if hook else {"failed": [{"reason": "the organizer is not available"}], "done": []}
+        except Exception as e:
+            logger.exception("compare adopt: renaming / moving scene %s failed", body["scene_id"])
+            result["organized"] = {"failed": [{"reason": f"{type(e).__name__}: {e}"}], "done": []}
+    return result
 
 
 @router.post("/pair/{pair_id}/reset-metadata")
