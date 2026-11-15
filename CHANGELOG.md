@@ -6,6 +6,9 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.260.13
+- **A restart while a worker's finished encode is being checked no longer makes the worker encode the file again.** The sidecar now records the pending check on disk before it starts it and removes the record when it ends; after a restart the import run finds the record, sees the encoded file is still there and runs the check again instead of queueing the whole encode a second time. A record of another download, or whose encoded file is gone, is dropped. Sidecar (rebuild).
+
 ## 0.260.12
 - **Rejecting one part of a split upload also rejects its other parts.** An exact blocklist entry now compares without a trailing part marker (`_part.2`, `pt2`, `cd1`, `disc 2`, `1of2`), so rejecting `..._part.1` no longer lets `..._part.2` come up next. Other encodes of the release are still not covered by an exact entry. At start-up the stored Needs-review candidates are checked against the scene's blocklist as well. Sidecar (rebuild).
 

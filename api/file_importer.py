@@ -607,6 +607,53 @@ def _forget_encode(stash_id):
         pass
 
 
+def _pending_verify_path(stash_id):
+    return os.path.join(_transcode_dir(), f"{stash_id}.verify.json")
+
+
+def _write_pending_verify(stash_id, source_file, dst, worker, seconds, hw, codec):
+    """A worker's finished encode that the sidecar is about to check: written to disk first, because the check takes minutes and a restart in
+    between would lose it (the job queue is in memory) -- the worker would then encode the whole file a second time (found 2026-11-15)."""
+    try:
+        with open(_pending_verify_path(stash_id), "w") as f:
+            json.dump({"source": source_file, "dst": dst, "worker": worker, "seconds": int(seconds or 0), "hw": bool(hw), "codec": codec}, f)
+    except OSError:
+        logger.warning("could not record the pending check of the encode of %s", stash_id, exc_info=True)
+
+
+def _pending_verify(stash_id, source_file):
+    """The recorded check of this download's finished encode, when it is still valid (same download, the encoded file is there), else None."""
+    try:
+        with open(_pending_verify_path(stash_id)) as f:
+            data = json.load(f)
+        if data.get("source") == source_file and os.path.exists(data.get("dst", "")):
+            return data
+    except (OSError, ValueError):
+        pass
+    _drop_pending_verify(stash_id)
+    return None
+
+
+def _drop_pending_verify(stash_id):
+    try:
+        os.remove(_pending_verify_path(stash_id))
+    except OSError:
+        pass
+
+
+def _resume_verify(db, provider, stash_id, source_file, plan_info, pending):
+    """After a restart: check the finished encode of a worker again instead of queueing the whole encode a second time."""
+    encode_queue.add(db, provider, stash_id, source_file, plan_info)
+    encode_queue.adopt(provider, stash_id, pending["worker"])
+    encode_queue.start_verify(provider, stash_id, pending["worker"])
+    import_progress.set_phase(provider, stash_id, "encoding", percentage=0, method=f"{pending['worker']}: checking the result", checking=True,
+                              started_at=int(time.time()))
+    history.scene("info", "import", f"Checking the finished encode of {pending['worker']} again (the sidecar was restarted while it was checked) "
+                  "-- it is not encoded a second time", provider, stash_id)
+    threading.Thread(target=_verify_remote_result, args=(provider, stash_id, pending["worker"], pending["seconds"], pending["hw"], pending["codec"]),
+                     daemon=True, name=f"verify-encode-{stash_id[:8]}").start()
+
+
 def _reencode_plan(db, provider, stash_id, source_file):
     """None when this download needs no re-encode, a failed-result dict when it cannot be done, else {"info": probe of the source}."""
     rows = release_repo.list_rows_for_scene(db, provider, stash_id)
@@ -654,6 +701,10 @@ def _maybe_reencode(db, provider, stash_id, source_file):
         return plan
     global _encode_db
     _encode_db = db
+    pending = _pending_verify(stash_id, source_file)
+    if pending is not None:
+        _resume_verify(db, provider, stash_id, source_file, plan["info"], pending)
+        return {"status": "waiting_encode"}
     encode_queue.add(db, provider, stash_id, source_file, plan["info"])
     _ensure_encode_thread()
     from routers.settings import get_setting_value
@@ -740,6 +791,7 @@ def finish_remote_encode(provider, stash_id, worker, ok, error=None, seconds=Non
             _encode_finished(provider, stash_id)
         return {"ok": True, "recorded": "failed"}
     encode_queue.start_verify(provider, stash_id, worker)
+    _write_pending_verify(stash_id, job["source"], remote_output_path(job["source"], stash_id, job["info"]), worker, seconds, hw, codec)
     import_progress.set_phase(provider, stash_id, "encoding", percentage=0, method=f"{worker}: checking the result", checking=True, started_at=int(time.time()))
     threading.Thread(target=_verify_remote_result, args=(provider, stash_id, worker, seconds, hw, codec), daemon=True,
                      name=f"verify-encode-{stash_id[:8]}").start()
@@ -767,6 +819,7 @@ def _verify_remote_result(provider, stash_id, worker, seconds, hw, codec):
         logger.exception("checking the result of %s failed", stash_id)
         _encode_failed(db, provider, stash_id, f"{worker}: checking the result failed ({type(e).__name__}: {e})")
     finally:
+        _drop_pending_verify(stash_id)  # (a restart in the middle never gets here: the record stays and the check is resumed)
         _encode_finished(provider, stash_id)
 
 
