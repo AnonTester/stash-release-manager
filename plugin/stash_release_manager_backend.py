@@ -122,7 +122,7 @@ def main():
         # file, may also hit Whisparr's own blocklist endpoint).
         path = (f"/releases/{args.get('provider')}/{args.get('entity_type')}/"
                 f"{args.get('entity_stashdb_id')}/{args.get('scene_stashdb_id')}/fix-wrong-download")
-        result = _post(sidecar_url, path, {}, timeout=60)
+        result = _post(sidecar_url, path, {"discard": bool(args.get("discard"))}, timeout=90)
     elif mode == "muted_studios_list":
         result = _get(sidecar_url, "/muted-studios", timeout=30)
     elif mode == "muted_studios_children":
@@ -147,6 +147,10 @@ def main():
     elif mode == "releases_confirm_file":
         result = _post(sidecar_url, f"/releases/{args.get('provider')}/{args.get('scene_stashdb_id')}/confirm-file",
                        {"submit": bool(args.get("submit"))}, timeout=180)
+    elif mode == "releases_identify_file":
+        result = _post(sidecar_url, f"/releases/{args.get('provider')}/{args.get('scene_stashdb_id')}/identify-file", {}, timeout=180)
+    elif mode == "releases_place_file":
+        result = _post(sidecar_url, f"/releases/{args.get('provider')}/{args.get('scene_stashdb_id')}/place-file", {}, timeout=600)
     elif mode == "releases_recheck_fingerprints":
         result = _post(sidecar_url, f"/releases/{args.get('provider')}/{args.get('scene_stashdb_id')}/recheck-fingerprints", {}, timeout=180)
     elif mode == "films_list":
@@ -489,7 +493,7 @@ def main():
                        {"scene_id": args.get("scene_id"), "query": args.get("query")}, timeout=180)
     elif mode == "compare_adopt":
         result = _post(sidecar_url, f"/maintenance/compare/pair/{args.get('id')}/adopt",
-                       {k: args.get(k) for k in ("scene_id", "provider", "provider_id")}, timeout=180)
+                       {k: args.get(k) for k in ("scene_id", "provider", "provider_id", "organize")}, timeout=300)
     elif mode == "compare_reset_metadata":
         result = _post(sidecar_url, f"/maintenance/compare/pair/{args.get('id')}/reset-metadata", {"scene_id": args.get("scene_id")}, timeout=60)
     elif mode == "compare_frames":
@@ -828,7 +832,7 @@ def main():
         # Same generous timeout class as releases_handoff -- a real
         # download-client add round trip.
         path = f"/releases/{args.get('provider')}/{args.get('scene_stashdb_id')}/manual-search/grab"
-        result = _post(sidecar_url, path, {"candidate": args.get("candidate") or {}, "replace": bool(args.get("replace"))}, timeout=60)
+        result = _post(sidecar_url, path, {"candidate": args.get("candidate") or {}, "replace": bool(args.get("replace")), "force": bool(args.get("force"))}, timeout=60)
     elif mode == "releases_last_search_grab":
         # Re-finds a result of the search log by title + indexer + size and grabs it (replacing a running torrent), v0.231.3
         path = f"/releases/{args.get('provider')}/{args.get('scene_stashdb_id')}/last-search/grab"

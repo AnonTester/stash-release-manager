@@ -565,6 +565,13 @@ def list_sent_to_whisparr(db):
         return [dict(r) for r in rows]
 
 
+def set_mismatch_found_for_scene(db, provider, scene_stashdb_id, found):
+    """Stores (a dict) or clears (None) which scene a mismatching file really is, see db._migrate_release_mismatch_found()."""
+    with db.connect() as conn:
+        conn.execute("UPDATE release SET mismatch_found = ? WHERE provider = ? AND scene_stashdb_id = ?",
+                     (json.dumps(found) if found else None, provider, scene_stashdb_id))
+
+
 def set_import_error_for_scene(db, provider, scene_stashdb_id, code, detail):
     """Records why an import attempt failed (2026-09-23) -- scene-scoped
     like set_status_for_scene()/set_download_job_for_scene() above.
@@ -609,6 +616,22 @@ def set_grabbed_for_scene(db, provider, scene_stashdb_id, title):
                WHERE provider = ? AND scene_stashdb_id = ?""",
             (title, provider, scene_stashdb_id),
         )
+
+
+def set_grabbed_info_for_scene(db, provider, scene_stashdb_id, candidate):
+    """The grabbed candidate (indexer, protocol, URLs, size, ...), see db._migrate_grab_info(); a table of its own because the URL carries an API key."""
+    with db.connect() as conn:
+        conn.execute("INSERT OR REPLACE INTO grab_info (provider, scene_id, info, updated_at) VALUES (?, ?, ?, datetime('now'))",
+                     (provider, scene_stashdb_id, json.dumps(candidate) if candidate else None))
+
+
+def get_grabbed_info_for_scene(db, provider, scene_stashdb_id):
+    with db.connect() as conn:
+        row = conn.execute("SELECT info FROM grab_info WHERE provider = ? AND scene_id = ?", (provider, scene_stashdb_id)).fetchone()
+    try:
+        return json.loads(row["info"]) if row and row["info"] else None
+    except ValueError:
+        return None
 
 
 def scene_has_active_download(db, provider, scene_stashdb_id):

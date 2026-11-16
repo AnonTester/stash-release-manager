@@ -75,6 +75,8 @@ from theporndb_identify import identify_favorites_against_theporndb
 from import_check import check_import_status
 from handoff import hand_off, uses_whisparr, attempt_sidecar_search, link_imported_equivalent, feed_has_lead, refresh_scene_from_provider
 import indexer_search
+import download_failures
+import other_scene_check
 from indexer_search import search_and_grab
 import download_client_repo
 import download_history_cleanup
@@ -375,6 +377,9 @@ def get_provider_client(provider):
         return get_theporndb_client()
     factory = get_metadata_provider_factories().get(provider)
     return factory() if factory else None
+
+
+other_scene_check.configure(get_provider_client)
 
 
 def _provider_scene_duration(provider, scene_id):
@@ -742,6 +747,14 @@ def _organizer():
     return library_organize.Organizer(db, get_stash_client(), _stashdb_or_none(), theporndb_client,
                                       _stash_path_to_local, setting, get_whisparr_client=get_whisparr_client,
                                       extra_providers=_extra_stashboxes())
+def _organize_scene(scene_id):
+    """Renames / moves ONE tagged scene to the naming scheme (fingerprint-verified plan of library_organize), for file_importer.place_file_for_other_scene()."""
+    plan = _organizer().plan(None, scene_id=scene_id)
+    items = plan["rename"] + plan["move"]
+    result = _organizer()._organize_items(items, plan["studio"]) if items else {"done": [], "failed": []}
+    result["not_organized"] = [{"path": i["path"], "reason": i.get("reason") or i.get("check")} for i in plan["needs_check"] + plan["conflict"] + plan["multi_file"]]
+    return result
+
 def _importer():
     """Maintenance > Import folder (2026-09-29, library_import.py)."""
     def setting(key):
@@ -784,6 +797,7 @@ def _after_import(scene_id, new_path=None):
 
 
 _file_importer_module.after_import_hook = _after_import
+_file_importer_module.organize_scene_hook = _organize_scene
 # Upgrade downloads retire the file they replace (upgrades.on_upgrade_imported()).
 _file_importer_module.upgrade_import_hook = lambda provider, stash_id, path, verified: upgrades.on_upgrade_imported(
     db, get_stash_client(), _stash_path_to_local, _recycle_library_file, provider, stash_id, path, verified,
@@ -2272,6 +2286,8 @@ async def lifespan(app: FastAPI):
         # One-off description backfill (2026-09-26), background, no-op once done.
         threading.Thread(target=run_details_backfill, daemon=True).start()
         threading.Thread(target=run_tags_backfill, daemon=True).start()
+        threading.Thread(target=lambda: download_failures.convert_failed_blocklists(db), daemon=True).start()  # a failed download blocks only its exact name (v0.260.5)
+        threading.Thread(target=lambda: other_scene_check.sweep_review_candidates(db), daemon=True).start()  # drops stored review candidates that belong to another scene
         threading.Thread(target=convert_resume, daemon=True).start()  # Convert rows that were being checked / swapped when the sidecar stopped
         tasks += [asyncio.create_task(loop()) for loop in (
             _scan_loop, _safety_sweep_loop, _stashdb_favorites_loop, _box_favorites_loop, _whisparr_blocklist_sync_loop, _theporndb_identify_loop,

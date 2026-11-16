@@ -489,6 +489,16 @@
    version instead of blindly re-sending a duplicate hand-off. Green,
    distinct from the amber ThePornDB-source accent and the blue/violet
    action buttons elsewhere in this plugin. */
+.srw-release-on-wishlist {
+  flex: 0 0 auto;
+  padding: 0.05rem 0.4rem;
+  border-radius: 3px;
+  font-size: 0.93em;
+  font-weight: 700;
+  background: rgba(66, 153, 225, 0.2);
+  color: #63b3ed;
+}
+
 .srw-release-in-library {
   flex: 0 0 auto;
   padding: 0.05rem 0.4rem;

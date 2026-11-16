@@ -502,7 +502,7 @@ def manual_search_grab(provider: str, scene_stashdb_id: str, body: dict):
         raise HTTPException(400, "candidate.downloadUrl is required")
     # "replace": the flagged torrent of this scene is replaced by the picked one (v0.231.0); only when the monitor knows such a torrent
     old = torrent_health.row_for_scene(_db, provider, scene_stashdb_id) if body.get("replace") else None
-    result = grab_candidate(_db, provider, scene_stashdb_id, candidate, replace_job=old is not None)
+    result = grab_candidate(_db, provider, scene_stashdb_id, candidate, replace_job=old is not None, force=bool(body.get("force")))
     if result.get("grab"):
         history.scene("info", "grab", f"Picked by hand from the manual search: {candidate.get('title')}",
                       provider, scene_stashdb_id)
@@ -583,7 +583,7 @@ def fix_mismatch(provider: str, entity_type: str, entity_stashdb_id: str, scene_
 
 
 @router.post("/{provider}/{entity_type}/{entity_stashdb_id}/{scene_stashdb_id}/fix-wrong-download")
-def fix_wrong_download(provider: str, entity_type: str, entity_stashdb_id: str, scene_stashdb_id: str):
+def fix_wrong_download(provider: str, entity_type: str, entity_stashdb_id: str, scene_stashdb_id: str, body: dict = None):
     """"Retry" action for an 'import_failed' release whose
     `import_error_code` is 'fingerprint_mismatch' -- this sidecar's own
     pipeline imported a file that turned out not to match StashDB's own
@@ -602,6 +602,7 @@ def fix_wrong_download(provider: str, entity_type: str, entity_stashdb_id: str, 
             get_setting_value(_db, "whisparr_root_folder_path", _settings.whisparr_root_folder_path),
             get_setting_value(_db, "local_media_mount", _settings.local_media_mount),
             get_setting_value(_db, "recycle_bin_path", DEFAULTS["recycle_bin_path"]),
+            discard=bool((body or {}).get("discard")), stashdb_client=_get_stashdb_client(), get_provider_client=_get_provider_client,
         )
     except ValueError as e:
         raise HTTPException(404, str(e))
@@ -674,6 +675,26 @@ def confirm_file(provider: str, scene_stashdb_id: str, body: dict = None):
         _db, _get_stash_client(), _get_stashdb_client(), provider, scene_stashdb_id, get_provider_client=_get_provider_client,
         submit=bool((body or {}).get("submit")),
         upload_enabled=get_setting_value(_db, "fingerprint_upload_enabled", "false") == "true")
+    if result.get("error"):
+        raise HTTPException(400, result["error"])
+    return result
+
+
+@router.post("/{provider}/{scene_stashdb_id}/identify-file")
+def identify_file(provider: str, scene_stashdb_id: str):
+    """"Which scene is it?" on an Import-failed row -- see file_importer.identify_failed_import()."""
+    result = file_importer.identify_failed_import(_db, _get_stash_client(), _get_stashdb_client(), provider, scene_stashdb_id,
+                                                  get_provider_client=_get_provider_client)
+    if result.get("error"):
+        raise HTTPException(400, result["error"])
+    return result
+
+
+@router.post("/{provider}/{scene_stashdb_id}/place-file")
+def place_file(provider: str, scene_stashdb_id: str):
+    """"Use for the other scene" on an Import-failed row -- see file_importer.place_file_for_other_scene()."""
+    result = file_importer.place_file_for_other_scene(_db, _get_stash_client(), _get_stashdb_client(), provider, scene_stashdb_id,
+                                                      get_provider_client=_get_provider_client)
     if result.get("error"):
         raise HTTPException(400, result["error"])
     return result

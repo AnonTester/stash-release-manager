@@ -144,6 +144,23 @@ CREATE TABLE IF NOT EXISTS upgrade_candidate (
     UNIQUE (scene_id, file_path)
 );
 
+-- Known releases (v0.261.0, see known_release.py): the release name a file's hashes belong to, collected at verified imports and at fingerprint
+-- mismatches whose file is another scene. Only collected so far.
+CREATE TABLE IF NOT EXISTS known_release (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    provider      TEXT NOT NULL,
+    scene_id      TEXT NOT NULL,
+    release_title TEXT NOT NULL,
+    oshash        TEXT,
+    phash         TEXT,
+    md5           TEXT,
+    duration      REAL,
+    size          INTEGER,
+    source        TEXT,
+    created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (provider, scene_id, release_title)
+);
+
 -- Shared fingerprints (v0.246.0, see shared_fingerprint.py): scenes whose file is registered at several provider scenes and where the length
 -- cannot confirm the tag. One row per scene, worked through by the user in Maintenance > Organize library > Shared fingerprints.
 -- status: 'open', 'kept' (the user says the tag is right), 'retagged' (the user chose another scene), 'dismissed', 'resolved' (a later scan found it fine).
@@ -571,6 +588,8 @@ class Database:
         self._migrate_release_pending_import_path(conn)
         self._migrate_provider_check_constraint(conn)
         self._migrate_release_import_error(conn)
+        self._migrate_release_mismatch_found(conn)
+        self._migrate_grab_info(conn)
         self._migrate_release_search_details(conn)
         self._migrate_release_scene_urls(conn)
         self._migrate_release_details(conn)
@@ -581,6 +600,7 @@ class Database:
         self._migrate_release_targeted_search(conn)
         self._migrate_release_studio_mute(conn)
         self._migrate_release_dismissed_prev(conn)
+        self._migrate_convert_accept_duration(conn)
         self._migrate_release_tags(conn)
         self._migrate_release_cast_pairing(conn)
         self._migrate_vr_verdict_manual(conn)
@@ -864,6 +884,13 @@ class Database:
         if "muted_prev_status" not in cols:
             conn.execute("ALTER TABLE release ADD COLUMN muted_prev_status TEXT")
 
+    def _migrate_convert_accept_duration(self, conn):
+        """Adds `convert_candidate.accept_duration` (v0.258.7): the length (seconds) the converted file is checked against INSTEAD of the length in
+        the source's header. For a file whose header promises more than the file holds (cut off): the user accepted the shorter real length."""
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(convert_candidate)").fetchall()}
+        if cols and "accept_duration" not in cols:
+            conn.execute("ALTER TABLE convert_candidate ADD COLUMN accept_duration REAL")
+
     def _migrate_release_dismissed_prev(self, conn):
         """Adds `release.dismissed_prev_status` (v0.253.8) and a trigger that fills it: whatever sets a row to 'dismissed' (single Dismiss, bulk,
         the favorite banner, a hidden studio), the status it had BEFORE is kept, so a Restore from the "Show dismissed" lists puts the release back
@@ -1108,6 +1135,27 @@ class Database:
         cols = {r["name"] for r in conn.execute("PRAGMA table_info(release)").fetchall()}
         if "scene_urls" not in cols:
             conn.execute("ALTER TABLE release ADD COLUMN scene_urls TEXT")
+
+    def _migrate_grab_info(self, conn):
+        """v0.260.2: table `grab_info` = the last grabbed candidate of a scene as JSON (indexer, protocol, download / info URL, size, torrent extras),
+        and the same fields on `known_release` -- so a known release can be fetched again without asking an indexer. The URLs can carry the indexer's
+        API key: a table of its own (the release rows go to the browser as they are), never in logs or the UI."""
+        conn.execute("""CREATE TABLE IF NOT EXISTS grab_info (
+            provider TEXT NOT NULL, scene_id TEXT NOT NULL, info TEXT, updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (provider, scene_id))""")
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(known_release)").fetchall()}
+        for col in ("indexer", "protocol", "download_url", "info_url", "grab_info"):
+            if col not in cols:
+                conn.execute(f"ALTER TABLE known_release ADD COLUMN {col} TEXT")
+        if "release_size" not in cols:
+            conn.execute("ALTER TABLE known_release ADD COLUMN release_size INTEGER")
+
+    def _migrate_release_mismatch_found(self, conn):
+        """`release.mismatch_found` (v0.260.0): JSON {"id", "title", "list"} -- which provider scene a wrongly downloaded file really is (found at the
+        fingerprint mismatch; "list" = 'wishlist' / 'upgrade' / null: whether we are looking for that scene)."""
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(release)").fetchall()}
+        if "mismatch_found" not in cols:
+            conn.execute("ALTER TABLE release ADD COLUMN mismatch_found TEXT")
 
     def _migrate_release_import_error(self, conn):
         """Adds `release.import_error_code`/`import_error_detail`

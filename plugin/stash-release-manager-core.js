@@ -11,7 +11,7 @@
   // rule and the bug it caused when this drifted). Change this if you
   // install under a different folder name.
   // Must equal `version:` in stash-release-manager.yml (scripts/test_plugin_version.py checks it).
-  const PLUGIN_VERSION = '0.258.5';
+  const PLUGIN_VERSION = '0.260.15';
   const PLUGIN_ID = 'stash-release-manager';
   const PLUGIN_NAME = 'StashReleaseManager';
 
@@ -206,7 +206,9 @@
     if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) return url;
     try {
       const u = new URL(url);
-      return /^\/(performer|studio|scene|group|image|gallery|tag)\//.test(u.pathname) ? u.pathname + u.search : url;
+      // Stash's own links are /<kind>/<numeric id>/<one word> (e.g. /scene/123/screenshot). A provider CDN path also begins with /scene/ or
+      // /performer/ (ThePornDB: /scene/6a/64/bf/.../bg-name.jpg): it must keep its host, or the picture is looked up on the Stash server (v0.258.3).
+      return /^\/(performer|studio|scene|group|image|gallery|tag)\/\d+\/[A-Za-z_]+$/.test(u.pathname) ? u.pathname + u.search : url;
     } catch (e) { return url; }
   }
 
@@ -1244,6 +1246,7 @@
     no_candidates: 'no indexer results',
     title_mismatch_only: 'results found, none matched the title',
     no_quality_match: 'results found, none matched quality/VR',
+    all_blocklisted: 'results found, but all of them are on this scene\'s blocklist (or belong to another scene)',
     // 2026-09-28: one download per scene; same scene imported via another provider.
     already_downloading: 'a download for this scene is already running',
     duplicate_download: 'the same release was already sent to SABnzbd (queue or history) -- not fetched again',
@@ -2284,14 +2287,14 @@
           : (candidate.est_resolution ? `~${candidate.est_resolution}p (estimated)` : 'unknown quality'));
         const rowStatus = el('span', { className: 'srw-key-status' });
         // One grab button: `grab` = the caller's own grab (null = the default grab of this panel), `ask` = the confirm text
-        const grabButton = (label, className, grab, ask, hint) => el('button', {
+        const grabButton = (label, className, grab, ask, hint, force = false) => el('button', {
           className, textContent: label, title: hint || '',
           onClick: (e) => {
             confirmInline(e.currentTarget, candidate.tried ? `${ask} (Note: ${candidate.tried}.)` : ask, async () => {
               rowStatus.textContent = ' starting...';
               try {
-                const result = grab ? await grab(candidate) : (opts && opts.grab ? await opts.grab(candidate) : await runOp('releases_manual_search_grab', {
-                  provider: r.provider, scene_stashdb_id: r.scene_stashdb_id, candidate,
+                const result = grab ? await grab(candidate, force) : (opts && opts.grab ? await opts.grab(candidate, force) : await runOp('releases_manual_search_grab', {
+                  provider: r.provider, scene_stashdb_id: r.scene_stashdb_id, candidate, force,
                 }));
                 if (result.error) {
                   rowStatus.textContent = ` error: ${result.error}`;
@@ -2299,7 +2302,15 @@
                   return;
                 }
                 if (result.result && !result.grab) { // the sidecar did not send it (e.g. another download of the scene is running)
-                  rowStatus.textContent = ` not grabbed: ${String(result.result).replace(/_/g, ' ')}`;
+                  rowStatus.textContent = ` not grabbed: ${SEARCH_RESULT_LABEL[result.result] || String(result.result).replace(/_/g, ' ')}`;
+                  // v0.260.3: the refusal can be overridden by hand (the same release was in SABnzbd's history / failed / was blocklisted before)
+                  if ((result.result === 'duplicate_download' || result.result === 'daily_grab_cap') && !force && (!opts || !opts.grab || opts.forceGrab)) {
+                    const cap = result.result === 'daily_grab_cap';
+                    rowStatus.append(' ', grabButton('Grab anyway', 'srw-btn', null,
+                      cap ? `The daily grab limit is reached. Fetch "${candidate.title}" anyway? It still counts towards today's limit.`
+                        : `Fetch "${candidate.title}" again although it was downloaded or refused before? It leaves this scene's blocklist and its old SABnzbd entries are cleared.`,
+                      cap ? 'Overrides the daily grab limit for this one release' : 'Overrides the duplicate protection for this one release', true));
+                  }
                   return;
                 }
                 rowStatus.textContent = ' grabbed';
@@ -2945,6 +2956,22 @@
 
   // The row's action button of a scene that Whisparr tracks (no file) but that is not on the wishlist: the logo, with "Search now" as its words (tooltip and
   // screen reader; the text stays inside, the click handler reads it). `btn` = the row's `.srw-whisparr-action` button.
+  // A scene on the wishlist (release status 'sent_to_whisparr') is marked on its row in the lists that offer Add (Missing from Catalog, New releases): a
+  // badge, no second Add (v0.260.15). Decided by the scene's own status -- not by whether Whisparr knows it (Whisparr is only a backup now).
+  function markOnWishlist(li, actionBtn) {
+    if (!li) return;
+    li.querySelectorAll('.srw-whisparr-add-only').forEach((x) => x.remove());
+    if (!li.querySelector('.srw-release-on-wishlist')) {
+      rowMeta(li).appendChild(window.SRW.el('span', { className: 'srw-release-on-wishlist', textContent: 'On wishlist', title: 'This scene is on your wishlist -- it is searched by the schedule (or with Search now)' }));
+    }
+    const btn = actionBtn || li.querySelector('.srw-whisparr-action');
+    if (btn && /^Add/.test(btn.textContent || '')) {
+      btn.textContent = 'Search now';
+      btn.classList.remove('srw-btn-primary');
+      btn.classList.add('srw-btn-whisparr');
+    }
+  }
+
   function markInWhisparr(btn) {
     if (!btn) return;
     btn.textContent = '';
@@ -3486,7 +3513,7 @@
     getRoute, onNavigate, initNavigationWatcher,
     el, waitForElement, entityIcon, buildPageHeader,
     watchKind, keepResult, recallResult, forgetResult, keptNote, searchStatusLabel, setBusy, openModal, sceneSubtitle, iconButton, busyIcon, ageWords, ageWarning, confirmInline, buildManagedList, buildSearchActions, whenNoOpenPanel, buildManualSearch, getSearchCapabilities,
-    rememberOpen, storedOpen, storeOpen, statusesFor, buildFilterShell, iconToggle, applyThemeColors, bulkAddActions, markInWhisparr, icon, mismatchWarning, buildPagedList, buildPager, releaseTitleNode, notify, dismissedNotice, releaseDismissedNotice, dismissRelease, buildWishlistDismiss, buildFilmDismissButtons, notifyHandoff, buildAddOnlyButton,
+    rememberOpen, storedOpen, storeOpen, statusesFor, buildFilterShell, iconToggle, applyThemeColors, bulkAddActions, markInWhisparr, markOnWishlist, icon, mismatchWarning, buildPagedList, buildPager, releaseTitleNode, notify, dismissedNotice, releaseDismissedNotice, dismissRelease, buildWishlistDismiss, buildFilmDismissButtons, notifyHandoff, buildAddOnlyButton,
     sceneUrl, notifyReadd, loadMetadataProviderUrls, loadProviders, resetProviders, providerInfo, providerLabel, providerKeys, providerOn, providersAllOn, providersSelected, isLateAdditionNew, buildLateAdditionBadge,
     buildFilteredPagedList, markRowBusy, buildBulkDismissBar, buildSelect, buildSafetyPanel, ignoreRenamers, pairingOptionsFor, castOptionsFor, buildPairingBadge, localPageFetcher, releaseQueryArgs, filterLocally, isFilterActive,
     describeProgress, applyProgress, attachLive, buildLiveHint,

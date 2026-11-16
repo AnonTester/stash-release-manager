@@ -348,7 +348,8 @@
           const scn = { provider: row.provider, scene_stashdb_id: row.scene_id, title: row.title };
           buttons.push(window.SRW.buildManualSearch(scn, sources, caps.backend, refresh, {
             host: () => li,
-            grab: (candidate) => window.SRW.runOp('releases_manual_search_grab', { provider: row.provider, scene_stashdb_id: row.scene_id, candidate, replace: true }),
+            forceGrab: true,
+            grab: (candidate, force) => window.SRW.runOp('releases_manual_search_grab', { provider: row.provider, scene_stashdb_id: row.scene_id, candidate, replace: true, force: Boolean(force) }),
           }));
         }
       }
@@ -565,19 +566,33 @@
       // sequence this triggers.
       if (showFixWrongDownload && r.import_error_code === 'fingerprint_mismatch') {
         const fixStatus = el('span', { className: 'srw-key-status' });
+        // The wrong file may be a scene we want (v0.260.14): then nothing is thrown away unasked -- the button says "Discard anyway".
+        let known = null;
+        try { known = r.mismatch_found ? JSON.parse(r.mismatch_found) : null; } catch (e) { known = null; }
+        const wantedElsewhere = Boolean(known && (known.list === 'wishlist' || known.list === 'upgrade'));
         const fixBtn = el('button', {
-          className: 'srw-btn srw-btn-primary', textContent: 'Fix wrong download',
+          className: wantedElsewhere ? 'srw-btn srw-btn-danger' : 'srw-btn srw-btn-primary',
+          textContent: wantedElsewhere ? 'Discard anyway' : 'Fix wrong download',
           onClick: (e) => {
             confirmInline(e.currentTarget,
-              `Move the wrong file for "${r.title}" to the recycle bin, blocklist that download, and put the scene back on the wishlist for a new search?`,
+              wantedElsewhere
+                ? `The file is "${known.title || known.id}", which is on your ${known.list === 'upgrade' ? 'upgrade list' : 'wishlist'}. Move it to the recycle bin anyway, blocklist the download and put "${r.title}" back on the wishlist?`
+                : `Move the wrong file for "${r.title}" to the recycle bin, blocklist that download, and put the scene back on the wishlist for a new search?`,
               async () => {
                 fixStatus.textContent = ' fixing...';
                 try {
                   const result = await window.SRW.runOp('releases_fix_wrong_download', {
                     provider: r.provider, entity_type: r.entity_type, entity_stashdb_id: r.entity_stashdb_id,
-                    scene_stashdb_id: r.scene_stashdb_id,
+                    scene_stashdb_id: r.scene_stashdb_id, discard: wantedElsewhere,
                   });
                   if (result.error) { fixStatus.textContent = ` error: ${result.error}`; return; }
+                  if (result.wanted_elsewhere) { // nothing was changed: the lookup found that we want this file for another scene
+                    const w = result.wanted_elsewhere;
+                    window.SRW.notify('Fix wrong download', `Not discarded: the file is "${w.title || w.id}", which is on your ${w.list === 'upgrade' ? 'upgrade list' : 'wishlist'}.`
+                      + (w.list === 'wishlist' ? ' Use it for that scene, or discard it anyway.' : ' Discard it anyway if you do not need it.'), 'error');
+                    if (onChanged) onChanged();
+                    return;
+                  }
                   if (onChanged) onChanged();
                 } catch (err) {
                   fixStatus.textContent = ` error: ${err.message}`;
@@ -645,6 +660,51 @@
               }, { danger: true }),
           });
         }
+        // Which scene the wrong file really is (v0.260.0): found at the mismatch (older rows: "Which scene is it?"). On the wishlist -> the file can be used for it.
+        let found = null;
+        try { found = r.mismatch_found ? JSON.parse(r.mismatch_found) : null; } catch (e) { found = null; }
+        const foundNote = el('div', { className: 'srw-muted' });
+        const extra = [];
+        if (found) {
+          foundNote.textContent = `The file is the scene "${found.title || found.id}"` +
+            (found.list === 'wishlist' ? ' — which is on your wishlist.' : found.list === 'upgrade' ? ' — which is on your upgrade list (not placed automatically).' : ' — not one you are looking for.');
+          if (found.list === 'wishlist') {
+            extra.push(window.SRW.iconButton('button', 'faArrowRight', 'Use for that scene', {
+              title: 'Tag the file as that scene, rename and move it to the naming scheme, count that wishlist scene as imported; this scene goes back on the wishlist and the wrong download is blocklisted',
+              onClick: (e) => confirmInline(e.currentTarget,
+                `Use the file for "${found.title}" (renamed + moved), blocklist this download and put "${r.title}" back on the wishlist? Nothing is deleted.`,
+                async () => {
+                  window.SRW.setBusy(fixStatus, 'placing...');
+                  try {
+                    const result = await window.SRW.runOp('releases_place_file', { provider: r.provider, scene_stashdb_id: r.scene_stashdb_id });
+                    if (result.error) { fixStatus.textContent = ` error: ${result.error}`; window.SRW.notify('Use for that scene', result.error, 'error'); return; }
+                    const org = result.organized || {};
+                    const bad = (org.failed || []).length;
+                    window.SRW.notify('Use for that scene', `"${result.title}" is imported from this file` +
+                      ((org.done || []).length ? ' (renamed / moved).' : bad ? ` (renaming failed: ${org.failed[0].reason}).` : (org.not_organized || []).length ? ' (not renamed: it needs a check in Maintenance > Organize library).' : '.'), bad ? 'error' : 'success');
+                    if (onChanged) onChanged();
+                  } catch (err) { fixStatus.textContent = ` error: ${err.message}`; }
+                }),
+            }));
+          }
+        } else {
+          extra.push(window.SRW.iconButton('button', 'faMagnifyingGlass', 'Which scene is it?', {
+            title: 'Ask the provider which scene the hashes of this file are registered at (and whether you are looking for it)',
+            onClick: async (e) => {
+              const button = e.currentTarget;
+              button.disabled = true;
+              window.SRW.setBusy(fixStatus, 'looking up...');
+              try {
+                const result = await window.SRW.runOp('releases_identify_file', { provider: r.provider, scene_stashdb_id: r.scene_stashdb_id });
+                if (result.error) { fixStatus.textContent = ` error: ${result.error}`; return; }
+                if (!result.found) { fixStatus.textContent = ' the provider does not know this file under another scene'; return; }
+                if (onChanged) onChanged();
+              } catch (err) { fixStatus.textContent = ` error: ${err.message}`; } finally { button.disabled = false; }
+            },
+          }));
+        }
+        if (found) li.push(foundNote);
+        li.push(...extra);
         li.push(recheckBtn, confirmBtn, ...(uploadBtn ? [uploadBtn] : []), fixBtn, fixStatus);
       }
       return window.SRW.arrangeReleaseRow(el('li', { className: 'srw-release-item', 'data-scene-id': r.scene_stashdb_id }, li), r);

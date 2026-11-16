@@ -6,6 +6,76 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.260.15
+- **"Fix wrong download" keeps the hashes and fetch data of the file it discards.** A wrong file that matches no known scene is recorded in `known_release` (hashes, length, size, how it was fetched) under the scene it was fetched for, with source `wrong`, before its Stash scene record is destroyed. Still only collected. Sidecar (rebuild).
+
+## 0.260.14
+- **"Fix wrong download" checks whether the "wrong" file is a scene you want.** Before the file is moved to the recycle bin and the download blocklisted, the stored answer (or a new lookup at the provider) tells which scene the file's hashes belong to; when that scene is on the wishlist or upgrade list nothing is discarded: the row says so, "Use for that scene" is offered (wishlist), and the Fix button turns into "Discard anyway" with a confirmation naming the scene. Other cases work as before. Plugin + sidecar (rebuild, Reload plugins).
+
+## 0.260.13
+- **A restart while a worker's finished encode is being checked no longer makes the worker encode the file again.** The sidecar now records the pending check on disk before it starts it and removes the record when it ends; after a restart the import run finds the record, sees the encoded file is still there and runs the check again instead of queueing the whole encode a second time. A record of another download, or whose encoded file is gone, is dropped. Sidecar (rebuild).
+
+## 0.260.12
+- **Rejecting one part of a split upload also rejects its other parts.** An exact blocklist entry now compares without a trailing part marker (`_part.2`, `pt2`, `cd1`, `disc 2`, `1of2`), so rejecting `..._part.1` no longer lets `..._part.2` come up next. Other encodes of the release are still not covered by an exact entry. At start-up the stored Needs-review candidates are checked against the scene's blocklist as well. Sidecar (rebuild).
+
+## 0.260.11
+- **A scene on the wishlist is marked as such in Missing from Catalog / New releases, and offers no second Add.** The row used to lose its Add button only when Whisparr knew the scene (Whisparr is only a backup now). A row whose release is on the wishlist now gets a blue badge "On wishlist" and "Search now" instead of Add / Add + search; right after a click on Add the row changes the same way. Plugin only (Reload plugins, hard reload).
+
+## 0.260.10
+- **Review: Identify Scene -- a scene with a wrong provider id can be corrected by its fingerprints in one step.** The fingerprint lookup is now also offered for a scene that carries a provider id: each exact match has the button "Use this for Scene, rename and move the file" -- the match's metadata and id replace the wrong ones, the scene leaves the Review list and the file is renamed / moved right away (fingerprint-verified Organize plan; if it cannot be organized the message says why). Matches that are already the scene's id or held by another local scene are disabled. Plugin + sidecar (rebuild, Reload plugins).
+
+## 0.260.9
+- **Needs review: a release of an unrelated studio is not offered.** The studio a release name starts with (the longest run of 1-4 leading words that is exactly a stash-box studio name) must be the scene's own studio, its parent or site, or a studio with the same parent; otherwise the candidate is set aside and the next best is chosen (stored candidates get the same check at start-up). Never decided, the candidate stays: names starting with a platform name (new setting `studio_platform_names`, a short default list, for all scenes), with a studio the stash-box does not know, or with one of the scene's performers; also failed lookups. Only the Needs-review choice, not the automatic grab. Switch `studio_gate_enabled`. Plugin + sidecar (rebuild, Reload plugins).
+
+## 0.260.8
+- **Needs review: an undated release name that is another scene's title is not offered.** The other-scene check only knew release names with a studio prefix and a date. Now a name without a date is checked by its title: the words left after the performers / studio and the quality tail are searched on the stash-box; when another scene (not the wanted one) has exactly that title and one of its performers or its studio is named in the release, the release counts as that scene's and is not offered (also removed from stored Needs-review candidates at start-up). A name containing the wanted scene's own title is never touched, a failing lookup keeps the candidate. Sidecar (rebuild).
+
+## 0.260.7
+- **Scenes with a year-only (or year-month) date get the last-resort resolutions too.** The setting that accepts 2160p / SD releases for older scenes read the scene date only as a full day; a catalogue entry dated just "2007" counted as having no date, so those resolutions were never offered for it. A year now counts as its last day, a year-month as the last day of the month. Sidecar (rebuild) + version in the plugin.
+
+## 0.260.6
+- **A poor download is kept when the scene has no file yet.** A download from a release name without a resolution that turned out to be outside the quality profile (e.g. 480p) used to go to the recycle bin and the scene back on the wishlist. Now the file is only thrown away when Stash already holds that scene (a duplicate that adds nothing). If the library has no file for the scene, the file is imported as usual and, with a cutoff set in the quality profile, the next library check lists it as "below cutoff" for the upgrade search. A failed library lookup also keeps the file. Sidecar (rebuild) + version in the plugin.
+
+## 0.260.5
+- **A failed download blocks only its own release name, and "all blocklisted" is no longer called a quality problem.** Case: "Pussy Can Make You Rich" showed "results found, none matched quality/VR" although a fitting 1080p release existed. Cause: an earlier download of the same scene (`...XviD-iPT.Team`) failed in SABnzbd ("Aborted, cannot be completed"), and a failed download was put on the scene's blocklist as a plain entry, which also blocks every other encode of the release name (identity cut at "XXX") -- so all eight 1080p / 2160p results were refused as "blocklisted". Now a failed download is blocked as an exact entry (that upload failed, others may be fine), and at start-up the old entries are repaired once (idempotent): a plain entry whose History says "Download failed in ...: <title>" and that was never rejected by hand becomes an exact entry (History says so). New search result `all_blocklisted` ("results found, but all of them are on this scene's blocklist (or belong to another scene)") when every release that fits the scene was refused before, instead of "none matched quality/VR". Plugin + sidecar (rebuild, Reload plugins). Test `scripts/test_failed_blocklist.py`.
+
+## 0.260.4
+- **"Grab anyway" also overrides the daily grab limit.** The same button now appears when a hand-picked release is refused with "the daily grab limit is reached (setting max_grabs_per_day)": after a confirmation it is sent anyway (usenet and torrent) and still counts towards the day's total. The limit itself is unchanged (Settings > max_grabs_per_day, default 30); automatic grabs keep obeying it. Plugin + sidecar (rebuild, Reload plugins).
+
+## 0.260.3
+- **"Grab anyway" overrides the duplicate protection.** A release picked by hand in the manual search was refused ("not grabbed: duplicate download") when SABnzbd had it in its history or Archive, it had failed twice, or this program had downloaded it before -- e.g. a release marked as wrong by mistake. The refusal now says why (the text of the Releases list) and offers a **Grab anyway** button: after a confirmation the release leaves the scene's blocklist, its earlier SABnzbd history / Archive entries are removed (so SABnzbd's own "Duplicate NZB" check does not fail it again) and it is sent. A release that is in the SABnzbd queue right now is still refused. Also on the Stuck torrent search. Plugin + sidecar (rebuild, Reload plugins). Test `scripts/test_force_grab.py`.
+
+## 0.260.2
+- **Known releases also keep how they were fetched.** Every grab now records the candidate (indexer, protocol, download / info URL, size, torrent extras) in a table of its own (`grab_info`; the URL can carry an indexer API key, so it is not a column of the release rows that go to the browser). When a release is added to `known_release` (verified import, or a mismatch that identifies another scene) the indexer, protocol, URLs and release size are stored with it. Still only collected; nothing reads it yet. Releases grabbed before this version have no such data. Sidecar only (rebuild).
+
+## 0.260.1
+- **Known releases are collected (nothing reads them yet).** New table `known_release`: release name + oshash / phash / md5 / length / size of the file + the scene it belongs to. Written at a verified import (the downloaded release is that scene's) and when a fingerprint mismatch finds that the wrong file is another scene (the wrong release is THAT scene's, also when we are not looking for it). Base for "do we already know a release of this scene?" before an indexer is asked. Collecting never fails an import. Sidecar only (rebuild).
+
+## 0.260.0
+- **Import failed: the wrong file is identified, and can be used for the scene it really is.** When a download fails the fingerprint check, the sidecar now asks the provider which scene the file's hashes are registered at (`find_scenes_by_fingerprints`, hashes only) and stores the answer on the release (new column `mismatch_found`; the History says it too). The Import-failed row shows "The file is the scene X -- which is on your wishlist / upgrade list / not one you are looking for"; older rows get a "Which scene is it?" button. For a **wishlist** scene a new button "Use for that scene" tags the file with that scene's metadata, counts it as imported, renames and moves it to the naming scheme (the Organize library plan, fingerprint-verified), blocklists the wrong download for the original scene and puts that scene back on the wishlist. Nothing is deleted. Upgrade-list scenes are only shown (not placed). "Fix wrong download" is unchanged (and clears the stored answer); the blocklist is never touched for old cases. Plugin + sidecar (rebuild, Reload plugins). New test `scripts/test_wrong_file.py`.
+
+## 0.259.2
+- **Needs review: a release dated more than a year from the scene is not offered.** Case: "Break Up With Your Girlfriend" (2026-10-29) was offered "<Site>.25.05.31.<three performers>.Bridesmaids.Threesome...". The date was read correctly (2025-05-31); the date rule (within 45 days) only applied to single-performer scenes, and with several performers naming all of them was enough. Now every review candidate whose name carries a date more than 365 days from the scene's is dropped (studios' dates are weeks off, not years). The start-up sweep removes stored candidates of that kind too (History: "dated more than a year from the scene"). Sidecar only (rebuild).
+
+## 0.259.1
+- **Other-scene check: fewer StashDB lookups.** A release that carries the scene's parent studio or site name (with the scene's own day) is now treated as our own side like the scene's studio itself: no lookup, the normal rules decide. Child-studio / parent-studio candidates are never removed by this check. Sidecar only (rebuild).
+
+## 0.259.0
+- **Releases that belong to another scene are no longer offered (Needs review) or grabbed.** Case: the scene "Tight and Fresh Anal Newbie" (another studio, 2013-01-25, one performer) was offered "MyDadsHotGirlfriend.13.02.08.<Performer>.XXX.1080p": it names the performer and the date is only 14 days away, but StashDB has a scene of that studio dated exactly 2013-02-08 with this performer in the cast -- the release is that scene. New check (`api/other_scene_check.py`): a release name that carries a studio and a date and names one of the scene's performers is looked up on StashDB (studio search by the name's spelling, then the studio's scenes of that day); when one of them is not our scene and one of its cast is named in the release, the name counts as "belongs to another scene" (verdict `other_scene` in the search log, same list as the names other scenes already hold). Our own studio and day are left to the normal rules; a failed or empty lookup never removes a candidate; every studio + day is asked once per 6 h (at most 8 pairs per search). StashDB only.
+- **The stored Needs-review candidates are cleaned once at start-up** with the same check (the scene's search result becomes "title mismatch only", the History says why). Upgrade candidates are not swept. New `StashDBClient.find_scenes_on_date`, test `scripts/test_other_scene_check.py`. The sidecar needs a rebuild.
+
+## 0.258.9
+- **Userscript: "dismissed" has its own colour.** A scene dismissed in StashReleaseManager showed the same grey as a scene the sidecar does not know at all. Dismissed is amber now (bar border, chip dot, tooltip unchanged); grey / no colour still means "not known". The script version is 0.258.9 (the sidecar serves it from the image: rebuild, then update the script in Violentmonkey).
+
+## 0.258.8
+- **Convert: the "Converting now" line stays short.** With many files waiting for the finishing step (it runs one file at a time and waits while Stash is busy, 60+ rows happened) the line listed every one of them. Now it names the running files and the three that have waited longest, then "and N more finishing"; "show" still opens the full list. Plugin only.
+
+## 0.258.7
+- **Convert: a source that is shorter than its header says can be converted against its real length.** Some old files promise more length than they hold; the check after the conversion then refused a correct result. New `POST /maintenance/convert/accept-length` (`items`: id + seconds) queues such a row again and checks the converted file against that length. No button on the page yet.
+- KDE widget: the "started by hand in a terminal" notice no longer shows while the service is only restarting.
+
+## 0.258.6
+(Takeover of AnonTester's fork: his 0.258.3 - 0.258.5, applied together as 0.258.6 because our own 0.258.3 (the cover fix below) already carried that number; his entries follow unchanged.)
 ## 0.258.5
 - **Fix: the Last search and Search… windows keep their height while the results are filtered or paged**, so the window no longer shrinks and grows (and moves the filter box away from the mouse). It still grows when more room is needed. Plugin only.
 
@@ -15,6 +85,9 @@ install guide has been proven on other machines. Documentation only gets no vers
 ## 0.258.3
 - **Fix: "Grab" in the Last search list and in the manual search disappears once the result is grabbed**, so it cannot be clicked again (it only added the text "grabbed" and left the button).
 - **Fix: a release name with 540p (also 576p, 360p) is taken for the 480p class** instead of "no resolution", which showed "~480p (estimated)" and ranked it behind named ones. The list shows "480p (540p in the name)". 540p is not a class of its own: the quality profile's lowest class is 480p (Whisparr's too), and every standard-definition height counts as it.
+
+## 0.258.3
+- **Fix: covers of ThePornDB movies and scenes were missing** (e.g. Activity > Import failed). The helper that turns Stash's own picture links into relative ones also shortened ThePornDB's CDN links (same path start `/scene/...`), so the picture was requested from the Stash server. Only Stash's own link form is shortened now. Plugin only.
 
 ## 0.258.2
 - **The plugin package now contains the `icons/` folder** (the packaging step had left it out). Packaging only.

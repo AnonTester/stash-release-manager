@@ -3442,7 +3442,9 @@
       const name = (c) => (c.scene_title || c.file_path.split('/').pop());
       const parts = [
         ...running.map((c) => `${name(c)}: ${c.percentage || 0} %${c.seconds_left ? `, about ${Math.max(1, Math.round(c.seconds_left / 60))} min left` : ''}`),
-        ...checking.map((c) => `${name(c)}: ${phaseText(c, c.status === 'verifying' ? 'checking the converted file' : 'putting it into the scene')}`),
+        // only the three that have waited longest (the finishing step runs one file at a time, Stash can be busy: dozens pile up)
+        ...checking.slice(0, 3).map((c) => `${name(c)}: ${phaseText(c, c.status === 'verifying' ? 'checking the converted file' : 'putting it into the scene')}`),
+        ...(checking.length > 3 ? [`and ${checking.length - 3} more finishing`] : []),
       ];
       activeLine.append(`Converting now (${running.length} running${checking.length ? `, ${checking.length} finishing` : ''}${queued.length ? `, ${queued.length} waiting` : ''}): ${parts.join(' · ') || 'waiting for an encode worker'} `,
         el('a', { href: '#', textContent: 'show', onClick: (e) => { e.preventDefault(); stateSelect.value = 'active'; selected.clear(); syncBulkButtons(); view.reset(); } }));
@@ -4326,7 +4328,7 @@
           el('div', { className: 'srw-cmp-split-left' }, [heading, wrap, note, buildFaceHint(s), buildFramesStrip(s), table]),
           el('div', { className: 'srw-cmp-split-right' }, [
             el('div', { className: 'srw-cmp-ids' }, ids),
-            (s.stash_ids || []).length ? null : buildIdentifyPanel(p, s, tag),
+            buildIdentifyPanel(p, s, tag, (s.stash_ids || []).length > 0),
           ].filter(Boolean)),
         ]);
       }
@@ -4403,7 +4405,7 @@
 
     // For a scene without a provider id: find out what it really is (exact fingerprints, then a name search), put
     // the provider's id + metadata on it, or clear what a wrong match left behind and mark it for review.
-    function buildIdentifyPanel(p, s, tag) {
+    function buildIdentifyPanel(p, s, tag, hasIds = false) {
       const out = el('div', { className: 'srw-cmp-identify-out' });
       const stem = ((s.files && s.files[0] && s.files[0].path) || '').split('/').pop()
         .replace(/\.[a-z0-9]{2,4}$/i, '').replace(/\s*[-\[(]?\s*(WEBDL|WEBRip|HDTV|BluRay)[^\])]*[\])]?/i, '')
@@ -4416,14 +4418,21 @@
           ? 'Fingerprint match at ThePornDB (its hash lookup is similarity-based, NOT guaranteed exact -- compare by playing before using it):'
           : `Exact fingerprint match at ${window.SRW.providerLabel(items[0].provider || 'stashdb')}:`) : 'Name search results (not verified -- compare by playing):' }),
           ...items.map((c) => {
-            const useBtn = el('button', { className: 'srw-btn srw-btn-sm srw-btn-primary', textContent: `Use this for ${tag}` });
+            // A scene that already carries a (wrong) id: the match replaces it and the file is renamed / moved right away (v0.260.10).
+            const useBtn = el('button', { className: 'srw-btn srw-btn-sm srw-btn-primary', textContent: hasIds ? `Use this for ${tag}, rename and move the file` : `Use this for ${tag}` });
             if (c.held_by_scene) { useBtn.disabled = true; useBtn.textContent = `held by scene #${c.held_by_scene}`; }
+            else if (hasIds && (s.stash_ids || []).some((i) => i.stash_id === c.provider_id)) { useBtn.disabled = true; useBtn.textContent = `already ${tag}'s id`; }
             useBtn.addEventListener('click', (e) => window.SRW.confirmInline(e.currentTarget,
-              `Put ${c.provider} scene “${c.title || '?'}” (${c.date || '?'}) on scene #${s.id}? Title, date, studio, performers and tags are replaced; the old state is saved to the backup file.`,
+              `Put ${c.provider} scene “${c.title || '?'}” (${c.date || '?'}) on scene #${s.id}? Title, date, studio, performers and tags are replaced${hasIds ? ', its current provider id is replaced by this one' : ''}; the old state is saved to the backup file.${hasIds ? ' The file is renamed and moved to the folder of the new scene (only when its fingerprints match it).' : ''}`,
               async () => {
-                const r = await window.SRW.runOp('compare_adopt', { id: p.id, scene_id: s.id, provider: c.provider, provider_id: c.provider_id });
+                const r = await window.SRW.runOp('compare_adopt', { id: p.id, scene_id: s.id, provider: c.provider, provider_id: c.provider_id, organize: hasIds });
                 if (r.error) { window.SRW.notify('Compare scenes', r.error, 'error'); return; }
-                window.SRW.notify('Compare scenes', `Scene #${s.id} is now “${r.scene.title}”. The next Organize run renames the file.${r.review_closed ? ' It left the Review list.' : ''}`, 'success');
+                const org = r.organized || null;
+                const orgNote = !hasIds ? ' The next Organize run renames the file.'
+                  : org && (org.done || []).length ? ' The file was renamed / moved.'
+                    : org && ((org.failed || []).length || (org.not_organized || []).length) ? ` The file was NOT renamed: ${((org.failed || [])[0] || {}).reason || ((org.not_organized || [])[0] || {}).reason || 'see the Organize library page'}.`
+                      : ' The file already has the right name.';
+                window.SRW.notify('Compare scenes', `Scene #${s.id} is now “${r.scene.title}”.${orgNote}${r.review_closed ? ' It left the Review list.' : ''}`, org && (org.failed || []).length ? 'warning' : 'success');
                 reopen(p);
               }));
             return el('div', { className: 'srw-cmp-id' }, [
@@ -4513,6 +4522,13 @@
         else if (v.kind === 'search') { q.value = v.query || q.value; renderSearch(v.r); }
         else if (v.kind === 'scrape') { sq.value = v.query || sq.value; renderScrape(v.r); }
         out.prepend(window.SRW.keptNote(last.at));
+      }
+      if (hasIds) {
+        return el('div', { className: 'srw-cmp-identify' }, [
+          el('div', { className: 'srw-hint', textContent: `Is the provider id of ${tag} the right one? The fingerprints of the file say what it is; a match can replace the id and rename / move the file in one step.` }),
+          el('div', { className: 'srw-toolbar' }, [idBtn]),
+          out,
+        ]);
       }
       return el('div', { className: 'srw-cmp-identify' }, [
         el('div', { className: 'srw-hint', textContent: `${tag} has no provider id -- what is it?` }),

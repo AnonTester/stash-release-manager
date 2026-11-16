@@ -75,6 +75,8 @@ from urllib.parse import quote
 import download_client_repo
 import download_history_cleanup
 import history
+import other_scene_check
+import studio_gate
 import release_repo
 import torrent_estimate
 from qbittorrent_client import AlreadyAdded, QbittorrentClient, QbittorrentError
@@ -415,6 +417,9 @@ def _year_contradicts(scene_title, scene_date, candidate_title):
 
 
 _REVIEW_MAX_DAYS_SINGLE_PERFORMER = 45
+# Any review candidate (also with several performers): a release name dated more than a year from the scene is another scene or a re-release
+# (found 2026-11-14: an "Creator.25.05.31.<three performers>" release offered for a 2026-10-29 scene). Studios' dates are weeks off, not years.
+REVIEW_MAX_DAYS_ANY = 365
 
 
 def _release_date_far_off(scene_date, candidate_title, days):
@@ -674,15 +679,22 @@ def fallback_resolutions(db, scene_date, today=None):
     and nothing in the profile turned up -- 2160p (the importer scales it down to 1080p, see transcode.py) and, with `fallback_accept_sd`, SD (480).
     Best first. Empty list: not old enough / switched off."""
     from routers.settings import get_setting_value
-    from datetime import date, datetime
+    from datetime import date, datetime, timedelta
     try:
         days = int(float(get_setting_value(db, "fallback_resolution_days", "10") or 0))
     except ValueError:
         days = 0
     if days <= 0 or not scene_date:
         return []
+    text = str(scene_date).strip()
     try:
-        released = datetime.strptime(str(scene_date)[:10], "%Y-%m-%d").date()
+        if len(text) == 4 and text.isdigit():  # a year-only date (older catalogue entries): counts as the END of that year
+            released = date(int(text), 12, 31)
+        elif len(text) == 7 and text[4] == "-":  # year-month: the last day of that month
+            first = date(int(text[:4]), int(text[5:7]), 1)
+            released = (date(first.year + (first.month == 12), first.month % 12 + 1, 1)) - timedelta(days=1)
+        else:
+            released = datetime.strptime(text[:10], "%Y-%m-%d").date()
     except ValueError:
         return []
     if ((today or date.today()) - released).days < days:
@@ -1087,8 +1099,14 @@ _QUALITY_SUFFIX_RE = re.compile(r"\b(?:xxx|\d{3,4}p|x26[45]|h26[45]|hevc)\b")
 EXACT_PREFIX = "exact:"
 
 
+_PART_TAIL_RE = re.compile(r"\s(?:part|pt|cd|disc|disk)\s?\d{1,2}$|\s\d{1,2}\s?of\s?\d{1,2}$")
+
+
 def _exact_key(title):
-    return re.sub(r"[^a-z0-9]+", " ", (title or "").lower()).strip()
+    """The release name reduced to its words. A trailing part marker ("_part.1", "cd2", "1of2") is dropped: the parts of one upload are one decision
+    (v0.260.12 -- rejecting "..._part.1" must not offer "..._part.2" next)."""
+    key = re.sub(r"[^a-z0-9]+", " ", (title or "").lower()).strip()
+    return _PART_TAIL_RE.sub("", key)
 
 
 # Third and fourth kind (v0.231.0): "hash:<info hash>" / "link:<link without keys>" -- THIS torrent is unusable (dead, stalled, abandoned). Torrent
@@ -1211,6 +1229,8 @@ def _select_review_candidate(releases, scene_title, scene_date, performer_names,
             continue  # e.g. "Some_Performer_-_2021" for a 2026 scene
         if _PACK_RE.search(title or ""):
             continue  # site rips / packs / collections are never one scene
+        if _release_date_far_off(scene_date, title, REVIEW_MAX_DAYS_ANY):
+            continue  # the name's own date is more than a year away from the scene's
         # "Every performer named" is strong evidence with several performers,
         # but with ONE it matches any release of that person (2026-09-28:
         # other Some Performer / Other Performer scenes offered for unrelated ones)
@@ -1273,6 +1293,7 @@ RESULT_SEARCH_BACKEND_UNAVAILABLE = "search_backend_unavailable"
 RESULT_NO_CANDIDATES = "no_candidates"
 RESULT_TITLE_MISMATCH_ONLY = "title_mismatch_only"
 RESULT_NO_QUALITY_MATCH = "no_quality_match"
+RESULT_ALL_BLOCKLISTED = "all_blocklisted"  # v0.260.5: the releases that look like the scene are all on its blocklist / held by another scene
 RESULT_NEEDS_REVIEW = "needs_review"
 RESULT_NO_DOWNLOAD_CLIENT = "no_download_client"
 RESULT_CLIENT_NOT_IMPLEMENTED = "client_not_implemented"
@@ -1352,6 +1373,12 @@ def studio_site_names(db, provider, scene_stashdb_id, *known_names):
         if brand and brand not in out and not any(k and (brand in k or k in brand) for k in known):
             out.append(brand)
     return out
+
+
+def own_studio_names(db, provider, scene_stashdb_id, studio_name):
+    """Parent studios and site names of the scene (what the search queries use besides the studio itself)."""
+    parents = parent_studio_names(db, provider, scene_stashdb_id, studio_name)
+    return parents + studio_site_names(db, provider, scene_stashdb_id, studio_name, parents)
 
 
 def _title_without_cast(scene_title, performer_names):
@@ -1618,6 +1645,9 @@ def search_and_grab(db, whisparr_client, movie_id, provider, scene_stashdb_id, s
     if not releases:
         _log()
         return _finish(RESULT_NO_CANDIDATES)
+    # Release names the stash-box shows as ANOTHER scene (studio + date of the name, performer in its cast; v0.259.0) are never this scene's
+    taken_titles += other_scene_check.titles_of_other_scenes(provider, scene_stashdb_id, scene_date, performer_names, studio_name, releases,
+                                                        own_studio_names(db, provider, scene_stashdb_id, studio_name), scene_title=scene_title)
 
     allowed_resolutions = quality_profile["resolutions"] if quality_profile else []
     # Fetched once, up front, and used both here and in the review-
@@ -1663,12 +1693,26 @@ def search_and_grab(db, whisparr_client, movie_id, provider, scene_stashdb_id, s
         review_resolutions = list(allowed_resolutions)
         if not is_vr and candidate_filter is None:
             review_resolutions += [r for r in fallback_resolutions(db, scene_date) if r not in review_resolutions]
-        review_candidate = _select_review_candidate(releases, scene_title, scene_date, performer_names,
-                                                      list(rejected_titles) + taken_titles, is_vr=is_vr,
-                                                      size_limits=size_limits, vr_rules=vr_rules,
-                                                      allowed_resolutions=review_resolutions,
-                                                      allow_unknown_resolution=allow_unknown_resolution,
-                                                      studio_name=studio_name)
+        # A candidate of a studio unconnected to ours (studio_gate.py, v0.260.9) is set aside and the next best one is chosen; only the offered
+        # candidates are looked at, so this costs a few stash-box requests at most.
+        unrelated, own_names = [], None
+        for _ in range(6):
+            review_candidate = _select_review_candidate(releases, scene_title, scene_date, performer_names,
+                                                          list(rejected_titles) + taken_titles + unrelated, is_vr=is_vr,
+                                                          size_limits=size_limits, vr_rules=vr_rules,
+                                                          allowed_resolutions=review_resolutions,
+                                                          allow_unknown_resolution=allow_unknown_resolution,
+                                                          studio_name=studio_name)
+            if review_candidate is None:
+                break
+            if own_names is None:
+                own_names = own_studio_names(db, provider, scene_stashdb_id, studio_name)
+            if not studio_gate.is_unrelated(db, provider, studio_name, own_names, performer_names, review_candidate.get("title")):
+                break
+            unrelated.append(review_candidate.get("title"))
+            logger.info("scene %s: %r set aside, its studio is not connected to %r", scene_stashdb_id, review_candidate.get("title"), studio_name)
+            review_candidate = None
+        taken_titles = taken_titles + unrelated
         _log(_explain_candidates(releases, review_resolutions, scene_title, scene_date, performer_names,
                                  is_vr, rejected_titles, None, review_candidate, vr_rules,
                                  allow_unknown_resolution, taken_titles, size_limits, duration_s))
@@ -1691,6 +1735,11 @@ def search_and_grab(db, whisparr_client, movie_id, provider, scene_stashdb_id, s
         # different things to a user checking why nothing was grabbed.
         any_title_match = any(_candidate_plausible(scene_title, scene_date, performer_names, r.get("title")) and not predates_scene(scene_date, r)
                                for r in releases)
+        if any_title_match:
+            looks_like = [r for r in releases if _candidate_plausible(scene_title, scene_date, performer_names, r.get("title")) and not predates_scene(scene_date, r)]
+            split = _split_rejected(list(rejected_titles) + taken_titles)
+            if looks_like and all(_is_rejected(r.get("title"), split, r) for r in looks_like):
+                return _finish(RESULT_ALL_BLOCKLISTED)  # not a quality problem: every fitting release was refused before
         return _finish(RESULT_NO_QUALITY_MATCH if any_title_match else RESULT_TITLE_MISMATCH_ONLY)
 
     _log(_explain_candidates(releases, allowed_resolutions, scene_title, scene_date, performer_names,
@@ -1713,11 +1762,27 @@ def _norm_release(name):
     return re.sub(r"[^a-z0-9]+", "", (name or "").lower())
 
 
-def _duplicate_guard(client, title, db=None):
+def _forget_in_sabnzbd(client, title):
+    """For a forced grab: removes the finished / failed entries of the same release from SABnzbd's history and Archive, so its own duplicate detection
+    ("Duplicate NZB") does not fail the NZB again. Queue entries are never touched. Best-effort."""
+    key = _norm_release(title)
+    try:
+        for s in client.get_history(limit=1000):
+            if _norm_release(s.get("name")) == key and s.get("nzo_id"):
+                client.delete_history(s["nzo_id"])
+        for s in client.get_archive():
+            if _norm_release(s.get("name")) == key and s.get("nzo_id"):
+                client.delete_archived(s["nzo_id"])
+    except Exception:
+        logger.exception("indexer_search: couldn't clear the earlier SABnzbd entries of %r before a forced grab", title)
+
+
+def _duplicate_guard(client, title, db=None, force=False):
     """Why this release must NOT be sent to SABnzbd again (or None). 2026-09-29: an error made the same five
     releases be fetched ~21 times each (97 NZB downloads, the indexer complained). SABnzbd's own duplicate
     detection only sees the NZB AFTER the indexer served it, so the check has to happen before the call.
-    Queued or already downloaded -> never again; failed twice -> not a third time. Fails closed."""
+    Queued or already downloaded -> never again; failed twice -> not a third time. Fails closed.
+    `force` (v0.260.3, the user's explicit "Grab anyway"): only the QUEUE check stays -- history, failed twice and the ledger no longer refuse."""
     key = _norm_release(title)
     if not key:
         return None
@@ -1729,6 +1794,8 @@ def _duplicate_guard(client, title, db=None):
         return "couldn't check SABnzbd's queue/history for duplicates"
     if any(_norm_release(s.get("filename")) == key for s in queued):
         return "the same release is already in the SABnzbd queue"
+    if force:
+        return None
     failed = 0
     for s in history_rows:
         if _norm_release(s.get("name")) == key:
@@ -1799,7 +1866,7 @@ def _grab_counted(db):
                         ON CONFLICT (key) DO UPDATE SET value = excluded.value""", (f"{today}:{n + 1}",))
 
 
-def send_to_download_client(db, candidate, warn):
+def send_to_download_client(db, candidate, warn, force=False):
     """The shared half of every grab (scene or film): picks the download client, runs the duplicate guard and the daily cap, adds the
     NZB. `warn(message)` records a skipped grab for the caller's own History. Returns {"result": RESULT_*, "client_row", "nzo_id"}
     -- RESULT_GRABBED when the job was added."""
@@ -1809,22 +1876,24 @@ def send_to_download_client(db, candidate, warn):
         logger.warning("indexer_search: no enabled download client configured for protocol %r", protocol)
         return {"result": RESULT_NO_DOWNLOAD_CLIENT}
     if client_row["type"] == "qbittorrent":
-        return _send_to_qbittorrent(db, candidate, client_row, warn)
+        return _send_to_qbittorrent(db, candidate, client_row, warn, force=force)
     if client_row["type"] != "sabnzbd":
         logger.warning("indexer_search: download client type %r not implemented yet", client_row["type"])
         return {"result": RESULT_CLIENT_NOT_IMPLEMENTED}
 
     client = SabnzbdClient(client_row["url"], client_row["api_key"])
-    reason = _duplicate_guard(client, candidate.get("title"), db)
+    reason = _duplicate_guard(client, candidate.get("title"), db, force=force)
     if reason:
         logger.warning("indexer_search: not grabbing %r -- %s", candidate.get("title"), reason)
         warn(f"Grab skipped: {reason}")
         return {"result": RESULT_DUPLICATE_DOWNLOAD}
     today, used, cap = _grab_budget(db)
-    if used >= cap:
+    if used >= cap and not force:  # a hand-picked release ("Grab anyway") is still counted, but not refused
         logger.warning("indexer_search: daily grab cap reached (%s/%s) -- not grabbing %r", used, cap, candidate.get("title"))
         warn(f"Grab skipped: daily grab cap reached ({used}/{cap}; setting max_grabs_per_day)")
         return {"result": RESULT_DAILY_CAP}
+    if force:
+        _forget_in_sabnzbd(client, candidate.get("title"))
     nzo_ids = client.add_url(candidate["downloadUrl"], category=client_row["category"] or None)
     _grab_counted(db)
     nzo_id = nzo_ids[0] if nzo_ids else None
@@ -1834,7 +1903,7 @@ def send_to_download_client(db, candidate, warn):
     return {"result": RESULT_GRABBED, "client_row": client_row, "nzo_id": nzo_id}
 
 
-def _send_to_qbittorrent(db, candidate, client_row, warn):
+def _send_to_qbittorrent(db, candidate, client_row, warn, force=False):
     """The torrent half of send_to_download_client(): same duplicate guard + daily cap, then the torrent goes to qBittorrent (the sidecar fetches the
     .torrent itself, so the indexer's key never reaches qBittorrent); the indexer's seed goals become per-torrent share limits (else the client's
     own). `nzo_id` is the torrent's info hash, the job id every caller stores."""
@@ -1845,7 +1914,7 @@ def _send_to_qbittorrent(db, candidate, client_row, warn):
         warn(f"Grab skipped: {reason}")
         return {"result": RESULT_DUPLICATE_DOWNLOAD}
     today, used, cap = _grab_budget(db)
-    if used >= cap:
+    if used >= cap and not force:  # a hand-picked release ("Grab anyway") is still counted, but not refused
         logger.warning("indexer_search: daily grab cap reached (%s/%s) -- not grabbing %r", used, cap, candidate.get("title"))
         warn(f"Grab skipped: daily grab cap reached ({used}/{cap}; setting max_grabs_per_day)")
         return {"result": RESULT_DAILY_CAP}
@@ -1867,7 +1936,7 @@ def _send_to_qbittorrent(db, candidate, client_row, warn):
     return {"result": RESULT_GRABBED, "client_row": client_row, "nzo_id": info_hash}
 
 
-def grab_candidate(db, provider, scene_stashdb_id, candidate, replace_job=False):
+def grab_candidate(db, provider, scene_stashdb_id, candidate, replace_job=False, force=False):
     """Sends `candidate` (a dict with at least title/protocol/downloadUrl/
     indexer -- the same shape `_select_best()`/`_select_review_candidate()`
     produce) to this scene's configured download client and records the
@@ -1877,7 +1946,9 @@ def grab_candidate(db, provider, scene_stashdb_id, candidate, replace_job=False)
     accept_review_candidate()) shares the exact same grab path a normal
     auto-accepted candidate uses, instead of a second, drifting copy.
     `replace_job` (v0.231.0): the scene's running download is being replaced (a dead torrent), so it does not stop the grab; the caller
-    removes the old download."""
+    removes the old download.
+    `force` (v0.260.3): the user's explicit "Grab anyway" -- the daily cap does not refuse it and the duplicate guard no longer refuses a release that was in SABnzbd's history / failed
+    before, and the release leaves this scene's blocklist (it is wanted again)."""
     def _finish(result, grab=None):
         release_repo.set_search_result_for_scene(db, provider, scene_stashdb_id, result)
         return {"result": result, "grab": grab}
@@ -1891,13 +1962,18 @@ def grab_candidate(db, provider, scene_stashdb_id, candidate, replace_job=False)
 
     sent = send_to_download_client(
         db, candidate, lambda msg: history.scene("warning", "grab", msg, provider, scene_stashdb_id,
-                                                 details={"release": candidate.get("title")}))
+                                                 details={"release": candidate.get("title")}), force=force)
     if sent["result"] != RESULT_GRABBED:
         return _finish(sent["result"])
     client_row, nzo_id = sent["client_row"], sent["nzo_id"]
 
+    if force and candidate.get("title"):
+        release_repo.remove_review_rejected_title(db, provider, scene_stashdb_id, candidate["title"])
+        release_repo.remove_review_rejected_title(db, provider, scene_stashdb_id, EXACT_PREFIX + candidate["title"])
+        history.scene("info", "blocklist", f"Grabbed anyway, off the blocklist: {candidate['title']}", provider, scene_stashdb_id)
     release_repo.set_download_job_for_scene(db, provider, scene_stashdb_id, client_row["id"], nzo_id)
     release_repo.set_grabbed_for_scene(db, provider, scene_stashdb_id, candidate.get("title"))
+    release_repo.set_grabbed_info_for_scene(db, provider, scene_stashdb_id, candidate)
     release_repo.set_review_candidate_for_scene(db, provider, scene_stashdb_id, None)
     logger.info("indexer_search: grabbed %r from %s -> %s job %s",
                 candidate.get("title"), candidate.get("indexer"), client_row["name"], nzo_id)
