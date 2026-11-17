@@ -11,7 +11,7 @@
   // rule and the bug it caused when this drifted). Change this if you
   // install under a different folder name.
   // Must equal `version:` in stash-release-manager.yml (scripts/test_plugin_version.py checks it).
-  const PLUGIN_VERSION = '0.260.16';
+  const PLUGIN_VERSION = '0.260.17';
   const PLUGIN_ID = 'stash-release-manager';
   const PLUGIN_NAME = 'StashReleaseManager';
 
@@ -2957,7 +2957,7 @@
   // The row's action button of a scene that Whisparr tracks (no file) but that is not on the wishlist: the logo, with "Search now" as its words (tooltip and
   // screen reader; the text stays inside, the click handler reads it). `btn` = the row's `.srw-whisparr-action` button.
   // A scene on the wishlist (release status 'sent_to_whisparr') is marked on its row in the lists that offer Add (Missing from Catalog, New releases): a
-  // badge, no second Add (v0.260.16). Decided by the scene's own status -- not by whether Whisparr knows it (Whisparr is only a backup now).
+  // badge, no second Add (v0.260.17). Decided by the scene's own status -- not by whether Whisparr knows it (Whisparr is only a backup now).
   function markOnWishlist(li, actionBtn) {
     if (!li) return;
     li.querySelectorAll('.srw-whisparr-add-only').forEach((x) => x.remove());

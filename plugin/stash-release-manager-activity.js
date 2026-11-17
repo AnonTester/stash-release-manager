@@ -696,10 +696,9 @@
               }),
           }));
         }
-        // The lookup as a button with text (v0.260.16): the provider's registered hashes, our own known releases, then the release name.
-        extra.push(el('button', {
-          className: 'srw-btn', textContent: check ? 'Check again' : 'Check which scene it is',
-          title: 'Ask the provider which scene the hashes of this file are registered at, look the hashes up in our own known releases and compare the release name with the scenes you are looking for',
+        // The lookup, an icon button like its neighbours (v0.260.17): the provider's registered hashes, our own known releases, then the release name.
+        extra.push(window.SRW.iconButton('button', 'faMagnifyingGlass', check ? 'Check again' : 'Check which scene it is', {
+          title: (check ? 'Check again: ' : 'Check which scene it is: ') + 'ask the provider which scene the hashes of this file are registered at, look the hashes up in our own known releases and compare the release name with the scenes you are looking for',
           onClick: async (e) => {
             const button = e.currentTarget;
             button.disabled = true;
