@@ -38,12 +38,21 @@ class Provider:
 release_repo.set_grabbed_info_for_scene(db, "stashdb", "A", {"title": "Wrong.Release.1080p", "indexer": "Idx", "protocol": "usenet", "downloadUrl": "http://i/get?apikey=SECRET", "infoUrl": "http://i/d", "size": 123})
 p = Provider([{"id": "A", "title": "Scene A"}, {"id": "C", "title": "Scene C"}, {"id": "B", "title": "Scene B"}])
 found = fi.identify_wrong_file(db, Stash(), p, "stashdb", "A", PATH)
-check("the scene we are looking for is preferred, the scene itself is skipped", found == {"id": "B", "title": "Scene B", "list": "wishlist"})
+check("the scene we are looking for is preferred, the scene itself is skipped", found == {"id": "B", "title": "Scene B", "list": "wishlist", "source": "provider"})
 check("only oshash / phash / md5 are sent", [x["algorithm"] for x in p.calls[0][0]] == ["OSHASH", "PHASH"])
 row = release_repo.list_rows_for_scene(db, "stashdb", "A")[0]
 check("stored on the release", json.loads(row["mismatch_found"])["id"] == "B")
 check("a known scene that is not wanted: list None", fi.identify_wrong_file(db, Stash(), Provider([{"id": "C", "title": "Scene C"}]), "stashdb", "A", PATH)["list"] is None)
-check("nothing found -> None", fi.identify_wrong_file(db, Stash(), Provider([{"id": "A", "title": "x"}]), "stashdb", "A", PATH) is None)
+class OtherStash(Stash):
+    def find_scene_by_path(self, path):
+        return {"id": "78", "files": [{"path": PATH, "fingerprints": [{"type": "oshash", "value": "new1"}, {"type": "phash", "value": "new2"}]}]}
+check("nothing found -> None", fi.identify_wrong_file(db, OtherStash(), Provider([{"id": "A", "title": "x"}]), "stashdb", "A", PATH) is None)
+neg = json.loads(release_repo.list_rows_for_scene(db, "stashdb", "A")[0]["mismatch_found"])
+check("an empty check is stored too (id None, checked, name_fits is a bool)", neg["id"] is None and neg["checked"] and isinstance(neg["name_fits"], bool))
+check("stored_found ignores an empty check", fi.stored_found({"mismatch_found": json.dumps(neg)}) is None)
+# the provider knows nothing, but we know a release with the same hashes (our own table)
+own = fi.identify_wrong_file(db, Stash(), Provider([]), "stashdb", "A", PATH)
+check("own known releases: same hashes -> that scene, source 'known'", own and own["id"] == "B" and own["source"] == "known" and own["list"] == "wishlist")
 
 import known_release
 kr = known_release.for_scene(db, "stashdb", "B")
