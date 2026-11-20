@@ -677,11 +677,11 @@
             + (check.name_fits === true ? 'The release name fits this scene, so this is probably an encode nobody has registered — "File is correct" keeps it.'
               : check.name_fits === false ? 'The release name does not fit this scene either.' : '');
         }
-        if (found && found.list === 'wishlist' && found.source !== 'name') {
+        if (found && (found.list === 'wishlist' || !found.list) && found.source !== 'name') {
           extra.push(window.SRW.iconButton('button', 'faArrowRight', 'Use for that scene', {
             title: 'Tag the file as that scene, rename and move it to the naming scheme, count that wishlist scene as imported; this scene goes back on the wishlist and the wrong download is blocklisted',
             onClick: (e) => confirmInline(e.currentTarget,
-              `Use the file for "${found.title}" (renamed + moved), blocklist this download and put "${r.title}" back on the wishlist? Nothing is deleted.`,
+              `Use the file for "${found.title}" (renamed + moved), blocklist this download and put "${r.title}" back on the wishlist? Nothing is deleted.` + (found.list ? '' : ` "${found.title}" is not on your wishlist; it only gets the file if it is not in your library yet.`),
               async () => {
                 window.SRW.setBusy(fixStatus, 'placing...');
                 try {

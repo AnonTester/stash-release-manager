@@ -1174,10 +1174,10 @@ organize_scene_hook = None
 
 
 def place_file_for_other_scene(db, stash_client, stashdb_client, provider, stash_id, get_provider_client=None):
-    """"Use for the other scene" on an Import-failed row (v0.260.0): the file is not this scene but one on our wishlist. The Stash scene made from the
+    """"Use for the other scene" on an Import-failed row (v0.260.0): the file is not this scene but one on our wishlist (or one that is neither wanted nor in the library). The Stash scene made from the
     file is tagged with the OTHER scene's metadata, that wishlist scene counts as imported, the file is renamed and moved to the naming scheme
     (Organizer, fingerprint-verified), and this scene goes back on the wishlist with the wrong download blocklisted -- the file itself is kept.
-    Only wishlist scenes (not upgrades). Returns {"ok", "scene", "title", "organized"} or {"error"}."""
+    Not for upgrade-list scenes or scenes that already have a file. Returns {"ok", "scene", "title", "organized"} or {"error"}."""
     with _finalize_lock:
         row = next((r for r in release_repo.list_rows_for_scene(db, provider, stash_id)
                     if r.get("import_error_code") == "fingerprint_mismatch" and r.get("pending_import_path")), None)
@@ -1189,14 +1189,18 @@ def place_file_for_other_scene(db, stash_client, stashdb_client, provider, stash
         if found.get("source") == "name":
             return {"error": "the release name only suggests that scene, the file's hashes do not confirm it -- not placed automatically"}
         other = found["id"]
-        if _list_of_scene(db, provider, other) != "wishlist":
-            return {"error": f"{found['title']!r} is not on your wishlist (any more)"}
         path = row["pending_import_path"]
         scene = stash_client.find_scene_by_path(path)
         if scene is None:
             return {"error": "Stash has no scene for this file (any more)"}
         provider_client = _provider_client(provider, stashdb_client, get_provider_client)
         endpoint = _provider_endpoint(provider, stash_client, provider_client)
+        other_list = _list_of_scene(db, provider, other)
+        if other_list != "wishlist":
+            # v0.260.18: a scene that is on no list and not in the library either (e.g. deleted by mistake) can take the file as well
+            in_library = stash_client.stash_ids_in_library(endpoint or stash_client.stashdb_endpoint, [other])
+            if other_list == "upgrade" or (in_library.get(other) not in (None, scene["id"])):
+                return {"error": f"{found['title']!r} is not on your wishlist (any more)"}
         try:
             library_check.apply_fix(stash_client, scene["id"], other, create_missing_performers=True,
                                     endpoint=endpoint, keep_other_endpoints=True)

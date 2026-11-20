@@ -26,6 +26,9 @@ add("B", "sent_to_whisparr", title="Scene B")
 add("C", "imported", title="Scene C")
 
 class Stash:
+    stashdb_endpoint = "https://stashdb.org/graphql"
+    in_library = {}
+    def stash_ids_in_library(self, endpoint, ids): return {i: self.in_library[i] for i in ids if i in self.in_library}
     def find_scene_by_path(self, path):
         return {"id": "77", "files": [{"path": PATH, "fingerprints": [{"type": "oshash", "value": "ab"}, {"type": "phash", "value": "cd"}, {"type": "duration", "value": "9"}]}]}
 
@@ -83,9 +86,15 @@ check("A is back on the wishlist, the wrong download blocklisted, nothing pendin
 res = fi.place_file_for_other_scene(db, Stash(), None, "stashdb", "A")
 check("a second click refuses (no failed import any more)", "error" in res)
 
-# not on the wishlist -> refused
+# not wanted, but in the library already -> refused; not in the library either -> the file is placed (v0.260.18)
 add("D", "import_failed", path=PATH, code="fingerprint_mismatch")
 release_repo.set_mismatch_found_for_scene(db, "stashdb", "D", {"id": "C", "title": "Scene C", "list": None})
-check("a scene that is not wanted is refused", "error" in fi.place_file_for_other_scene(db, Stash(), None, "stashdb", "D"))
+class HasC(Stash):
+    in_library = {"C": "5"}
+check("a scene that already has a file is refused", "error" in fi.place_file_for_other_scene(db, HasC(), None, "stashdb", "D"))
+tagged.clear()
+res = fi.place_file_for_other_scene(db, Stash(), None, "stashdb", "D")
+check("a scene that is neither wanted nor in the library takes the file", res.get("ok") and tagged == [("77", "C")])
+check("the failed row is back on the wishlist", release_repo.list_rows_for_scene(db, "stashdb", "D")[0]["status"] == "sent_to_whisparr")
 print("FAILED: " + ", ".join(fails) if fails else "ALL OK")
 sys.exit(1 if fails else 0)
