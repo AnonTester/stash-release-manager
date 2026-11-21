@@ -6,6 +6,9 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.261.0
+- **Read-only endpoints for a dashboard: `GET /dashboard/activity`** (counts + short lists of downloading, importing, needs review, failed) **and `GET /dashboard/calendar`** (release calendar in the shape of Radarr's / Sonarr's: days with items and a state per item). No data is changed, no URL or key is returned; like the whole sidecar API they need no key, so LAN / Docker network only. Sidecar (rebuild).
+
 ## 0.260.18
 - **Import failed: "Use for that scene" also works for a scene that is on no list and not in the library** (e.g. one deleted by mistake). It is refused only when that scene already has a file or is on the upgrade list. Plugin + sidecar (rebuild, Reload plugins).
 

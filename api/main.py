@@ -106,7 +106,8 @@ import scene_compare
 import scene_alias
 from routers.encode_worker import router as encode_worker_router, init_encode_worker_router
 from routers.convert_api import router as convert_router, init_convert_router, resume as convert_resume
-from routers.releases import router as releases_router, init_releases_router, download_progress as compute_download_progress, sweep_scene_covers
+from routers.releases import router as releases_router, init_releases_router, download_progress as compute_download_progress, sweep_scene_covers, reviews as compute_reviews
+from routers.dashboard import router as dashboard_router, init_dashboard_router
 from routers.scan import router as scan_router, init_scan_router, set_progress as set_scan_progress
 from routers.settings import (
     router as settings_router, init_settings_router, DEFAULTS, get_setting_value,
@@ -2304,6 +2305,8 @@ app = FastAPI(title="StashReleaseManager", lifespan=lifespan)
 app.include_router(watchlist_router)
 app.include_router(userscript_router)
 app.include_router(releases_router)
+app.include_router(dashboard_router)
+init_dashboard_router(db, compute_download_progress, compute_reviews)
 app.include_router(covers_router)
 app.include_router(encode_worker_router)
 app.include_router(convert_router)
