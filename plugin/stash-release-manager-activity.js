@@ -196,7 +196,7 @@
         emptyText: 'Nothing stuck right now.',
         showSearchStatus: true, showSearchActions: true, showImportError: true, sortBy: 'last_search_at', onChanged: () => render(container),
         movieRows: movieRows(filmsStuck, progressElements, container),
-      }), scenesPreview, moviesPreview), container, torrents);
+      }), scenesPreview, moviesPreview), container, torrents, sentGrouped);
       if (stuckTooNew) {
         const note = window.SRW.el('p', { className: 'srw-hint', textContent: `${stuckTooNew} scene${stuckTooNew === 1 ? '' : 's'} dated today or yesterday ${stuckTooNew === 1 ? 'is' : 'are'} not listed here yet: indexers often post a release hours after its date. ${stuckTooNew === 1 ? 'It is' : 'They are'} searched as usual and stay on the Releases page's wishlist.` });
         const summary = stuckGroup.querySelector(':scope > summary');
@@ -308,7 +308,7 @@
   // the Stuck tab (and count in its label) and go back to "Downloading" by themselves when they move again.
   const HEALTH_LABELS = { stalled: 'Stalled', stuck: 'Stuck', error: 'Error', missing: 'Missing' };
 
-  async function withTorrentProblems(group, container, data) {
+  async function withTorrentProblems(group, container, data, wishlist = []) {
     const { el, confirmInline } = window.SRW;
     const rows = data && !data.error ? data.rows || [] : [];
     if (!rows.length) return group;
@@ -319,6 +319,7 @@
     }
     const caps = await window.SRW.getSearchCapabilities().catch(() => null);
     const sources = caps && !caps.error ? caps.manual_sources || [] : [];
+    const byScene = new Map((wishlist || []).map((w) => [`${w.provider}:${w.scene_stashdb_id}`, w]));
     const list = el('ul', { className: 'srw-torrent-problems' });
     const status = el('span', { className: 'srw-key-status' });
     const refresh = () => render(container);
@@ -346,11 +347,11 @@
           'torrents_switch', row, `Look for another torrent for "${row.title}" and, when one is found, remove this one with its data?`));
         if (sources.length) {
           const scn = { provider: row.provider, scene_stashdb_id: row.scene_id, title: row.title };
-          buttons.push(window.SRW.buildManualSearch(scn, sources, caps.backend, refresh, {
+          buttons.push(el('span', { className: 'srw-search-actions' }, [window.SRW.buildManualSearch(scn, sources, caps.backend, refresh, {
             host: () => li,
             forceGrab: true,
             grab: (candidate, force) => window.SRW.runOp('releases_manual_search_grab', { provider: row.provider, scene_stashdb_id: row.scene_id, candidate, replace: true, force: Boolean(force) }),
-          }));
+          })]));
         }
       }
       if (row.state === 'missing' || row.state === 'error') {
@@ -359,15 +360,32 @@
       if (row.state !== 'stalled') buttons.push(act(el('button', { type: 'button', className: 'srw-btn', textContent: 'Keep waiting', title: 'No automatic switching for a day' }), 'torrents_keep', row));
       buttons.push(act(el('button', { type: 'button', className: 'srw-btn srw-btn-danger', textContent: 'Remove', title: 'Remove the torrent with its data, never use it again, and search again' }),
         'torrents_remove', row, `Remove this torrent with its downloaded data${scene ? '' : ' and put the movie back on the wishlist'}?`));
-      // The cover in front, as on the Downloading tab: a scene's from the stash-box (or its Stash scene), a movie's poster
-      const thumb = scene ? window.SRW.buildReleaseThumb({ provider: row.provider, scene_stashdb_id: row.scene_id }) : movieThumb(row);
-      const li = el('li', { className: `srw-torrent-problem srw-torrent-${row.state}` }, [
-        thumb,
-        el('span', { className: 'srw-review-warning', textContent: HEALTH_LABELS[row.state] || row.state }),
-        el('span', { className: 'srw-release-title', textContent: row.title || '(untitled)' }),
-        el('span', { className: 'srw-review-candidate-meta', textContent: `${row.percent}%${swarm ? ` — ${swarm}` : ''} — ${row.detail || row.raw_state || ''}` }),
+      // Same row as the wishlist rows (cover | names, title, date | buttons), plus the Stuck / Stalled badge as the first line of the text
+      // and the download progress as its last.
+      const known = scene ? byScene.get(`${row.provider}:${row.scene_id}`) : null;
+      const r = known || { provider: row.provider, scene_stashdb_id: row.scene_id, title: row.title, entity_types: [] };
+      const children = [
+        scene ? window.SRW.buildReleaseThumb(r) : movieThumb(row),
+        known ? window.SRW.buildEntityIcons(r.entity_types) : null,
+        known ? window.SRW.buildLocalEntityLink(r) : null,
+        known ? window.SRW.buildStudioContext(r) : (row.studio_name ? el('span', { className: 'srw-release-studio-context', textContent: row.studio_name }) : null),
+        scene
+          ? el('a', { className: 'srw-release-title', href: window.SRW.sceneUrl(row.provider, row.scene_id), target: '_blank', rel: 'noopener noreferrer', textContent: row.title || '(untitled)' })
+          : el('span', { className: 'srw-release-title', textContent: row.title || '(untitled)' }),
+        el('span', { className: `srw-film-class ${scene ? 'srw-film-class-likely' : 'srw-film-class-sure'}`, textContent: scene ? 'Scene' : 'Movie' }),
         ...buttons,
-      ]);
+      ].filter(Boolean);
+      const li = window.SRW.arrangeReleaseRow(el('li', { className: `srw-release-item srw-torrent-problem srw-torrent-${row.state}` }, children),
+        scene ? r : { scene_date: (row.release_date || '').slice(0, 10) });
+      const info = li.querySelector('.srw-rr-info');
+      info.prepend(el('div', { className: 'srw-rr-badge' }, [el('span', { className: 'srw-review-warning', textContent: HEALTH_LABELS[row.state] || row.state })]));
+      const pct = Math.max(0, Math.min(100, Number(row.percent) || 0));
+      info.appendChild(el('div', { className: 'srw-rr-progress' }, [
+        el('span', { className: 'srw-download-progress' }, [
+          el('div', { className: 'srw-download-progress-track' }, [el('div', { className: 'srw-download-progress-fill', style: `width: ${pct}%` })]),
+          el('span', { className: 'srw-download-progress-text', textContent: `${row.percent}%${swarm ? ` — ${swarm}` : ''} — ${row.detail || row.raw_state || ''}` }),
+        ]),
+      ]));
       list.appendChild(li);
     });
     const bar = el('div', { className: 'srw-toolbar' }, [

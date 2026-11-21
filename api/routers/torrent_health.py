@@ -49,7 +49,8 @@ def _public(r, now, live=None):
             f = film_repo.get(_db, r["film_id"]) or {}
         except Exception:
             f = {}
-        film = {"image_url": f.get("image_url"), "stash_group_id": f.get("stash_group_id")}
+        film = {"image_url": f.get("image_url"), "stash_group_id": f.get("stash_group_id"), "studio_name": f.get("studio_name"),
+                "release_date": f.get("release_date")}
     return {**film,
         "client_id": r["client_id"], "job_id": r["job_id"], "kind": r["kind"], "provider": r["provider"], "scene_id": r["scene_id"],
         "film_id": r["film_id"], "title": r["title"], "state": r["state"], "detail": r["detail"],

@@ -6,6 +6,9 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.260.20
+- **Activity > Stuck: the torrents needing a look use the same row layout as the other rows**: cover, then the Stuck / Stalled badge, the performers and studio, the title with its Scene / Movie pill, the date and the download progress as the last line, with the buttons in the column on the right.
+
 ## 0.260.19
 - **Activity > Stuck: the torrents needing a look show their cover** in front of the row, like the Downloading & importing tab (a scene's cover, a movie's poster).
 
