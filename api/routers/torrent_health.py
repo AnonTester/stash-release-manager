@@ -5,6 +5,7 @@ import time
 
 from fastapi import APIRouter
 
+import film_repo
 import torrent_health
 
 router = APIRouter(prefix="/torrent-health", tags=["torrent-health"])
@@ -42,7 +43,14 @@ def _public(r, now, live=None):
     else:
         r = {**r, "detail": torrent_health.live_detail(r, now, cfg, torrent_health.check_interval_s(_db))}
     stalled = r.get("stalled_s") if r.get("stalled_s") else None  # observed stall time (see torrent_health.classify)
-    return {
+    film = {}
+    if r["kind"] == "film" and r.get("film_id"):  # the movie's poster and group, for the cover in front of the row
+        try:
+            f = film_repo.get(_db, r["film_id"]) or {}
+        except Exception:
+            f = {}
+        film = {"image_url": f.get("image_url"), "stash_group_id": f.get("stash_group_id")}
+    return {**film,
         "client_id": r["client_id"], "job_id": r["job_id"], "kind": r["kind"], "provider": r["provider"], "scene_id": r["scene_id"],
         "film_id": r["film_id"], "title": r["title"], "state": r["state"], "detail": r["detail"],
         "percent": round((r["progress"] or 0) * 100, 1), "max_percent": round((r["max_progress"] or 0) * 100, 1),

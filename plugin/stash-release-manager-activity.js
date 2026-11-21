@@ -359,7 +359,10 @@
       if (row.state !== 'stalled') buttons.push(act(el('button', { type: 'button', className: 'srw-btn', textContent: 'Keep waiting', title: 'No automatic switching for a day' }), 'torrents_keep', row));
       buttons.push(act(el('button', { type: 'button', className: 'srw-btn srw-btn-danger', textContent: 'Remove', title: 'Remove the torrent with its data, never use it again, and search again' }),
         'torrents_remove', row, `Remove this torrent with its downloaded data${scene ? '' : ' and put the movie back on the wishlist'}?`));
+      // The cover in front, as on the Downloading tab: a scene's from the stash-box (or its Stash scene), a movie's poster
+      const thumb = scene ? window.SRW.buildReleaseThumb({ provider: row.provider, scene_stashdb_id: row.scene_id }) : movieThumb(row);
       const li = el('li', { className: `srw-torrent-problem srw-torrent-${row.state}` }, [
+        thumb,
         el('span', { className: 'srw-review-warning', textContent: HEALTH_LABELS[row.state] || row.state }),
         el('span', { className: 'srw-release-title', textContent: row.title || '(untitled)' }),
         el('span', { className: 'srw-review-candidate-meta', textContent: `${row.percent}%${swarm ? ` — ${swarm}` : ''} — ${row.detail || row.raw_state || ''}` }),
