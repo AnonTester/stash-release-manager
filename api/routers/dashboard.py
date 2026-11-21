@@ -132,7 +132,7 @@ def calendar(start: str = "", end: str = "", include_available: bool = False, vr
         raise HTTPException(400, "end must not be before start, and the range is at most 366 days")
     statuses = ("sent_to_whisparr", "imported", "import_failed") + (("new",) if include_available else ())
     rows = release_repo.query_releases(_db, statuses=statuses, date_from=d_from.isoformat(), date_until=d_to.isoformat(), per_page=0,
-                                       vr=vr)["rows"]
+                                       vr={True: "vr", False: "non_vr"}.get(vr))["rows"]
     downloading_ids = {r["scene_stashdb_id"] for r in release_repo.list_grabbed_awaiting_import(_db)}
     items, seen = [], {}
     order = {"downloaded": 0, "downloading": 1, "failed": 2, "wanted": 3, "available": 4}

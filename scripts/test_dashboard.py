@@ -20,7 +20,7 @@ def add(i, status, date, title="T", job=None, vr=0, ent="E1"):
                   (i, ent, title + i, date, status, job, vr, "fingerprint_mismatch" if status == "import_failed" else None))
 add("a", "imported", "2026-11-20"); add("b", "sent_to_whisparr", "2026-11-21"); add("c", "sent_to_whisparr", "2026-11-21", job="j")
 add("d", "import_failed", "2026-11-22"); add("e", "new", "2026-11-22"); add("b", "sent_to_whisparr", "2026-11-21", ent="E2")
-add("f", "imported", "2027-05-01")
+add("f", "imported", "2027-05-01"); add("g", "imported", "2026-11-20", vr=1)
 dashboard.init_dashboard_router(db, lambda: {"c": {"phase": "downloading", "percentage": "42", "timeleft": "0:10:00", "mb": "100", "mbleft": "58"},
                                               "x": {"phase": "verifying"}}, lambda: {"wishlist": [{"scene_stashdb_id": "b", "provider": "stashdb", "title": "Tb", "review_candidate": {"title": "Cand"}}], "upgrades": []})
 a = dashboard.activity()
@@ -29,10 +29,11 @@ check("download numbers", a["downloading"][0]["percentage"] == 42.0 and a["downl
 check("review candidate named", a["needs_review"][0]["candidate"] == "Cand")
 check("failed carries the code", a["failed"][0]["error_code"] == "fingerprint_mismatch")
 c = dashboard.calendar("2026-11-20", "2026-11-22")
-check("default = wishlist + library, a scene once", c["total"] == 4 and [d["date"] for d in c["days"]] == ["2026-11-20", "2026-11-21", "2026-11-22"])
+check("default = wishlist + library, a scene once", c["total"] == 5 and [d["date"] for d in c["days"]] == ["2026-11-20", "2026-11-21", "2026-11-22"])
 st = {i["id"]: i["state"] for i in c["items"]}
-check("states", st == {"a": "downloaded", "b": "wanted", "c": "downloading", "d": "failed"})
-check("available only on request", dashboard.calendar("2026-11-20", "2026-11-22", include_available=True)["total"] == 5)
+check("states", st == {"a": "downloaded", "b": "wanted", "c": "downloading", "d": "failed", "g": "downloaded"})
+check("available only on request", dashboard.calendar("2026-11-20", "2026-11-22", include_available=True)["total"] == 6)
+check("vr filter", [i["id"] for i in dashboard.calendar("2026-11-20", "2026-11-22", vr=True)["items"]] == ["g"] and dashboard.calendar("2026-11-20", "2026-11-22", vr=False)["total"] == 4)
 try:
     dashboard.calendar("2026-01-01", "2028-01-01"); check("range limit", False)
 except Exception:
