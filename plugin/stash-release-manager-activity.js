@@ -339,7 +339,7 @@
     };
     rows.forEach((row) => {
       const swarm = [row.seeds != null ? `${row.seeds} seeds` : null, row.peers != null ? `${row.peers} peers` : null,
-        row.availability != null && row.availability >= 0 ? `availability ${Number(row.availability).toFixed(2)}` : null].filter(Boolean).join(', ');
+        row.availability != null && row.availability >= 0 ? `${+(Number(row.availability) * 100).toFixed(1)}% available` : null].filter(Boolean).join(', ');
       const scene = row.kind === 'scene';
       const buttons = [];
       if (scene) {
@@ -383,7 +383,8 @@
       info.appendChild(el('div', { className: 'srw-rr-progress' }, [
         el('span', { className: 'srw-download-progress' }, [
           el('div', { className: 'srw-download-progress-track' }, [el('div', { className: 'srw-download-progress-fill', style: `width: ${pct}%` })]),
-          el('span', { className: 'srw-download-progress-text', textContent: `${row.percent}%${swarm ? ` — ${swarm}` : ''} — ${row.detail || row.raw_state || ''}` }),
+          el('span', { className: 'srw-download-progress-text', textContent: `${row.percent}%${swarm ? ` — ${swarm}` : ''} — ${row.detail || row.raw_state || ''}`,
+            title: 'Available: how much of the file the connected peers hold together (qBittorrent\'s distributed copies as a percent). 100% = one complete copy; below 100% = part of the file is not in the swarm, so it cannot finish; above 100% = more than one copy.' }),
         ]),
       ]));
       list.appendChild(li);

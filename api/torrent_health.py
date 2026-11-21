@@ -68,6 +68,11 @@ def check_interval_s(db):
 
 
 _STALL_NOTE = re.compile(r"^no progress for [\d.]+ (?:min|h)")
+_AT_PERCENT = re.compile(r" at \d+ %")  # notes written before 0.260.21 ended in "at 100 %": the percent is shown beside the note, rounded wrongly here
+
+
+def _tidy(detail):
+    return _AT_PERCENT.sub("", detail or "")
 
 
 def live_detail(row, now, cfg, interval_s):
@@ -75,7 +80,7 @@ def live_detail(row, now, cfg, interval_s):
     time shown would stand still, so it is carried on by the time since the last look -- as long as that look is recent (a longer silence is
     not continuous watching, nothing is added) -- and the note says when the last look was and when the next one is due. The decision
     (switch / flag) is still taken only at a look."""
-    detail = row.get("detail") or ""
+    detail = _tidy(row.get("detail"))
     if not _STALL_NOTE.match(detail) or row.get("state") not in (OK, STALLED):
         return detail
     age = max(0.0, now - (row.get("last_checked_at") or now))
@@ -184,7 +189,7 @@ def classify(torrent, prev, now, cfg, error_found=None):
         return out
     if raw in PAUSED_STATES:
         word = "stopped" if raw.startswith("stopped") else "paused"
-        out.update(state=STALLED, detail=f"{word} in the download client -- resume it there if it should go on at {progress * 100:.0f} %")
+        out.update(state=STALLED, detail=f"{word} in the download client -- resume it there if it should go on")
         return out
     if raw in WAITING_STATES:
         out.update(state=OK, detail={"queuedDL": "queued in the download client", "queuedUP": "queued in the download client",
@@ -206,7 +211,7 @@ def classify(torrent, prev, now, cfg, error_found=None):
     if stalled_s < cfg["stall_s"]:
         out.update(state=OK, detail=f"no progress for {_hm(stalled_s)}" if stalled_s >= 60 else "")
         return out
-    detail = f"no progress for {_hm(stalled_s)} at {progress * 100:.0f} %"
+    detail = f"no progress for {_hm(stalled_s)}"
     if real:
         out.update(state=STALLED, detail=detail)  # flagged only: it had real progress, it is never given up
         return out

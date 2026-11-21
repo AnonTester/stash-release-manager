@@ -6,6 +6,9 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.260.21
+- **Stalled / stuck torrent notes no longer end in "at 100 %"** (the percent is shown beside the note, and the rounded copy read 100 % for 99.6 %). **"availability 1.00" now reads "100% available"** (one decimal only when there is one, e.g. "73.5% available"), with a tooltip: it is qBittorrent's distributed copies as a percent, i.e. how much of the file the connected peers hold together (100% = one complete copy, less = part of the file is missing in the swarm).
+
 ## 0.260.20
 - **Activity > Stuck: the torrents needing a look use the same row layout as the other rows**: cover, then the Stuck / Stalled badge, the performers and studio, the title with its Scene / Movie pill, the date and the download progress as the last line, with the buttons in the column on the right.
 
