@@ -83,11 +83,11 @@ add("A5", "import_failed", path=PATH, code="fingerprint_mismatch", grabbed="Fift
 release_repo.set_grabbed_info_for_scene(db, "stashdb", "A5", {"title": "Fifth.Wrong.1080p", "indexer": "Idx", "protocol": "usenet", "downloadUrl": "http://i/get?x=1", "size": 5})
 class Stash2(Stash):
     def find_scene_by_path(self, path):
-        return {"id": "77", "files": [{"path": PATH, "size": 5, "duration": 9.0, "fingerprints": [{"type": "oshash", "value": "ab"}, {"type": "phash", "value": "cd"}]}]}
+        return {"id": "77", "files": [{"path": PATH, "size": 5, "duration": 9.0, "fingerprints": [{"type": "oshash", "value": "zz1"}, {"type": "phash", "value": "zz2"}]}]}
 r = fi.fix_wrong_download(db, Stash2(), Whisparr(), "stashdb", "A5", "studio", "e", "/media", "/media", ".recycle-bin", stashdb_client=Provider([]))
 kr = known_release.for_scene(db, "stashdb", "A5")
 check("unknown wrong file: hashes + fetch data kept, source 'wrong'", r.get("status") == "sent_to_whisparr" and len(kr) == 1 and kr[0]["source"] == "wrong"
-      and kr[0]["oshash"] == "ab" and kr[0]["phash"] == "cd" and kr[0]["indexer"] == "Idx" and kr[0]["download_url"] == "http://i/get?x=1")
+      and kr[0]["oshash"] == "zz1" and kr[0]["phash"] == "zz2" and kr[0]["indexer"] == "Idx" and kr[0]["download_url"] == "http://i/get?x=1")
 check("a file identified as another scene is not recorded twice under this scene", len(known_release.for_scene(db, "stashdb", "A")) == 0)
 print("FAILED: " + ", ".join(fails) if fails else "ALL OK")
 sys.exit(1 if fails else 0)

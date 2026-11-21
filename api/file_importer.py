@@ -1075,32 +1075,97 @@ def _grabbed_title_of(db, provider, stash_id):
     return rows[0].get("grabbed_title") if rows else None
 
 
-def identify_wrong_file(db, stash_client, provider_client, provider, stash_id, path):
-    """Which provider scene is the file at `path` really (v0.260.0)? Asks the provider for the scenes its hashes are registered at (not `stash_id`
-    itself). Returns {"id", "title", "list"} -- a scene we are looking for (wishlist / upgrade list) is preferred -- or None; the result is stored
-    on the release (mismatch_found) so the Import-failed row can show it."""
-    if provider_client is None or not hasattr(provider_client, "find_scenes_by_fingerprints"):
+def stored_found(row):
+    """The other scene a failed import's file was identified as ({"id", "title", "list", "source"}) -- None when nothing was found or not looked up."""
+    try:
+        found = json.loads((row or {}).get("mismatch_found") or "null")
+    except ValueError:
         return None
+    return found if isinstance(found, dict) and found.get("id") else None
+
+
+def _known_release_match(db, provider, stash_id, fps):
+    """A scene whose known release (our own collected table) has the same hashes as the file, other than `stash_id`: {"id", "title"} or None."""
+    clauses, args = [], []
+    for column in ("oshash", "phash", "md5"):
+        if fps.get(column):
+            clauses.append(f"{column} = ?")
+            args.append(fps[column])
+    if not clauses:
+        return None
+    with db.connect() as conn:
+        row = conn.execute(f"SELECT scene_id FROM known_release WHERE provider = ? AND scene_id != ? AND source != 'wrong' AND ({' OR '.join(clauses)}) "
+                           "ORDER BY id LIMIT 1", [provider, str(stash_id), *args]).fetchone()
+        if row is None:
+            return None
+        rel = conn.execute("SELECT title FROM release WHERE provider = ? AND scene_stashdb_id = ? LIMIT 1", (provider, row["scene_id"])).fetchone()
+    return {"id": row["scene_id"], "title": (rel["title"] if rel else "") or ""}
+
+
+def _name_verdict(db, provider, stash_id, grabbed_title):
+    """(fits_this_scene, other) for the release NAME: does it fit this scene, and which wanted scene (wishlist / upgrade list) does it fit besides.
+    A weaker clue than the hashes: it only ever shows a hint, never moves a file."""
+    import indexer_search
+    rows = release_repo.list_rows_for_scene(db, provider, stash_id)
+    if not rows or not grabbed_title:
+        return None, None
+    split = lambda r: [n for n in (r.get("cast_names") or "").split("|") if n]  # noqa: E731
+    me = rows[0]
+    fits = bool(indexer_search._candidate_plausible(me.get("title"), me.get("scene_date"), split(me), grabbed_title))
+    other = None
+    with db.connect() as conn:
+        wanted = [dict(r) for r in conn.execute(
+            """SELECT provider, scene_stashdb_id, title, scene_date, cast_names FROM release WHERE provider = ? AND scene_stashdb_id != ?
+               AND status = 'sent_to_whisparr' AND download_job_id IS NULL AND upgrade_of IS NULL""", (provider, str(stash_id)))]
+    seen = set()
+    for r in wanted:
+        if r["scene_stashdb_id"] in seen:
+            continue
+        seen.add(r["scene_stashdb_id"])
+        if indexer_search._candidate_plausible(r["title"], r["scene_date"], split(r), grabbed_title):
+            other = {"id": r["scene_stashdb_id"], "title": r["title"], "list": "wishlist"}
+            break
+    return fits, other
+
+
+def identify_wrong_file(db, stash_client, provider_client, provider, stash_id, path):
+    """Which scene is the wrong file at `path` really (v0.260.0, widened v0.260.16)? Looked up in three places, the first answer wins: the provider
+    (scenes its hashes are registered at, other than `stash_id`; a scene we are looking for is preferred), our own known releases (same hashes), then
+    the release name (a clue only, `source` "name"). Returns {"id", "title", "list", "source"} or None. EVERY check is stored on the release
+    (mismatch_found) so the Import-failed row can show it -- also an empty one: {"id": None, "checked": ..., "name_fits": bool}."""
     scene = stash_client.find_scene_by_path(path)
     file = next((f for f in (scene or {}).get("files", []) if f["path"] == path), None)
-    fps = [{"hash": fp["value"], "algorithm": fp["type"].upper()} for fp in (file or {}).get("fingerprints", [])
-           if fp.get("value") and fp["type"].lower() in ("oshash", "phash", "md5")]
-    if not fps:
-        return None
-    matches = (provider_client.find_scenes_by_fingerprints([fps]) or [[]])[0]
+    fp_values = {fp["type"].lower(): fp["value"] for fp in (file or {}).get("fingerprints", []) if fp.get("value")}
+    fps = [{"hash": v, "algorithm": k.upper()} for k, v in fp_values.items() if k in ("oshash", "phash", "md5")]
     best = None
-    for m in matches:
-        if str(m.get("id")) == str(stash_id):
-            continue
-        item = {"id": m.get("id"), "title": m.get("title") or "", "list": _list_of_scene(db, provider, m.get("id"))}
-        if best is None or (item["list"] and not best["list"]):
-            best = item
+    if provider_client is not None and hasattr(provider_client, "find_scenes_by_fingerprints") and fps:
+        matches = (provider_client.find_scenes_by_fingerprints([fps]) or [[]])[0]
+        for m in matches:
+            if str(m.get("id")) == str(stash_id):
+                continue
+            item = {"id": m.get("id"), "title": m.get("title") or "", "list": _list_of_scene(db, provider, m.get("id")), "source": "provider"}
+            if best is None or (item["list"] and not best["list"]):
+                best = item
+    if best is None and fp_values:
+        own = _known_release_match(db, provider, stash_id, fp_values)
+        if own:
+            best = {**own, "list": _list_of_scene(db, provider, own["id"]), "source": "known"}
+    grabbed = _grabbed_title_of(db, provider, stash_id)
+    fits, by_name = _name_verdict(db, provider, stash_id, grabbed)
+    if best is None and by_name is not None and not fits:
+        best = {**by_name, "source": "name"}
+    if best is None:
+        release_repo.set_mismatch_found_for_scene(db, provider, stash_id, {"id": None, "checked": time.strftime("%Y-%m-%d %H:%M"), "name_fits": fits})
+        history.scene("info", "import", "Checked the wrong file: no other scene is known for it" +
+                      ("; the release name fits this scene" if fits else "; the release name does not fit this scene either" if fits is not None else ""),
+                      provider, stash_id)
+        return None
     release_repo.set_mismatch_found_for_scene(db, provider, stash_id, best)
-    if best:
-        known_release.record(db, stash_client, provider, best["id"], path, _grabbed_title_of(db, provider, stash_id), "mismatch",
-                             _grab_info_of(db, provider, stash_id))
-        history.scene("info", "import", f"The wrong file is the scene {best['title']!r}" + (f" ({best['list']})" if best["list"] else ""),
-                      provider, stash_id, details={"found": best})
+    if best["source"] != "name":  # hashes proved it: collected as that scene's release
+        known_release.record(db, stash_client, provider, best["id"], path, grabbed, "mismatch", _grab_info_of(db, provider, stash_id))
+    how = {"provider": "", "known": " (same hashes as a release we already know)", "name": " (judging by the release name only)"}[best["source"]]
+    history.scene("info", "import", f"The wrong file is the scene {best['title']!r}" + (f" ({best['list']})" if best["list"] else "") + how,
+                  provider, stash_id, details={"found": best})
     return best
 
 
@@ -1109,30 +1174,33 @@ organize_scene_hook = None
 
 
 def place_file_for_other_scene(db, stash_client, stashdb_client, provider, stash_id, get_provider_client=None):
-    """"Use for the other scene" on an Import-failed row (v0.260.0): the file is not this scene but one on our wishlist. The Stash scene made from the
+    """"Use for the other scene" on an Import-failed row (v0.260.0): the file is not this scene but one on our wishlist (or one that is neither wanted nor in the library). The Stash scene made from the
     file is tagged with the OTHER scene's metadata, that wishlist scene counts as imported, the file is renamed and moved to the naming scheme
     (Organizer, fingerprint-verified), and this scene goes back on the wishlist with the wrong download blocklisted -- the file itself is kept.
-    Only wishlist scenes (not upgrades). Returns {"ok", "scene", "title", "organized"} or {"error"}."""
+    Not for upgrade-list scenes or scenes that already have a file. Returns {"ok", "scene", "title", "organized"} or {"error"}."""
     with _finalize_lock:
         row = next((r for r in release_repo.list_rows_for_scene(db, provider, stash_id)
                     if r.get("import_error_code") == "fingerprint_mismatch" and r.get("pending_import_path")), None)
         if row is None:
             return {"error": "no failed import with a recorded file for this release"}
-        try:
-            found = json.loads(row.get("mismatch_found") or "null")
-        except ValueError:
-            found = None
+        found = stored_found(row)
         if not found:
             return {"error": "it is not known which scene the file is (look it up first)"}
+        if found.get("source") == "name":
+            return {"error": "the release name only suggests that scene, the file's hashes do not confirm it -- not placed automatically"}
         other = found["id"]
-        if _list_of_scene(db, provider, other) != "wishlist":
-            return {"error": f"{found['title']!r} is not on your wishlist (any more)"}
         path = row["pending_import_path"]
         scene = stash_client.find_scene_by_path(path)
         if scene is None:
             return {"error": "Stash has no scene for this file (any more)"}
         provider_client = _provider_client(provider, stashdb_client, get_provider_client)
         endpoint = _provider_endpoint(provider, stash_client, provider_client)
+        other_list = _list_of_scene(db, provider, other)
+        if other_list != "wishlist":
+            # v0.260.18: a scene that is on no list and not in the library either (e.g. deleted by mistake) can take the file as well
+            in_library = stash_client.stash_ids_in_library(endpoint or stash_client.stashdb_endpoint, [other])
+            if other_list == "upgrade" or (in_library.get(other) not in (None, scene["id"])):
+                return {"error": f"{found['title']!r} is not on your wishlist (any more)"}
         try:
             library_check.apply_fix(stash_client, scene["id"], other, create_missing_performers=True,
                                     endpoint=endpoint, keep_other_endpoints=True)
@@ -1620,11 +1688,13 @@ def fix_wrong_download(db, stash_client, whisparr_client, provider, scene_stashd
     # stored at the mismatch is used, else the provider is asked now; `discard` (the "Discard anyway" click) skips this.
     found = None
     if not discard and not file_path and release.get("import_error_code") == "fingerprint_mismatch" and release.get("pending_import_path"):
+        found = stored_found(release)
+        already_checked = False
         try:
-            found = json.loads(release.get("mismatch_found") or "null")
+            already_checked = bool(json.loads(release.get("mismatch_found") or "null"))  # an empty check is stored too: not repeated
         except ValueError:
-            found = None
-        if not found:
+            pass
+        if not found and not already_checked:
             try:
                 found = identify_wrong_file(db, stash_client, _provider_client(provider, stashdb_client, get_provider_client), provider,
                                             scene_stashdb_id, release["pending_import_path"])
@@ -1642,10 +1712,7 @@ def fix_wrong_download(db, stash_client, whisparr_client, provider, scene_stashd
     # destroyed below. A file that was identified as another scene is recorded for THAT scene already (identify_wrong_file); one that matches no
     # known scene is recorded under the scene it was fetched for, with source 'wrong' (= a release that is NOT that scene's).
     if not file_path and release.get("pending_import_path") and release.get("import_error_code") == "fingerprint_mismatch":
-        try:
-            identified = bool(found) or bool(json.loads(release.get("mismatch_found") or "null"))
-        except ValueError:
-            identified = False
+        identified = bool(found) or bool(stored_found(release))
         if not identified:
             known_release.record(db, stash_client, provider, scene_stashdb_id, release["pending_import_path"],
                                  blocklisted_title or release.get("grabbed_title"), "wrong", _grab_info_of(db, provider, scene_stashdb_id))

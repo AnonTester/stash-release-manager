@@ -6,6 +6,15 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.260.18
+- **Import failed: "Use for that scene" also works for a scene that is on no list and not in the library** (e.g. one deleted by mistake). It is refused only when that scene already has a file or is on the upgrade list. Plugin + sidecar (rebuild, Reload plugins).
+
+## 0.260.17
+- **Import failed: the check button of a wrong file is an icon again** (magnifier, words as tooltip), like the other buttons of the row. Plugin only.
+
+## 0.260.16
+- **Import failed: the check of a wrong file looks in three places and always leaves a verdict in the row.** (1) the provider's registered hashes, (2) our own known releases (same hashes), (3) the release name against the wishlist (a clue only, never placed automatically). Every check is stored and shown in the row, also an empty one ("no other scene is known ... the release name fits this scene, so this is probably an encode nobody has registered"). The magnifier icon became a text button. "Fix wrong download" uses the stored verdict. Plugin + sidecar (rebuild, Reload plugins).
+
 ## 0.260.15
 - **"Fix wrong download" keeps the hashes and fetch data of the file it discards.** A wrong file that matches no known scene is recorded in `known_release` (hashes, length, size, how it was fetched) under the scene it was fetched for, with source `wrong`, before its Stash scene record is destroyed. Still only collected. Sidecar (rebuild).
 

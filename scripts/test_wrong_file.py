@@ -26,6 +26,9 @@ add("B", "sent_to_whisparr", title="Scene B")
 add("C", "imported", title="Scene C")
 
 class Stash:
+    stashdb_endpoint = "https://stashdb.org/graphql"
+    in_library = {}
+    def stash_ids_in_library(self, endpoint, ids): return {i: self.in_library[i] for i in ids if i in self.in_library}
     def find_scene_by_path(self, path):
         return {"id": "77", "files": [{"path": PATH, "fingerprints": [{"type": "oshash", "value": "ab"}, {"type": "phash", "value": "cd"}, {"type": "duration", "value": "9"}]}]}
 
@@ -38,12 +41,21 @@ class Provider:
 release_repo.set_grabbed_info_for_scene(db, "stashdb", "A", {"title": "Wrong.Release.1080p", "indexer": "Idx", "protocol": "usenet", "downloadUrl": "http://i/get?apikey=SECRET", "infoUrl": "http://i/d", "size": 123})
 p = Provider([{"id": "A", "title": "Scene A"}, {"id": "C", "title": "Scene C"}, {"id": "B", "title": "Scene B"}])
 found = fi.identify_wrong_file(db, Stash(), p, "stashdb", "A", PATH)
-check("the scene we are looking for is preferred, the scene itself is skipped", found == {"id": "B", "title": "Scene B", "list": "wishlist"})
+check("the scene we are looking for is preferred, the scene itself is skipped", found == {"id": "B", "title": "Scene B", "list": "wishlist", "source": "provider"})
 check("only oshash / phash / md5 are sent", [x["algorithm"] for x in p.calls[0][0]] == ["OSHASH", "PHASH"])
 row = release_repo.list_rows_for_scene(db, "stashdb", "A")[0]
 check("stored on the release", json.loads(row["mismatch_found"])["id"] == "B")
 check("a known scene that is not wanted: list None", fi.identify_wrong_file(db, Stash(), Provider([{"id": "C", "title": "Scene C"}]), "stashdb", "A", PATH)["list"] is None)
-check("nothing found -> None", fi.identify_wrong_file(db, Stash(), Provider([{"id": "A", "title": "x"}]), "stashdb", "A", PATH) is None)
+class OtherStash(Stash):
+    def find_scene_by_path(self, path):
+        return {"id": "78", "files": [{"path": PATH, "fingerprints": [{"type": "oshash", "value": "new1"}, {"type": "phash", "value": "new2"}]}]}
+check("nothing found -> None", fi.identify_wrong_file(db, OtherStash(), Provider([{"id": "A", "title": "x"}]), "stashdb", "A", PATH) is None)
+neg = json.loads(release_repo.list_rows_for_scene(db, "stashdb", "A")[0]["mismatch_found"])
+check("an empty check is stored too (id None, checked, name_fits is a bool)", neg["id"] is None and neg["checked"] and isinstance(neg["name_fits"], bool))
+check("stored_found ignores an empty check", fi.stored_found({"mismatch_found": json.dumps(neg)}) is None)
+# the provider knows nothing, but we know a release with the same hashes (our own table)
+own = fi.identify_wrong_file(db, Stash(), Provider([]), "stashdb", "A", PATH)
+check("own known releases: same hashes -> that scene, source 'known'", own and own["id"] == "B" and own["source"] == "known" and own["list"] == "wishlist")
 
 import known_release
 kr = known_release.for_scene(db, "stashdb", "B")
@@ -74,9 +86,15 @@ check("A is back on the wishlist, the wrong download blocklisted, nothing pendin
 res = fi.place_file_for_other_scene(db, Stash(), None, "stashdb", "A")
 check("a second click refuses (no failed import any more)", "error" in res)
 
-# not on the wishlist -> refused
+# not wanted, but in the library already -> refused; not in the library either -> the file is placed (v0.260.18)
 add("D", "import_failed", path=PATH, code="fingerprint_mismatch")
 release_repo.set_mismatch_found_for_scene(db, "stashdb", "D", {"id": "C", "title": "Scene C", "list": None})
-check("a scene that is not wanted is refused", "error" in fi.place_file_for_other_scene(db, Stash(), None, "stashdb", "D"))
+class HasC(Stash):
+    in_library = {"C": "5"}
+check("a scene that already has a file is refused", "error" in fi.place_file_for_other_scene(db, HasC(), None, "stashdb", "D"))
+tagged.clear()
+res = fi.place_file_for_other_scene(db, Stash(), None, "stashdb", "D")
+check("a scene that is neither wanted nor in the library takes the file", res.get("ok") and tagged == [("77", "C")])
+check("the failed row is back on the wishlist", release_repo.list_rows_for_scene(db, "stashdb", "D")[0]["status"] == "sent_to_whisparr")
 print("FAILED: " + ", ".join(fails) if fails else "ALL OK")
 sys.exit(1 if fails else 0)
