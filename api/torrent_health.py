@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 
 OK, STALLED, STUCK, ERROR, MISSING = "ok", "stalled", "stuck", "error", "missing"
 PROBLEM_STATES = (STALLED, STUCK, ERROR, MISSING)
+GONE_DETAIL = "removed from the download client"
 
 
 def default_cfg():
@@ -179,7 +180,7 @@ def classify(torrent, prev, now, cfg, error_found=None):
         return continuous and prev.get("state") == state
 
     if torrent is None:
-        return dead(MISSING, "removed from the download client", confirmed=seen_before(MISSING))
+        return dead(MISSING, GONE_DETAIL, confirmed=seen_before(MISSING))
     status = qbittorrent_client.status_of(torrent)
     raw = torrent.get("state") or ""
     if status == "error":

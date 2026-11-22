@@ -6,6 +6,9 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.261.2
+- **A torrent removed by hand in the download client is noticed at once.** Activity > Downloading & importing no longer says "Download complete -- waiting for import" for it (the client answered and does not know the torrent: "Torrent problem -- removed from the download client"), and Activity > Stuck shows it as missing instead of its last stalled state; either view asks the monitor for a round (at most every 2 minutes), so the History entry and the stored state follow within seconds instead of at the next look. A client that does not answer changes nothing. Sidecar (rebuild).
+
 ## 0.261.1
 - **`/dashboard/calendar?vr=` filters VR / flat scenes now.** Sidecar (rebuild).
 

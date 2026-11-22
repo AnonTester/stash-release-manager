@@ -322,6 +322,38 @@ th.get_row, th.finish_replacement = _orig
 check("Find another: a failed search keeps the old torrent", _out["failed"]["switched"] is False and "did not work" in _out["failed"]["message"])
 check("Find another: nothing found keeps it too; only a grabbed one replaces it", _out[False]["switched"] is False and _out[True]["switched"] is True and _fin == [1])
 
+# A torrent removed in the client by hand (v0.261.2): shown as missing at once, not as "download complete"; one round is asked for (throttled)
+import routers.releases as _Rel
+_listed = {"__listed__": {"aaa"}}
+check("gone: a client that answered without the torrent", _Rel._gone(_listed, "BBB") and not _Rel._gone(_listed, "AAA"))
+check("gone: a client that did not answer / no torrent client says nothing", not _Rel._gone({}, "bbb") and not _Rel._gone(None, "bbb"))
+check("gone: the phase is a torrent problem, not 'waiting for import'", _Rel._gone_phase()["phase"] == "torrent_problem" and _Rel._gone_phase()["health"] == "missing")
+_started = []
+_R._run["fn"], _R._run["running"] = (lambda: _started.append(1)), False
+_R._kicked["at"] = 0.0
+check("kick: the first one starts a round, a second within the gap does not", _R.kick_round() is True and _R.kick_round() is False)
+import time as _t2
+_t2.sleep(0.2)
+check("kick: the round ran once and the running flag is free again", _started == [1] and _R._run["running"] is False)
+_pub_row = {"client_id": 1, "job_id": "abc", "kind": "scene", "provider": "p", "scene_id": "s", "film_id": None, "title": "t", "state": "stalled",
+            "detail": "no progress for 3.0 h", "progress": 0.99, "max_progress": 0.99, "seeds": 0, "peers": 6, "availability": 0.99, "raw_state": "forcedDL",
+            "stalled_s": 5000, "last_checked_at": 100.0}
+_orig_cfg, _orig_kick = _R.torrent_health.load_cfg, _R.kick_round
+_kicks = []
+_orig_iv = _R.torrent_health.check_interval_s
+_R.torrent_health.check_interval_s = lambda db: 1800.0
+_R.torrent_health.load_cfg, _R.kick_round = (lambda db: th.default_cfg()), (lambda *a, **k: _kicks.append(1))
+_R._db = object()
+_gone_pub = _R._public(_pub_row, 200.0, {}, {1})
+_unknown_pub = _R._public(_pub_row, 200.0, {}, set())
+_there_pub = _R._public(_pub_row, 200.0, {(1, "abc"): tor(progress=0.99, dlspeed=5)}, {1})
+_R.torrent_health.load_cfg, _R.kick_round = _orig_cfg, _orig_kick
+_R.torrent_health.check_interval_s = _orig_iv
+check("stuck list: a torrent the client no longer has shows as missing at once (and asks for a round)",
+      _gone_pub["state"] == "missing" and "removed from the download client" in _gone_pub["detail"] and _gone_pub["percent"] == 99.0 and _kicks == [1])
+check("stuck list: a client that did not answer keeps the stored state", _unknown_pub["state"] == "stalled")
+check("stuck list: a torrent that is still there is not missing", _there_pub["state"] != "missing")
+
 print("\nALL OK" if not fails else f"\n{len(fails)} FAILED")
 sys.exit(1 if fails else 0)
 
