@@ -6,6 +6,9 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.262.0
+- **Activity > Stuck: a "Dismiss" button on every row.** For an entry that is not wanted any more (the scene arrived another way, or the torrent was deleted in the client): the torrent goes from the client with its data when it is still there, nothing is searched again and nothing is blocked. A wishlist scene is dismissed, an upgrade download leaves the library file as it is and dismisses its upgrade candidate, a movie is dismissed (a movie upgrade goes back to "imported"). "Remove" is unchanged (it searches again). Plugin + sidecar (rebuild).
+
 ## 0.261.2
 - **A torrent removed by hand in the download client is noticed at once.** Activity > Downloading & importing no longer says "Download complete -- waiting for import" for it (the client answered and does not know the torrent: "Torrent problem -- removed from the download client"), and Activity > Stuck shows it as missing instead of its last stalled state; either view asks the monitor for a round (at most every 2 minutes), so the History entry and the stored state follow within seconds instead of at the next look. A client that does not answer changes nothing. Sidecar (rebuild).
 

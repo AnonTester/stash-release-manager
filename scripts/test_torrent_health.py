@@ -354,6 +354,56 @@ check("stuck list: a torrent the client no longer has shows as missing at once (
 check("stuck list: a client that did not answer keeps the stored state", _unknown_pub["state"] == "stalled")
 check("stuck list: a torrent that is still there is not missing", _there_pub["state"] != "missing")
 
+# "Dismiss": the entry goes, nothing is blocked or searched again
+import upgrades as _up
+_rec = {"job": [], "status": [], "undo": [], "cand": []}
+_o = (release_repo.set_download_job_for_scene, getattr(release_repo, "set_status_for_scene", None), _up._scene_rows, _up._undo_release_rows, _up.set_candidate, th._client_of)
+release_repo.set_download_job_for_scene = lambda db, p, s, c, j: _rec["job"].append((p, s, c, j))
+release_repo.set_status_for_scene = lambda db, p, s, st: _rec["status"].append((p, s, st))
+_up._undo_release_rows = lambda db, cand, prev: _rec["undo"].append(prev)
+_up.set_candidate = lambda db, cid, **f: _rec["cand"].append((cid, f.get("status")))
+blocked.clear()
+d, c = setup([tor()])
+th._client_of = lambda db, cid: c
+go(d, hooks_none, c, 0, 0)
+_up._scene_rows = lambda db, p, s: [{"entity_type": "studio", "entity_stashdb_id": "st1", "upgrade_of": None, "imported_at": None}]
+_r = th.dismiss(d, 1, HASH)
+check("dismiss (wishlist scene): the torrent and its data go, the job is cleared, the scene is dismissed, nothing blocked, row gone",
+      _r == {"ok": True} and c.deleted == [(HASH, True)] and _rec["job"] == [("stashdb", "s1", None, None)] and _rec["status"] == [("stashdb", "s1", "dismissed")]
+      and blocked == [] and th.get_row(d, 1, HASH) is None)
+check("dismiss: a second one says the entry is gone", "error" in th.dismiss(d, 1, HASH))
+# an upgrade download: the library file stays, the candidate is dismissed, the rows go back
+d, c = setup([tor()])
+th._client_of = lambda db, cid: c
+d.c.execute("CREATE TABLE upgrade_candidate (id INTEGER, provider_scene_id TEXT, file_path TEXT)")
+d.c.execute("INSERT INTO upgrade_candidate VALUES (7, 's1', '/lib/old.mp4')")
+go(d, hooks_none, c, 0, 0)
+_rec["status"].clear()
+_up._scene_rows = lambda db, p, s: [{"entity_type": "studio", "entity_stashdb_id": "upgrade:9", "upgrade_of": "/lib/old.mp4", "imported_at": None}]
+th.dismiss(d, 1, HASH)
+check("dismiss (upgrade): candidate dismissed, rows undone, scene status untouched",
+      _rec["cand"] == [(7, "dismissed")] and _rec["undo"][-1] == [] and _rec["status"] == [])
+release_repo.set_download_job_for_scene = _o[0]
+if _o[1]: release_repo.set_status_for_scene = _o[1]
+_up._scene_rows, _up._undo_release_rows, _up.set_candidate, th._client_of = _o[2:]
+
+# a movie: dismissed; an upgrade of a movie goes back to plain 'imported' (no upgrade wanted)
+import film_repo as _fr
+_fu, _fg = [], {"upgrading": 0}
+_o2 = (_fr.get, _fr.update)
+_fr.get = lambda db, i: {"id": i, "title": "M", **_fg}
+_fr.update = lambda db, i, **f: _fu.append(f)
+for _upg in (0, 1):
+    _fg["upgrading"] = _upg
+    d, c = setup([tor()], tgt={**target(), "kind": "film", "scene_id": None, "provider": None, "film_id": 5})
+    th._client_of = lambda db, cid: c
+    go(d, hooks_none, c, 0, 0)
+    th.dismiss(d, 1, HASH)
+check("dismiss (movie): dismissed, job cleared; an upgrade goes back to imported",
+      _fu[0]["status"] == "dismissed" and _fu[0]["download_job_id"] is None and _fu[1]["status"] == "imported" and _fu[1]["upgrade_wanted"] == 0)
+_fr.get, _fr.update = _o2
+th._client_of = _o[5]
+
 print("\nALL OK" if not fails else f"\n{len(fails)} FAILED")
 sys.exit(1 if fails else 0)
 

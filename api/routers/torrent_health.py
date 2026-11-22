@@ -146,6 +146,11 @@ def remove(body: dict):
     return torrent_health.abandon(_db, body.get("client_id"), str(body.get("job_id") or ""))
 
 
+@router.post("/dismiss")
+def dismiss(body: dict):
+    return torrent_health.dismiss(_db, body.get("client_id"), str(body.get("job_id") or ""))
+
+
 @router.post("/readd")
 def readd(body: dict):
     return torrent_health.readd(_db, body.get("client_id"), str(body.get("job_id") or ""))
