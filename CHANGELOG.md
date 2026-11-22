@@ -6,6 +6,12 @@ Version rules (from 0.199.0 on; before, almost every change raised the MINOR num
 MINOR = a new capability a user can use, or a change that needs the user to act; MAJOR = something that worked breaks. 1.0.0 comes when the
 install guide has been proven on other machines. Documentation only gets no version.
 
+## 0.261.1
+- **`/dashboard/calendar?vr=` filters VR / flat scenes now.** Sidecar (rebuild).
+
+## 0.261.0
+- **Read-only endpoints for a dashboard: `GET /dashboard/activity`** (counts + short lists of downloading, importing, needs review, failed) **and `GET /dashboard/calendar`** (release calendar in the shape of Radarr's / Sonarr's: days with items and a state per item). No data is changed, no URL or key is returned; like the whole sidecar API they need no key, so LAN / Docker network only. Sidecar (rebuild).
+
 ## 0.260.21
 - **Stalled / stuck torrent notes no longer end in "at 100 %"** (the percent is shown beside the note, and the rounded copy read 100 % for 99.6 %). **"availability 1.00" now reads "100% available"** (one decimal only when there is one, e.g. "73.5% available"), with a tooltip: it is qBittorrent's distributed copies as a percent, i.e. how much of the file the connected peers hold together (100% = one complete copy, less = part of the file is missing in the swarm).
 
